@@ -108,7 +108,7 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.16.20' }));
+app.get('/api/version', (req, res) => res.json({ version: 'v1.16.21' }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -175,12 +175,23 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  }
+}));
+app.get('*', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 const PORT = process.env.PORT || 3001;
 initSchema().then(() => {
-  server.listen(PORT, () => console.log(`StickIt v1.16.20 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt v1.16.21 ready on port ${PORT}`));
   startScheduledSync();
 }).catch(err => { console.error('Schema init failed:', err); process.exit(1); });
 

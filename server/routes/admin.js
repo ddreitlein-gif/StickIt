@@ -114,7 +114,7 @@ router.get('/system', async (req, res) => {
       const row = await queryOne(`SELECT COUNT(*) as cnt FROM ${table}`);
       counts[table] = row ? row.cnt : 0;
     }
-    res.json({ version: 'v1.16.20', counts });
+    res.json({ version: 'v1.16.21', counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -181,7 +181,7 @@ router.get('/dashboard', async (req, res) => {
     const PORT = process.env.PORT || 3001;
 
     res.json({
-      version: 'v1.16.20',
+      version: 'v1.16.21',
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
       ip_addresses: ips,
       port: PORT,

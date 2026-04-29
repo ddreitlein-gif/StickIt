@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.20
+**Current version:** v1.16.21
 
 ## Commands
 
@@ -157,6 +157,26 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.21 Feature Notes
+
+### Static Asset Cache-Control Headers (v1.16.21)
+
+Fixed iPad/iOS Safari serving stale builds after a deploy. Symptom: iPad showed an old version (e.g. v1.16.07) while a laptop on the same URL showed the current version, because Safari was holding onto the previously-fetched `index.html` and re-using its old hashed bundle reference.
+
+**Root cause:** `server/index.js` mounted `express.static()` and the SPA fallback `app.get('*', ...)` with no `Cache-Control` headers. iOS Safari aggressively caches HTML in the absence of explicit cache directives, so it never refetched `index.html` to learn the new bundle hash.
+
+**Fix:** `server/index.js` now sends:
+- `Cache-Control: no-cache, no-store, must-revalidate` for `index.html` (both via the static middleware and the SPA fallback)
+- `Cache-Control: public, max-age=31536000, immutable` for files under `/assets/` (Vite content-hashed bundles — safe to cache forever since the hash changes on every code change)
+
+After this release, deploys propagate to iPads automatically without needing to clear Safari website data.
+
+**Note:** The currently-affected iPad still needs a one-time cache clear (Settings → Safari → Clear History and Website Data) to pick up v1.16.21, since it's still holding the pre-fix `index.html`. From v1.16.21 onward, this won't recur.
+
+**Files modified:** `server/index.js`
 
 ---
 
