@@ -114,7 +114,7 @@ router.get('/system', async (req, res) => {
       const row = await queryOne(`SELECT COUNT(*) as cnt FROM ${table}`);
       counts[table] = row ? row.cnt : 0;
     }
-    res.json({ version: 'v1.16.18', counts });
+    res.json({ version: 'v1.16.20', counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -181,7 +181,7 @@ router.get('/dashboard', async (req, res) => {
     const PORT = process.env.PORT || 3001;
 
     res.json({
-      version: 'v1.16.18',
+      version: 'v1.16.20',
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
       ip_addresses: ips,
       port: PORT,
@@ -197,6 +197,51 @@ router.get('/dashboard', async (req, res) => {
       errors: (req.app.errorLog || []).slice(-50).reverse(),
       audit_log: auditLog,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── USSS People (view + CSV download) ───────────────────────────────────────
+
+router.get('/usss/people', async (req, res) => {
+  try {
+    const { q, type } = req.query;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+    const conds = [];
+    const args = [];
+    if (type && ['C', 'CO', 'O'].includes(type)) {
+      conds.push('type = ?');
+      args.push(type);
+    }
+    if (q && q.trim()) {
+      const t = `${q.trim()}%`;
+      conds.push('(last_name LIKE ? OR first_name LIKE ? OR ussa_id LIKE ? OR club_name LIKE ?)');
+      args.push(t, t, t, t);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const totalRow = await queryOne(`SELECT COUNT(*) as c FROM usss_people ${where}`, args);
+    const total = parseInt(totalRow?.c) || 0;
+    const offset = (page - 1) * limit;
+    const rows = await queryAll(
+      `SELECT * FROM usss_people ${where} ORDER BY last_name, first_name LIMIT ? OFFSET ?`,
+      [...args, limit, offset]
+    );
+    res.json({ rows, total, page, limit });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/usss/people/download', async (req, res) => {
+  try {
+    const status = await queryOne('SELECT list_year, list_identifier FROM usss_sync_status WHERE id = 1');
+    const rows = await queryAll('SELECT * FROM usss_people ORDER BY last_name, first_name');
+    const cols = ['ussa_id','type','last_name','first_name','division','gender','yob','club_name','ae_points','dm_points','mo_points','fis_id','updated_at'];
+    const esc = v => v == null ? '' : (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const csv = [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+    const slug = [status?.list_year, status?.list_identifier].filter(Boolean).join('_').replace(/\s+/g, '_');
+    const fname = slug ? `usss_people_${slug}.csv` : 'usss_people.csv';
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(csv);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

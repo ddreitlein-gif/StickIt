@@ -101,8 +101,8 @@ export default function Scoreboard() {
       const results = await Promise.all(
         eligible.map(m =>
           fetch(`/api/events/${eventId}/dual/${m.id}/judge-points`)
-            .then(r => r.ok ? r.json() : [])
-            .then(rows => [m.id, Array.isArray(rows) ? rows : []])
+            .then(r => r.ok ? r.json() : null)
+            .then(data => [m.id, Array.isArray(data?.rows) ? data.rows : []])
             .catch(() => [m.id, []])
         )
       )

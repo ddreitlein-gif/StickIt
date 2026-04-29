@@ -4,6 +4,7 @@ import AdminDashboard from './admin/AdminDashboard'
 import AdminUsers from './admin/AdminUsers'
 import AdminEvents from './admin/AdminEvents'
 import AdminSystem from './admin/AdminSystem'
+import AdminUSSSPeople from './admin/AdminUSSSPeople'
 import AuditLog from './AuditLog'
 
 export default function Admin() {
@@ -14,6 +15,7 @@ export default function Admin() {
         <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="users" element={<AdminUsers />} />
         <Route path="events" element={<AdminEvents />} />
+        <Route path="usss-people" element={<AdminUSSSPeople />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="system" element={<Navigate to="/admin/dashboard" replace />} />
       </Route>

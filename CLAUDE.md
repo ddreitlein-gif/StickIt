@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.19
+**Current version:** v1.16.20
 
 ## Commands
 
@@ -157,6 +157,33 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.20 Feature Notes
+
+### Admin → USSS People Viewer + CSV Download (v1.16.20)
+
+New admin sub-page at `/admin/usss-people` for viewing and downloading the imported USSS People File (master USSS roster of competitors, coaches/comp, and officials). Read-only — sync/upload controls remain on the Athletes page.
+
+**Status card:** Last imported timestamp + source, list year + identifier + filename, total record count, breakdown by type (Competitors / Coach/Comp / Officials). Sourced from existing `GET /api/usss/status`.
+
+**Search + filter:** Debounced search (300ms) matches `last_name`, `first_name`, `ussa_id`, or `club_name` (LIKE prefix). Type filter dropdown: All / Competitors (C) / Coach/Comp (CO) / Officials (O). Resets to page 1 on change.
+
+**Paginated table (100 per page):** Columns — USSA ID, Last, First, Type, Div, Gen, YOB, Club, AE Pts, DM Pts, MO Pts, FIS ID. Numeric columns right-aligned, points to 2 decimals.
+
+**Type label clarification:** USSS type code `CO` is labeled "Coach/Comp" (not "Coach") because the USSS People File assigns CO to U15+ athletes who hold dual coach/competitor credentials — most are still primarily competitors. Plain `C` is "Competitor", `O` is "Official".
+
+**Download CSV:** Anchor link to `GET /api/admin/usss/people/download` streams the full table (no pagination) as CSV. Filename uses `list_year_list_identifier` (e.g. `usss_people_2026_Fall.csv`), falling back to `usss_people.csv`. Disabled when total = 0.
+
+**New endpoints:**
+- `GET /api/admin/usss/people?q=&type=&page=&limit=` — paginated/filtered JSON (default page=1, limit=100, max 500)
+- `GET /api/admin/usss/people/download` — full CSV stream
+
+**Sidebar:** New "USSS People" entry in Admin sidebar between "Events" and "Audit Log".
+
+**Files modified:** `server/routes/admin.js`, `client/src/pages/Admin.jsx`, `client/src/components/AdminLayout.jsx`
+**Files created:** `client/src/pages/admin/AdminUSSSPeople.jsx`
 
 ---
 

@@ -11,8 +11,10 @@ scoring.db-wal
 scoring.db-shm
 data/backups/
 data/tmp/
-server/data/backups/
-server/data/tmp/
+
+# Runtime data (DB, backups, uploaded meet logos) — not source
+server/data/
+data/
 
 # Local Claude / editor / OS files
 .claude/
@@ -35,3 +37,6 @@ server/.env
 # Logs
 *.log
 npm-debug.log*
+
+# Mac Finder duplicates ("foo 2.json")
+* [0-9].*
