@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+
+# Live database and backups (do NOT publish) — match anywhere in tree
+scoring.db
+scoring.db-journal
+scoring.db-wal
+scoring.db-shm
+data/backups/
+data/tmp/
+server/data/backups/
+server/data/tmp/
+
+# Local Claude / editor / OS files
+.claude/
+.DS_Store
+.vscode/
+.idea/
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+server/.env
+
+# Release zips
+*.zip
+
+# Stray root npm artifact (no real package.json at root)
+/package-lock.json
+
+# Logs
+*.log
+npm-debug.log*

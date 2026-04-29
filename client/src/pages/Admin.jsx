@@ -1,0 +1,22 @@
+import { Routes, Route, Navigate } from 'react-router-dom'
+import AdminLayout from '../components/AdminLayout'
+import AdminDashboard from './admin/AdminDashboard'
+import AdminUsers from './admin/AdminUsers'
+import AdminEvents from './admin/AdminEvents'
+import AdminSystem from './admin/AdminSystem'
+import AuditLog from './AuditLog'
+
+export default function Admin() {
+  return (
+    <Routes>
+      <Route element={<AdminLayout />}>
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<AdminDashboard />} />
+        <Route path="users" element={<AdminUsers />} />
+        <Route path="events" element={<AdminEvents />} />
+        <Route path="audit" element={<AuditLog />} />
+        <Route path="system" element={<Navigate to="/admin/dashboard" replace />} />
+      </Route>
+    </Routes>
+  )
+}

@@ -1,0 +1,43 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import Layout from './components/Layout'
+import Dashboard from './pages/Dashboard'
+import MeetDetail from './pages/MeetDetail'
+import EventDetail from './pages/EventDetail'
+import Athletes from './pages/Athletes'
+import JudgeTablet from './pages/JudgeTablet'
+import TimekeeperTablet from './pages/TimekeeperTablet'
+import Scoreboard from './pages/Scoreboard'
+import HeadJudgeTablet from './pages/HeadJudgeTablet'
+import Overlay from './pages/Overlay'
+import AerialsJudgeTablet from './pages/AerialsJudgeTablet'
+import AuditLog from './pages/AuditLog'
+import Home from './pages/Home'
+import LiveScores from './pages/LiveScores'
+import Admin from './pages/Admin'
+import './index.css'
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/livescores" element={<LiveScores />} />
+        <Route path="/admin/*" element={<Admin />} />
+        <Route path="/judge/:eventId" element={<JudgeTablet />} />
+        <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />
+        <Route path="/timekeeper/:eventId" element={<TimekeeperTablet />} />
+        <Route path="/scoreboard/:eventId" element={<Scoreboard />} />
+        <Route path="/headjudge/:meetId/:eventId" element={<HeadJudgeTablet />} />
+        <Route path="/overlay/:eventId" element={<Overlay />} />
+        <Route path="/dashboard" element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="meets/:meetId" element={<MeetDetail />} />
+          <Route path="meets/:meetId/events/:eventId" element={<EventDetail />} />
+          <Route path="athletes" element={<Athletes />} />
+          <Route path="audit" element={<Navigate to="/admin/audit" replace />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  )
+}
