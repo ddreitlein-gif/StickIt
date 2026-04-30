@@ -2,6 +2,12 @@
 
 **v1.7.01** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
 
+---
+
+StickIt is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License. Commercial use requires explicit written permission from Rocky Mountain Freestyle. See the LICENSE file for full terms or visit https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+---
+
 ## Features
 
 - Admin console for meet setup, athlete registration, event configuration
