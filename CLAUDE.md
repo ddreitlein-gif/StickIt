@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.21
+**Current version:** v1.16.22
 
 ## Commands
 
@@ -157,6 +157,64 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.22 Feature Notes
+
+### Backups Admin Page (v1.16.22)
+
+New admin sub-page at `/admin/backups` for viewing and downloading the rolling SQLite backups created automatically by `server/db/autosave.js` (every 5 writes, last 10 kept). Read-only — restore is a manual file-swap on the server.
+
+**Status card:** Backup count (current / max), total disk used, newest/oldest timestamps with relative ago labels, write counter, backup interval.
+
+**Manual backup trigger:** "Create Backup Now" button calls `POST /api/admin/backups/create` to invoke `doBackup()` directly outside the every-5-writes cycle. Useful before risky operations.
+
+**Backups table:** Filename (monospace), Created (timestamp + relative ago), Size, Download. Newest first. Each Download link streams the `.db` file with `Content-Disposition: attachment`.
+
+**Recovery instructions:** Static amber callout on the page documents the restore procedure (stop server → replace `data/scoring.db` → restart) and notes the Railway caveat (volume access required).
+
+**New endpoints:**
+- `GET  /api/admin/backups` — `{ backups, stats }` reusing `listBackups()`
+- `POST /api/admin/backups/create` — manual backup trigger
+- `GET  /api/admin/backups/:filename/download` — streams the `.db` file. Filename is regex-validated (`^scoring_[\w-]+\.db$`) to prevent path traversal.
+
+**autosave.js changes:** `doBackup`, `BACKUP_DIR`, `BACKUP_INTERVAL`, `MAX_BACKUPS` are now exported.
+
+**Sidebar:** New "Backups" entry in Admin sidebar between "USSS People" and "Audit Log".
+
+**Files modified:** `server/db/autosave.js`, `server/routes/admin.js`, `client/src/pages/Admin.jsx`, `client/src/components/AdminLayout.jsx`
+**Files created:** `client/src/pages/admin/AdminBackups.jsx`
+
+### Multi-Meet Export / Selective Import (v1.16.22)
+
+New "Export All" button on the Dashboard exports every currently-visible meet (matches Dashboard's `excludeLocked=1` rule — fully-locked meets are excluded). The output is a **zip-of-zips** with a top-level `manifest.json` listing the meets. Each child zip is byte-identical to the existing per-meet export, so the same export logic is reused.
+
+**Bundle format:**
+```
+StickIt_AllMeets_YYYYMMDD.zip
+├── manifest.json   { stickit_version, export_date, meet_count, meets: [{ filename, meet_id, name, location, date, meet_ranking }] }
+├── meet_<uuid>.zip   (existing per-meet export)
+└── ...
+```
+
+**New endpoint:** `GET /api/meets/export-all` — registered before `/:id` so Express doesn't treat "export-all" as a meet ID. Iterates visible meets and calls the new shared helper `buildMeetExportZip(meetId)` (extracted from the existing `GET /:id/export` body).
+
+**Import detection:** `POST /api/meets/import` now checks for `manifest.json` at the root of an uploaded ZIP. If present and well-formed, the server splits each child zip into its own pending-import cache entry, pre-computes conflict status per child, and returns `{ multi_meet: true, meet_count, meets: [...] }` instead of the single-meet conflict response.
+
+**New conflict_action `import`:** Used for non-conflict pending entries created by the multi-meet flow. Runs `executeImport()` with no rename/merge/delete — same as the no-conflict step-1 path.
+
+**Client modal — `MultiMeetImportModal.jsx`:** Three phases:
+1. **Selecting:** Checkbox list with Select All / Deselect All. Conflict rows tagged with an amber "Already exists" badge. Shows location and date.
+2. **Importing:** Progress bar ("X of N complete · Now: <name>"). When a conflict is reached, the existing `ImportConflictModal` is overlaid for that single meet. User picks Merge / Duplicate / Overwrite / Cancel; the loop resumes after the choice. Sequential — one meet at a time per user's request.
+3. **Done:** Summary table listing each meet's outcome (action label or error). "Done" button refreshes the Dashboard meet list.
+
+**Cancellation cleanup:** Cancel button (and modal unmount during selection) calls `conflict_action=cancel` on every pending entry to free server-side cached zips. Unselected meets are also cancelled before the import loop starts.
+
+**Existing single-meet import flow unchanged.** The legacy `meet_export.json`-only ZIP and raw JSON paths continue to work.
+
+**Files modified:** `server/routes/meets.js` (extracted `buildMeetExportZip`, added `GET /export-all`, extended `POST /import` with manifest detection + `conflict_action='import'`), `client/src/pages/Dashboard.jsx`
+**Files created:** `client/src/components/MultiMeetImportModal.jsx`
 
 ---
 

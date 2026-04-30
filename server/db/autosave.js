@@ -83,4 +83,4 @@ function listBackups() {
 
 function getWriteCount() { return writeCounter; }
 
-module.exports = { recordWrite, listBackups, getWriteCount };
+module.exports = { recordWrite, listBackups, getWriteCount, doBackup, BACKUP_DIR, BACKUP_INTERVAL, MAX_BACKUPS };

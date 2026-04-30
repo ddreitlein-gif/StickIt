@@ -77,6 +77,53 @@ router.get('/livescores', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /export-all — bundle all currently-visible meets into a zip-of-zips
+// Must be registered before /:id so Express doesn't treat "export-all" as a meet ID.
+router.get('/export-all', async (req, res) => {
+  try {
+    const meets = await queryAll(
+      `SELECT m.* FROM meets m
+       WHERE (SELECT COUNT(*) FROM events WHERE meet_id = m.id AND locked = 0) > 0
+          OR (SELECT COUNT(*) FROM events WHERE meet_id = m.id) = 0
+       ORDER BY m.date DESC, m.created_at DESC`
+    );
+
+    const outerZip = new AdmZip();
+    const manifestMeets = [];
+
+    for (const m of meets) {
+      const built = await buildMeetExportZip(m.id);
+      if (!built) continue;
+      const childName = `meet_${m.id}.zip`;
+      outerZip.addFile(childName, built.buffer);
+      manifestMeets.push({
+        filename: childName,
+        meet_id: m.id,
+        name: m.name,
+        location: m.location,
+        date: m.date,
+        meet_ranking: m.meet_ranking,
+      });
+    }
+
+    const manifest = {
+      stickit_version: '1.16.22',
+      export_date: new Date().toISOString(),
+      meet_count: manifestMeets.length,
+      meets: manifestMeets,
+    };
+    outerZip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2)));
+
+    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="StickIt_AllMeets_${dateStamp}.zip"`);
+    res.send(outerZip.toBuffer());
+  } catch (e) {
+    console.error('meet export-all error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
@@ -579,110 +626,112 @@ router.post('/:id/close', async (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /:id/export — export entire meet as ZIP
 // ---------------------------------------------------------------------------
+async function buildMeetExportZip(meetId) {
+  const meet = await queryOne('SELECT * FROM meets WHERE id=?', [meetId]);
+  if (!meet) return null;
+
+  const events = await queryAll('SELECT * FROM events WHERE meet_id=?', [meetId]);
+  const eventIds = events.map(e => e.id);
+
+  // Collect all data
+  let registrations = [], athletes = [], judges = [], runs = [], judgeScores = [];
+  let dualBracket = [], dualJudgePoints = [], heats = [], eventPhases = [], phaseRunOrder = [];
+  let runRoundStatus = [];
+
+  if (eventIds.length > 0) {
+    const ph = eventIds.map(() => '?').join(',');
+    registrations = await queryAll(`SELECT * FROM registrations WHERE event_id IN (${ph})`, eventIds);
+    judges = await queryAll(`SELECT * FROM judges WHERE event_id IN (${ph})`, eventIds);
+    runs = await queryAll(`SELECT * FROM runs WHERE event_id IN (${ph})`, eventIds);
+    dualBracket = await queryAll(`SELECT * FROM dual_bracket WHERE event_id IN (${ph})`, eventIds);
+    heats = await queryAll(`SELECT * FROM heats WHERE event_id IN (${ph})`, eventIds);
+    eventPhases = await queryAll(`SELECT * FROM event_phases WHERE event_id IN (${ph})`, eventIds);
+    runRoundStatus = await queryAll(`SELECT * FROM run_round_status WHERE event_id IN (${ph})`, eventIds);
+
+    const runIds = runs.map(r => r.id);
+    if (runIds.length > 0) {
+      const rph = runIds.map(() => '?').join(',');
+      judgeScores = await queryAll(`SELECT * FROM judge_scores WHERE run_id IN (${rph})`, runIds);
+    }
+
+    const matchIds = dualBracket.map(m => m.id);
+    if (matchIds.length > 0) {
+      const mph = matchIds.map(() => '?').join(',');
+      dualJudgePoints = await queryAll(`SELECT * FROM dual_judge_points WHERE match_id IN (${mph})`, matchIds);
+    }
+
+    const phaseIds = eventPhases.map(p => p.id);
+    if (phaseIds.length > 0) {
+      const pph = phaseIds.map(() => '?').join(',');
+      phaseRunOrder = await queryAll(`SELECT * FROM phase_run_order WHERE phase_id IN (${pph})`, phaseIds);
+    }
+
+    const athleteIds = [...new Set(registrations.map(r => r.athlete_id))];
+    if (athleteIds.length > 0) {
+      const aph = athleteIds.map(() => '?').join(',');
+      athletes = await queryAll(`SELECT * FROM athletes WHERE id IN (${aph})`, athleteIds);
+    }
+  }
+
+  const officials = await queryAll(`SELECT * FROM officials WHERE meet_id=?`, [meetId]);
+  const courseSpecs = await queryAll(`SELECT * FROM course_specs WHERE meet_id=?`, [meetId]);
+
+  const exportData = {
+    stickit_version: '1.16.22',
+    export_date: new Date().toISOString(),
+    meet,
+    events,
+    athletes,
+    registrations,
+    judges,
+    officials,
+    course_specs: courseSpecs,
+    runs,
+    judge_scores: judgeScores,
+    dual_bracket: dualBracket,
+    dual_judge_points: dualJudgePoints,
+    heats,
+    event_phases: eventPhases,
+    phase_run_order: phaseRunOrder,
+    run_round_status: runRoundStatus,
+  };
+
+  const zip = new AdmZip();
+  zip.addFile('meet_export.json', Buffer.from(JSON.stringify(exportData, null, 2)));
+
+  for (const ext of ['.png', '.jpg', '.jpeg']) {
+    const logoPath = path.join(MEET_LOGOS_DIR, `meet_${meetId}${ext}`);
+    if (fs.existsSync(logoPath)) {
+      zip.addLocalFile(logoPath, '', `meet_logo${ext}`);
+      break;
+    }
+  }
+
+  const safeName = (meet.name || 'meet').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  return {
+    buffer: zip.toBuffer(),
+    filename: `${safeName}_Export_${dateStamp}.zip`,
+    meet,
+  };
+}
+
 router.get('/:id/export', async (req, res) => {
   try {
-    const meetId = req.params.id;
-    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [meetId]);
-    if (!meet) return res.status(404).json({ error: 'Meet not found' });
-
-    const events = await queryAll('SELECT * FROM events WHERE meet_id=?', [meetId]);
-    const eventIds = events.map(e => e.id);
-
-    // Collect all data
-    let registrations = [], athletes = [], judges = [], runs = [], judgeScores = [];
-    let dualBracket = [], dualJudgePoints = [], heats = [], eventPhases = [], phaseRunOrder = [];
-    let runRoundStatus = [];
-
-    if (eventIds.length > 0) {
-      const ph = eventIds.map(() => '?').join(',');
-      registrations = await queryAll(`SELECT * FROM registrations WHERE event_id IN (${ph})`, eventIds);
-      judges = await queryAll(`SELECT * FROM judges WHERE event_id IN (${ph})`, eventIds);
-      runs = await queryAll(`SELECT * FROM runs WHERE event_id IN (${ph})`, eventIds);
-      dualBracket = await queryAll(`SELECT * FROM dual_bracket WHERE event_id IN (${ph})`, eventIds);
-      heats = await queryAll(`SELECT * FROM heats WHERE event_id IN (${ph})`, eventIds);
-      eventPhases = await queryAll(`SELECT * FROM event_phases WHERE event_id IN (${ph})`, eventIds);
-      runRoundStatus = await queryAll(`SELECT * FROM run_round_status WHERE event_id IN (${ph})`, eventIds);
-
-      // Judge scores for all runs
-      const runIds = runs.map(r => r.id);
-      if (runIds.length > 0) {
-        const rph = runIds.map(() => '?').join(',');
-        judgeScores = await queryAll(`SELECT * FROM judge_scores WHERE run_id IN (${rph})`, runIds);
-      }
-
-      // Dual judge points for all bracket matches
-      const matchIds = dualBracket.map(m => m.id);
-      if (matchIds.length > 0) {
-        const mph = matchIds.map(() => '?').join(',');
-        dualJudgePoints = await queryAll(`SELECT * FROM dual_judge_points WHERE match_id IN (${mph})`, matchIds);
-      }
-
-      // Phase run order for all phases
-      const phaseIds = eventPhases.map(p => p.id);
-      if (phaseIds.length > 0) {
-        const pph = phaseIds.map(() => '?').join(',');
-        phaseRunOrder = await queryAll(`SELECT * FROM phase_run_order WHERE phase_id IN (${pph})`, phaseIds);
-      }
-
-      // Athletes referenced by registrations
-      const athleteIds = [...new Set(registrations.map(r => r.athlete_id))];
-      if (athleteIds.length > 0) {
-        const aph = athleteIds.map(() => '?').join(',');
-        athletes = await queryAll(`SELECT * FROM athletes WHERE id IN (${aph})`, athleteIds);
-      }
-    }
-
-    const officials = await queryAll(
-      `SELECT * FROM officials WHERE meet_id=?`, [meetId]
-    );
-    const courseSpecs = await queryAll(
-      `SELECT * FROM course_specs WHERE meet_id=?`, [meetId]
-    );
-
-    const exportData = {
-      stickit_version: '1.16.10',
-      export_date: new Date().toISOString(),
-      meet,
-      events,
-      athletes,
-      registrations,
-      judges,
-      officials,
-      course_specs: courseSpecs,
-      runs,
-      judge_scores: judgeScores,
-      dual_bracket: dualBracket,
-      dual_judge_points: dualJudgePoints,
-      heats,
-      event_phases: eventPhases,
-      phase_run_order: phaseRunOrder,
-      run_round_status: runRoundStatus,
-    };
-
-    // Build ZIP
-    const zip = new AdmZip();
-    zip.addFile('meet_export.json', Buffer.from(JSON.stringify(exportData, null, 2)));
-
-    // Include meet logo if exists
-    for (const ext of ['.png', '.jpg', '.jpeg']) {
-      const logoPath = path.join(MEET_LOGOS_DIR, `meet_${meetId}${ext}`);
-      if (fs.existsSync(logoPath)) {
-        zip.addLocalFile(logoPath, '', `meet_logo${ext}`);
-        break;
-      }
-    }
-
-    const safeName = (meet.name || 'meet').replace(/[^a-zA-Z0-9_-]/g, '_');
-    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const result = await buildMeetExportZip(req.params.id);
+    if (!result) return res.status(404).json({ error: 'Meet not found' });
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}_Export_${dateStamp}.zip"`);
-    res.send(zip.toBuffer());
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
   } catch (e) {
     console.error('meet export error:', e);
     res.status(500).json({ error: e.message });
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /export-all — bundle all currently-visible meets into a zip-of-zips
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Import helpers: pending cache, executeImport, executeMerge
 // ---------------------------------------------------------------------------
@@ -1412,6 +1461,12 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
           return res.json({ ok: true, cancelled: true });
         }
 
+        if (conflictAction === 'import') {
+          const result = await executeImport(data, zipPath);
+          try { fs.unlinkSync(zipPath); } catch {}
+          return res.json({ ok: true, ...result });
+        }
+
         if (conflictAction === 'overwrite') {
           const existing = await queryOne('SELECT id FROM meets WHERE LOWER(name) = LOWER(?)', [data.meet.name ?? '']);
           if (existing) await deleteMeetCascade(existing.id);
@@ -1445,7 +1500,7 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
         }
 
         try { fs.unlinkSync(zipPath); } catch {}
-        return res.status(400).json({ error: 'Invalid conflict_action. Must be cancel, overwrite, duplicate, or merge.' });
+        return res.status(400).json({ error: 'Invalid conflict_action. Must be cancel, import, overwrite, duplicate, or merge.' });
       } catch (err) {
         try { fs.unlinkSync(zipPath); } catch {}
         throw err;
@@ -1455,9 +1510,73 @@ router.post('/import', importUpload.single('file'), async (req, res) => {
     // --- Step 1: upload and check for conflicts ---
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+    // --- Multi-meet bundle detection (v1.16.22) ---
+    let outerZipObj = null;
+    try { outerZipObj = new AdmZip(req.file.path); } catch {}
+    if (outerZipObj) {
+      const manifestEntry = outerZipObj.getEntry('manifest.json');
+      if (manifestEntry) {
+        let manifest = null;
+        try { manifest = JSON.parse(manifestEntry.getData().toString('utf8')); } catch {}
+        if (manifest && Array.isArray(manifest.meets)) {
+          const tmpDir = path.join(__dirname, '..', 'data', 'tmp');
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const meetsResult = [];
+          for (const m of manifest.meets) {
+            const childEntry = outerZipObj.getEntry(m.filename);
+            if (!childEntry) continue;
+            const tmpPath = path.join(tmpDir, `multimeet_${uuidv4()}.zip`);
+            fs.writeFileSync(tmpPath, childEntry.getData());
+            let childData = null;
+            try {
+              const childZip = new AdmZip(tmpPath);
+              const childJson = childZip.getEntry('meet_export.json');
+              if (!childJson) { try { fs.unlinkSync(tmpPath); } catch {}; continue; }
+              childData = JSON.parse(childJson.getData().toString('utf8'));
+            } catch {
+              try { fs.unlinkSync(tmpPath); } catch {}
+              continue;
+            }
+            if (!childData?.meet || !childData?.events) {
+              try { fs.unlinkSync(tmpPath); } catch {}
+              continue;
+            }
+            const existingMeet = await queryOne(
+              'SELECT id, name, updated_at, created_at FROM meets WHERE LOWER(name) = LOWER(?)',
+              [childData.meet.name ?? '']
+            );
+            const newPendingId = uuidv4();
+            pendingImports.set(newPendingId, { data: childData, zipPath: tmpPath, timestamp: Date.now() });
+            meetsResult.push({
+              pending_import_id: newPendingId,
+              name: childData.meet.name,
+              location: childData.meet.location,
+              date: childData.meet.date,
+              export_date: childData.export_date ?? null,
+              conflict: existingMeet ? {
+                existing_meet: {
+                  id: existingMeet.id,
+                  name: existingMeet.name,
+                  updated_at: existingMeet.updated_at,
+                  created_at: existingMeet.created_at,
+                },
+                import_meet: {
+                  name: childData.meet.name,
+                  updated_at: childData.meet.updated_at ?? null,
+                  export_date: childData.export_date ?? null,
+                },
+              } : null,
+            });
+          }
+          try { fs.unlinkSync(req.file.path); } catch {}
+          return res.json({ multi_meet: true, meet_count: meetsResult.length, meets: meetsResult });
+        }
+      }
+    }
+
     let data;
     try {
-      const zip = new AdmZip(req.file.path);
+      const zip = outerZipObj || new AdmZip(req.file.path);
       const jsonEntry = zip.getEntry('meet_export.json');
       if (!jsonEntry) throw new Error('meet_export.json not found in ZIP');
       data = JSON.parse(jsonEntry.getData().toString('utf8'));

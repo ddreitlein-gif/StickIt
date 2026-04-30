@@ -114,7 +114,7 @@ router.get('/system', async (req, res) => {
       const row = await queryOne(`SELECT COUNT(*) as cnt FROM ${table}`);
       counts[table] = row ? row.cnt : 0;
     }
-    res.json({ version: 'v1.16.21', counts });
+    res.json({ version: 'v1.16.22', counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -181,7 +181,7 @@ router.get('/dashboard', async (req, res) => {
     const PORT = process.env.PORT || 3001;
 
     res.json({
-      version: 'v1.16.21',
+      version: 'v1.16.22',
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
       ip_addresses: ips,
       port: PORT,
@@ -242,6 +242,54 @@ router.get('/usss/people/download', async (req, res) => {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send(csv);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Backups (v1.16.22) ──────────────────────────────────────────────────────
+
+router.get('/backups', async (req, res) => {
+  try {
+    const { listBackups, getWriteCount, BACKUP_INTERVAL, MAX_BACKUPS } = require('../db/autosave');
+    const backups = listBackups();
+    const totalSize = backups.reduce((sum, b) => sum + (b.size_bytes || 0), 0);
+    res.json({
+      backups,
+      stats: {
+        count: backups.length,
+        oldest: backups.length ? backups[backups.length - 1].created_at : null,
+        newest: backups.length ? backups[0].created_at : null,
+        total_size_bytes: totalSize,
+        write_counter: getWriteCount(),
+        interval: BACKUP_INTERVAL,
+        max: MAX_BACKUPS,
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/backups/create', async (req, res) => {
+  try {
+    const { doBackup, listBackups } = require('../db/autosave');
+    await doBackup();
+    const backups = listBackups();
+    res.json({ ok: true, latest: backups[0] || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/backups/:filename/download', async (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const { BACKUP_DIR } = require('../db/autosave');
+    const { filename } = req.params;
+    if (!/^scoring_[\w\-]+\.db$/.test(filename)) {
+      return res.status(400).json({ error: 'Invalid backup filename' });
+    }
+    const fullPath = path.join(BACKUP_DIR, filename);
+    if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Backup not found' });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    fs.createReadStream(fullPath).pipe(res);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

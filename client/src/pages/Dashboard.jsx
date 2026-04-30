@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../utils/api'
 import ImportConflictModal from '../components/ImportConflictModal'
+import MultiMeetImportModal from '../components/MultiMeetImportModal'
 
 const STATUS_BADGE = {
   setup:    { cls: 'bg-slate-800 text-slate-400 border-slate-700', label: 'Setup' },
@@ -106,6 +107,7 @@ export default function Dashboard() {
   const [importing, setImporting] = useState(false)
   const [importMsg, setImportMsg] = useState('')
   const [conflictData, setConflictData] = useState(null)
+  const [multiMeetData, setMultiMeetData] = useState(null)
   const importRef = useRef(null)
 
   useEffect(() => {
@@ -136,7 +138,10 @@ export default function Dashboard() {
       const res = await fetch('/api/meets/import', { method: 'POST', body: formData })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
-      if (data.conflict) {
+      if (data.multi_meet) {
+        setMultiMeetData(data)
+        setImporting(false)
+      } else if (data.conflict) {
         setConflictData(data)
         setImporting(false)
       } else {
@@ -200,6 +205,13 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2">
           <input type="file" accept=".zip,.json" ref={importRef} onChange={handleImport} className="hidden" />
+          <a
+            href="/api/meets/export-all"
+            className="btn-secondary"
+            title="Download a ZIP containing all currently-visible meets"
+          >
+            Export All
+          </a>
           <button
             onClick={() => importRef.current?.click()}
             disabled={importing}
@@ -294,6 +306,20 @@ export default function Dashboard() {
           onResolve={handleConflictResolve}
           onClose={() => {
             handleConflictResolve('cancel')
+          }}
+        />
+      )}
+
+      {multiMeetData && (
+        <MultiMeetImportModal
+          multiMeetData={multiMeetData}
+          onClose={() => setMultiMeetData(null)}
+          onComplete={async (results) => {
+            const ok = results.filter(r => r.ok && !r.cancelled).length
+            const fail = results.filter(r => !r.ok).length
+            setImportMsg(`Imported ${ok} meet${ok !== 1 ? 's' : ''}${fail ? ` (${fail} failed)` : ''}`)
+            const refreshed = await api.getMeets({ excludeLocked: true })
+            setMeets(refreshed)
           }}
         />
       )}
