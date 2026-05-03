@@ -605,7 +605,7 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
         if (data._run2_total == null) data._run2_total = 0;
       }
 
-      const ranked = rankResults(Object.values(athleteRuns));
+      const ranked = rankResults(Object.values(athleteRuns), event.discipline);
 
       // Warnings: athletes missing USSS number
       const missingUsss = ranked.filter(r => !r.ussa_num && !r.run_status);

@@ -246,6 +246,8 @@ async function initSchema() {
     `ALTER TABLE athletes ADD COLUMN division TEXT`,
     // v1.16.17 -- dual mogul bracket complete -> HJ approval workflow
     `ALTER TABLE events ADD COLUMN dual_bracket_review_status TEXT`,
+    // v1.16.23 -- FIS ICR 4207.3 tiebreaker: pre-DD air execution score
+    `ALTER TABLE runs ADD COLUMN air_score_no_dd REAL`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }
@@ -304,6 +306,47 @@ async function initSchema() {
 
   await seedJumpDDs();
   await seedAerialsDDs();
+  await backfillAirScoreNoDd();
+}
+
+// v1.16.23 -- backfill air_score_no_dd on runs that don't have it yet.
+// For each completed run with NULL air_score_no_dd, compute the pre-DD raw air
+// execution score from judge_scores (avg of jump1 + avg of jump2). Falls back
+// to runs.air_score for manually-entered legacy rows with no per-judge data.
+async function backfillAirScoreNoDd() {
+  try {
+    const rows = await queryAll(
+      `SELECT id, air_score FROM runs WHERE air_score_no_dd IS NULL AND status='complete'`
+    );
+    if (rows.length === 0) return;
+    let updated = 0;
+    for (const r of rows) {
+      const j1 = await queryOne(
+        `SELECT AVG(raw_score) AS avg, COUNT(*) AS n FROM judge_scores WHERE run_id=? AND score_type='air_jump1'`,
+        [r.id]
+      );
+      const j2 = await queryOne(
+        `SELECT AVG(raw_score) AS avg, COUNT(*) AS n FROM judge_scores WHERE run_id=? AND score_type='air_jump2'`,
+        [r.id]
+      );
+      const n1 = j1 ? parseInt(j1.n) : 0;
+      const n2 = j2 ? parseInt(j2.n) : 0;
+      let value;
+      if (n1 === 0 && n2 === 0) {
+        value = r.air_score; // manual entry without per-judge data
+      } else {
+        const a1 = n1 > 0 ? parseFloat(j1.avg) : 0;
+        const a2 = n2 > 0 ? parseFloat(j2.avg) : 0;
+        const sum = n2 === 0 ? a1 * 2 : a1 + a2;
+        value = Math.floor(sum * 100) / 100;
+      }
+      await execute(`UPDATE runs SET air_score_no_dd=? WHERE id=?`, [value, r.id]);
+      updated++;
+    }
+    if (updated > 0) console.log(`[v1.16.23 migration] air_score_no_dd backfilled for ${updated} runs`);
+  } catch (e) {
+    console.log('[v1.16.23 migration] air_score_no_dd backfill skipped:', e.message);
+  }
 }
 
 async function seedJumpDDs() {

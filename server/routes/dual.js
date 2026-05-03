@@ -1,7 +1,7 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { logAudit } = require('./audit');
-const { rankResults, calcDualMogulPointSplit } = require('../scoring/engine');
+const { rankResults, calcDualMogulPointSplit, pickBestRun } = require('../scoring/engine');
 const {
   buildPlacement,
   effectiveBracketSize,
@@ -84,15 +84,10 @@ async function computeOfficialPlacings(sourceEventId) {
   );
 
   // Scored = runs without run_status flag.  Best run per athlete.
-  const best = {};
-  for (const r of runs) {
-    if (r.run_status) continue;
-    if (!best[r.athlete_id] || r.total_score > best[r.athlete_id].total_score) {
-      best[r.athlete_id] = r;
-    }
-  }
+  const scoredRuns = runs.filter(r => !r.run_status);
+  const best = pickBestRun(scoredRuns, 'mogul', r => r.athlete_id);
 
-  const ranked = rankResults(Object.values(best));
+  const ranked = rankResults(Object.values(best), 'mogul');
   const out = new Map();
   for (const r of ranked) {
     out.set(r.athlete_id, { rank: r.rank, total_score: r.total_score });

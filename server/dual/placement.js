@@ -435,6 +435,18 @@ function buildPlacement(R, bracketSize, storedSeed) {
     });
   }
 
+  // Defensive: every real seed (1..R) must appear exactly once in the order.
+  const seen = new Set();
+  for (const s of order) {
+    if (s <= R) {
+      if (seen.has(s)) throw new Error(`buildPlacement: duplicate real seed ${s}`);
+      seen.add(s);
+    }
+  }
+  if (seen.size !== R) {
+    throw new Error(`buildPlacement: missing real seeds (saw ${seen.size}/${R})`);
+  }
+
   return { size: bracketSize, byes, ghostSeeds, order, pairs };
 }
 

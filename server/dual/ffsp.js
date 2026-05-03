@@ -8,8 +8,12 @@
 //                  is_small_final, is_bye, loser_status)
 //   placements  - ordered placement array, each entry { rank, registration_id,
 //                 run_status?, reg_status? }
+//                 rank === null means the entry is not classified per ICR 4312
+//                 (first-round seeded DNS, DSQ, or otherwise unranked).
 //
 // Returns: Map<registration_id, { ffsp: number, excluded: boolean, reason?: string }>
+
+const { classifyDualLoser } = require('./placement_ranking');
 
 function computeDualFfsp({ event, bracket, placements }) {
   const out = new Map();
@@ -38,27 +42,22 @@ function computeDualFfsp({ event, bracket, placements }) {
     }
   }
 
-  // Step 1: classify every athlete by status (ranked / dns / dsq / scratched / dnf / first_round_dnf).
+  // Step 1: classify every placement entry.
+  // Use the shared classifyDualLoser() for placement-level fields, then fall back to
+  // the losing match's loser_status if the placement entry didn't carry one (this
+  // matters for any caller that drops run_status before passing placements in).
+  // Promote first-round DNF to a distinct bucket for FFSP rule purposes.
   const statusByReg = new Map();
   for (const p of placements) {
     const regId = p.registration_id;
     if (!regId) continue;
-    const regStatus = (p.reg_status || '').toLowerCase();
-    const runStatus = (p.run_status || '').toUpperCase();
 
-    let s = 'ranked';
-    if (regStatus === 'scratched') s = 'scratched';
-    else if (runStatus === 'DNS') s = 'dns';
-    else if (runStatus === 'DSQ') s = 'dsq';
-    else if (runStatus === 'DNF') s = 'dnf';
-    else {
-      // Not flagged on placement -- check the losing match's loser_status as a fallback.
+    let s = classifyDualLoser({ run_status: p.run_status, reg_status: p.reg_status });
+    if (s === 'scored') {
       const li = loseInfoByReg.get(regId);
       if (li) {
-        const ls = (li.loser_status || '').toUpperCase();
-        if (ls === 'DNS') s = 'dns';
-        else if (ls === 'DSQ') s = 'dsq';
-        else if (ls === 'DNF') s = 'dnf';
+        const fallback = classifyDualLoser({ run_status: li.loser_status });
+        if (fallback !== 'scored') s = fallback;
       }
     }
 
@@ -87,7 +86,13 @@ function computeDualFfsp({ event, bracket, placements }) {
   for (const p of placements) {
     const regId = p.registration_id;
     if (!regId) continue;
-    const s = statusByReg.get(regId) || 'ranked';
+    const s = statusByReg.get(regId) || 'scored';
+
+    // Unranked entries (rank=null per ICR 4312.4 first-round-DNS-seeded, or DSQ): no FFSP.
+    if (p.rank === null || p.rank === undefined) {
+      out.set(regId, { ffsp: 0, excluded: true, reason: s === 'scored' ? 'unranked' : s });
+      continue;
+    }
 
     if (s === 'dns' || s === 'dsq' || s === 'scratched') {
       out.set(regId, { ffsp: 0, excluded: true, reason: s });

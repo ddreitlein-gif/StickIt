@@ -213,6 +213,14 @@ function calcMogulScore(params) {
   }
   const airContrib = airRaw; // Already on the correct scale (max ~20 with typical DDs)
 
+  // Air without DD -- raw execution score for FIS ICR 4207.3 tie-break.
+  // Per-jump average of raw judge scores (0-10), summed across jumps. Single-jump
+  // events double the one jump average to keep the value comparable to two-jump runs.
+  const avgRaw = (arr) => (arr && arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+  const j1Raw = avgRaw(airScoresJump1);
+  const j2Raw = numJumps >= 2 ? avgRaw(airScoresJump2) : 0;
+  const airNoDd = floorToHundredth(numJumps === 1 ? j1Raw * 2 : j1Raw + j2Raw);
+
   // --- Speed ---
   // ICR 4206.3: Speed Score = 48 - 32 * (time / pace_time), max 20.0
   let speedRaw = 0;
@@ -232,6 +240,7 @@ function calcMogulScore(params) {
     jump2Score,        // raw jump 2 air score (avg * DD)
     airRaw,            // combined air (jump1 + jump2)
     airContrib,        // 0-~20 air contribution
+    airNoDd,           // FIS ICR 4207.3 tiebreaker -- raw air execution, pre-DD
     speedRaw,          // 0-20 (ICR 4206.3)
     speedContrib,      // 0-20 speed contribution
     total,             // 0-100
@@ -593,19 +602,37 @@ function calcAerialsScore(params) {
 }
 
 /**
- * Tiebreaker logic for mogul results.
- * US Ski & Snowboard tiebreaker order:
- *   1. Higher total score on best run
- *   2. Higher air score on best run
- *   3. Higher turns score on best run
- *   4. Higher speed score (lower time) on best run
- *   5. Coin flip (flagged for TD decision)
+ * Mogul tiebreaker per FIS ICR 4207.3:
+ *   1. Higher total score
+ *   2. Higher turns score
+ *   3. Higher air score WITHOUT Degree of Difficulty (raw execution)
+ *   4. Higher speed score (= faster time)
+ *   else tied -- listing order falls to ranking standings (handled outside the engine)
  *
- * @param {Object} a - Run score object for skier A
- * @param {Object} b - Run score object for skier B
- * @returns {number} -1 if a wins, 1 if b wins, 0 if truly tied
+ * Manually-entered runs may not have a recorded pre-DD air value; they fall back
+ * to the post-DD air_score for this comparison only.
  */
-function tieBreak(a, b) {
+function tieBreakMogul(a, b) {
+  const aTotal = a.total_score ?? a.total ?? 0;
+  const bTotal = b.total_score ?? b.total ?? 0;
+  if (Math.abs(aTotal - bTotal) > 0.001) return bTotal - aTotal;
+  const aTurns = a.turns_score ?? a.turnsRaw ?? a.turnsContrib ?? 0;
+  const bTurns = b.turns_score ?? b.turnsRaw ?? b.turnsContrib ?? 0;
+  if (Math.abs(aTurns - bTurns) > 0.001) return bTurns - aTurns;
+  const aAirNoDd = a.air_score_no_dd ?? a.airNoDd ?? a.air_score ?? a.airRaw ?? 0;
+  const bAirNoDd = b.air_score_no_dd ?? b.airNoDd ?? b.air_score ?? b.airRaw ?? 0;
+  if (Math.abs(aAirNoDd - bAirNoDd) > 0.001) return bAirNoDd - aAirNoDd;
+  const aSpeed = a.speed_score ?? a.speedRaw ?? 0;
+  const bSpeed = b.speed_score ?? b.speedRaw ?? 0;
+  if (Math.abs(aSpeed - bSpeed) > 0.001) return bSpeed - aSpeed;
+  return 0;
+}
+
+/**
+ * Aerials tiebreaker -- legacy order retained for now.
+ *   1. Total  2. Air (post-DD)  3. Turns  4. Speed
+ */
+function tieBreakAerials(a, b) {
   const aTotal = a.total_score ?? a.total ?? 0;
   const bTotal = b.total_score ?? b.total ?? 0;
   const aAir = a.air_score ?? a.airRaw ?? 0;
@@ -618,25 +645,27 @@ function tieBreak(a, b) {
   if (Math.abs(aAir - bAir) > 0.001) return bAir - aAir;
   if (Math.abs(aTurns - bTurns) > 0.001) return bTurns - aTurns;
   if (Math.abs(aSpeed - bSpeed) > 0.001) return bSpeed - aSpeed;
-  return 0; // True tie -- requires TD decision
+  return 0;
 }
+
+// Backwards-compatible alias -- defaults to mogul (FIS) ordering.
+const tieBreak = tieBreakMogul;
 
 /**
  * Sort and rank an array of run results.
- * Uses tieBreak for equal scores.
- *
- * @param {Object[]} results - Array of {registrationId, ...scoreFields}
- * @returns {Object[]} sorted with rank assigned
+ * @param {Object[]} results
+ * @param {string} [discipline] - 'mogul' (default, FIS ICR 4207.3) or 'aerials'
  */
-function rankResults(results) {
-  const sorted = [...results].sort((a, b) => tieBreak(a, b));
+function rankResults(results, discipline) {
+  const cmp = discipline === 'aerials' ? tieBreakAerials : tieBreakMogul;
+  const sorted = [...results].sort((a, b) => cmp(a, b));
   let rank = 1;
   for (let i = 0; i < sorted.length; i++) {
-    if (i > 0 && tieBreak(sorted[i], sorted[i - 1]) !== 0) {
+    if (i > 0 && cmp(sorted[i], sorted[i - 1]) !== 0) {
       rank = i + 1;
     }
     sorted[i].rank = rank;
-    sorted[i].tied = i > 0 && tieBreak(sorted[i], sorted[i - 1]) === 0;
+    sorted[i].tied = i > 0 && cmp(sorted[i], sorted[i - 1]) === 0;
   }
   return sorted;
 }
@@ -647,6 +676,38 @@ function roundToHundredth(n) {
 
 function floorToHundredth(n) {
   return Math.floor(n * 100) / 100;
+}
+
+// Pick the best run per key from a flat array of runs, using the discipline's
+// FIS-compliant tie-break to resolve equal-total cases (ICR 4207.3 for mogul;
+// aerials uses Total → Air → Turns → Speed). Returns an object keyed by keyFn.
+function pickBestRun(runs, discipline, keyFn = r => r.registration_id) {
+  const cmp = discipline === 'aerials' ? tieBreakAerials : tieBreakMogul;
+  const best = {};
+  for (const r of runs) {
+    const k = keyFn(r);
+    if (k == null) continue;
+    const cur = best[k];
+    if (!cur || cmp(r, cur) < 0) best[k] = r;
+  }
+  return best;
+}
+
+// Apply Olympic-style skip ranking to a tier of athletes already ordered by
+// the discipline's tie-break (e.g. output of rankResults), starting at
+// startRank. Tied athletes share a rank; the next rank skips by the size of
+// the tied group. Returns startRank + athletes.length so the caller can chain
+// tiers (Final 2 → Final 1 → Qualifier).
+function applyTierRanks(athletes, discipline, startRank) {
+  const cmp = discipline === 'aerials' ? tieBreakAerials : tieBreakMogul;
+  let rank = startRank;
+  for (let i = 0; i < athletes.length; i++) {
+    if (i > 0 && cmp(athletes[i], athletes[i - 1]) !== 0) {
+      rank = startRank + i;
+    }
+    athletes[i].rank = rank;
+  }
+  return startRank + athletes.length;
 }
 
 module.exports = {
@@ -663,6 +724,10 @@ module.exports = {
   areJumpsRepeats,
   rankResults,
   tieBreak,
+  tieBreakMogul,
+  tieBreakAerials,
+  pickBestRun,
+  applyTierRanks,
   roundToHundredth,
   floorToHundredth,
 };

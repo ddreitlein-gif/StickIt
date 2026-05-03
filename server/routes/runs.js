@@ -397,14 +397,17 @@ router.post('/manual', async (req, res) => {
     }
 
     const id = uuidv4();
+    const airNoDdValue = event.discipline === 'aerials'
+      ? null
+      : (result.airNoDd != null ? result.airNoDd : result.airContrib);
     await execute(
       `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,hj_pending,
          jump1_code,jump1_dd,jump2_code,jump2_dd,run_time,
-         turns_score,air_score,speed_score,total_score,manually_entered)
-       VALUES (?,?,?,?,?,'complete',0,?,?,?,?,?,?,?,?,?,1)`,
+         turns_score,air_score,air_score_no_dd,speed_score,total_score,manually_entered)
+       VALUES (?,?,?,?,?,'complete',0,?,?,?,?,?,?,?,?,?,?,1)`,
       [id, req.params.eventId, registration_id, run_number, round,
        jump1_code || null, dd1, jump2_code || null, dd2, run_time || null,
-       result.turnsContrib, result.airContrib, result.speedContrib, result.total]
+       result.turnsContrib, result.airContrib, airNoDdValue, result.speedContrib, result.total]
     );
 
     // Store per-judge scores in judge_scores (if event has judges configured)
@@ -482,7 +485,7 @@ router.post('/:runId/manual-score', async (req, res) => {
     if (run_status && ['DNS', 'DNF', 'DSQ'].includes(run_status)) {
       await execute(
         `UPDATE runs SET run_status=?, status='complete', hj_pending=0, manually_entered=1,
-           turns_score=NULL, air_score=NULL, speed_score=NULL, total_score=NULL,
+           turns_score=NULL, air_score=NULL, air_score_no_dd=NULL, speed_score=NULL, total_score=NULL,
            updated_at=datetime('now') WHERE id=?`,
         [run_status, run.id]
       );
@@ -542,17 +545,20 @@ router.post('/:runId/manual-score', async (req, res) => {
       });
     }
 
+    const airNoDdValueEdit = event.discipline === 'aerials'
+      ? null
+      : (result.airNoDd != null ? result.airNoDd : result.airContrib);
     await execute(
       `UPDATE runs SET
          jump1_code=?, jump1_dd=?, jump2_code=?, jump2_dd=?,
          run_time=?, run_status=NULL,
-         turns_score=?, air_score=?, speed_score=?, total_score=?,
+         turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?,
          status='complete', hj_pending=0, manually_entered=1,
          updated_at=datetime('now')
        WHERE id=?`,
       [code1 || null, dd1, code2 || null, dd2,
        finalTime || null,
-       result.turnsContrib, result.airContrib, result.speedContrib, result.total,
+       result.turnsContrib, result.airContrib, airNoDdValueEdit, result.speedContrib, result.total,
        run.id]
     );
 
@@ -1039,14 +1045,14 @@ async function tryFinalize(run, eventId) {
   if (hj) {
     // Store computed scores but hold in hj_pending state -- do not mark complete yet
     await execute(
-      `UPDATE runs SET turns_score=?, air_score=?, speed_score=?, total_score=?, hj_pending=1, updated_at=datetime('now') WHERE id=?`,
-      [result.turnsContrib, result.airContrib, result.speedContrib, result.total, run.id]
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, hj_pending=1, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, result.airNoDd ?? null, result.speedContrib, result.total, run.id]
     );
   } else {
     // No HJ configured -- publish immediately (backward-compatible)
     await execute(
-      `UPDATE runs SET turns_score=?, air_score=?, speed_score=?, total_score=?, status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=?`,
-      [result.turnsContrib, result.airContrib, result.speedContrib, result.total, run.id]
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, result.airNoDd ?? null, result.speedContrib, result.total, run.id]
     );
   }
   return result;
@@ -1261,7 +1267,7 @@ router.delete('/:runId/scores/last', async (req, res) => {
     // If run was complete or hj_pending, revert to scoring and clear computed scores
     if (run.status === 'complete' || run.hj_pending) {
       await execute(
-        `UPDATE runs SET status='scoring', hj_pending=0, turns_score=NULL, air_score=NULL, speed_score=NULL, total_score=NULL, updated_at=datetime('now') WHERE id=?`,
+        `UPDATE runs SET status='scoring', hj_pending=0, turns_score=NULL, air_score=NULL, air_score_no_dd=NULL, speed_score=NULL, total_score=NULL, updated_at=datetime('now') WHERE id=?`,
         [run.id]
       );
     }
@@ -1338,6 +1344,7 @@ router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
         hj_pending=0,
         turns_score=?,
         air_score=?,
+        air_score_no_dd=?,
         speed_score=?,
         total_score=?,
         updated_at=datetime('now')
@@ -1345,6 +1352,7 @@ router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
       [
         partial ? partial.turnsContrib : null,
         partial ? partial.airContrib   : null,
+        partial && partial.airNoDd != null ? partial.airNoDd : null,
         partial ? partial.speedContrib : null,
         partial ? partial.total        : null,
         run.id,
@@ -1383,7 +1391,7 @@ router.delete('/:runId/time', async (req, res) => {
     // If run was hj_pending or complete, revert to scoring and clear computed scores
     if (run.hj_pending || run.status === 'complete') {
       await execute(
-        `UPDATE runs SET status='scoring', hj_pending=0, turns_score=NULL, air_score=NULL, speed_score=NULL, total_score=NULL, updated_at=datetime('now') WHERE id=? AND event_id=?`,
+        `UPDATE runs SET status='scoring', hj_pending=0, turns_score=NULL, air_score=NULL, air_score_no_dd=NULL, speed_score=NULL, total_score=NULL, updated_at=datetime('now') WHERE id=? AND event_id=?`,
         [req.params.runId, req.params.eventId]
       );
     }
@@ -1412,7 +1420,7 @@ router.put('/:runId/status', async (req, res) => {
       // don't retain stale speed/turns/air/total values.
       await execute(
         `UPDATE runs SET run_status=?, status='complete', hj_pending=0,
-           turns_score=NULL, air_score=NULL, speed_score=NULL, total_score=NULL,
+           turns_score=NULL, air_score=NULL, air_score_no_dd=NULL, speed_score=NULL, total_score=NULL,
            updated_at=datetime('now') WHERE id=? AND event_id=?`,
         [statusVal, req.params.runId, req.params.eventId]
       );

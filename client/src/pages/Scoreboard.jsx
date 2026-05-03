@@ -24,7 +24,49 @@ export default function Scoreboard() {
   const [placements, setPlacements] = useState([])
   const [judgeScores, setJudgeScores] = useState({})
   const [allRuns, setAllRuns] = useState([])
+  const [downloading, setDownloading] = useState(false)
   const wsRef = useRef(null)
+
+  const downloadPdf = async (endpoint, suffix) => {
+    if (!event || event.status !== 'complete' || downloading) return
+    setDownloading(true)
+    try {
+      const res = await fetch(`/api/pdf/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId: event.id }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j.error || 'PDF failed')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(event.name || 'event').replace(/\s+/g, '_')}_${suffix}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('PDF download failed:', e)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const PdfButton = () => (
+    event?.status === 'complete' ? (
+      <div className="text-center mb-4">
+        <button
+          disabled={downloading}
+          onClick={() => downloadPdf('event-results-detailed', 'event_results_detailed')}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-sm font-semibold text-white"
+        >
+          {downloading ? 'Preparing…' : 'Download PDF'}
+        </button>
+      </div>
+    ) : null
+  )
 
   const loadEvent = async () => {
     try {
@@ -457,7 +499,7 @@ export default function Scoreboard() {
         {/* Bracket / Place tabs */}
         {bracketMatches.length > 0 ? (
           <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-800 flex-1">
-            <div className="px-2 pt-2 bg-gray-800 flex gap-1 border-b border-gray-700">
+            <div className="px-2 pt-2 bg-gray-800 flex gap-1 border-b border-gray-700 items-center">
               {['bracket', 'place'].map(t => (
                 <button
                   key={t}
@@ -467,6 +509,20 @@ export default function Scoreboard() {
                   {t === 'bracket' ? 'Bracket' : 'Place'}
                 </button>
               ))}
+              {event?.status === 'complete' && (
+                <div className="ml-auto pr-1 pb-1">
+                  <button
+                    disabled={downloading}
+                    onClick={() => downloadPdf(
+                      dualTab === 'bracket' ? 'dual-bracket' : 'dual-results',
+                      dualTab === 'bracket' ? 'dual_bracket' : 'dual_results',
+                    )}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-semibold text-white"
+                  >
+                    {downloading ? 'Preparing…' : 'Download PDF'}
+                  </button>
+                </div>
+              )}
             </div>
             {dualTab === 'bracket' ? (
               <div className="overflow-x-auto p-4">
@@ -562,6 +618,11 @@ export default function Scoreboard() {
                     )}
                   </tbody>
                 </table>
+                {placements.some(p => p.ffsp != null) && (
+                  <div className="text-center text-[11px] text-gray-500 italic px-4 py-3">
+                    Official FFSP scores are calculated by U.S. Ski and Snowboard and are subject to change.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -588,6 +649,7 @@ export default function Scoreboard() {
           <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
           <div className="text-blue-400 text-lg mt-1">Live Scoreboard — Best of 2</div>
         </div>
+        <PdfButton />
         {activeRun && (
           <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">
             <div className="text-xs uppercase tracking-widest text-blue-200 mb-1">Now Competing</div>
@@ -668,6 +730,7 @@ export default function Scoreboard() {
           <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
           <div className="text-blue-400 text-lg mt-1">Live Scoreboard</div>
         </div>
+        <PdfButton />
         {activeRun && (
           <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">
             <div className="text-xs uppercase tracking-widest text-blue-200 mb-1">Now Competing</div>
@@ -743,6 +806,7 @@ export default function Scoreboard() {
         <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
         <div className="text-blue-400 text-lg mt-1">Live Scoreboard</div>
       </div>
+      <PdfButton />
 
       {activeRun && (
         <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">

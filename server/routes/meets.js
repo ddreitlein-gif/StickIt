@@ -587,7 +587,7 @@ router.post('/:id/close', async (req, res) => {
             if (data._run1_total == null) data._run1_total = 0;
             if (data._run2_total == null) data._run2_total = 0;
           }
-          const ranked = rankResults(Object.values(athleteRuns));
+          const ranked = rankResults(Object.values(athleteRuns), ev.discipline);
 
           const xml = transmit.generateSingleMogulXml({
             meet, event: ev, ranked, judges, officials,

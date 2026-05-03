@@ -1,10 +1,11 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne } = require('../db/schema');
-const { rankResults } = require('../scoring/engine');
+const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
 const { computeDualFfsp } = require('../dual/ffsp');
+const { rankDualPlacements } = require('../dual/placement_ranking');
 
 // Shared helper: ranked results for a single run_number
-async function rankedRunResults(eventId, runNumber) {
+async function rankedRunResults(eventId, runNumber, discipline) {
   const runs = await queryAll(
     `SELECT r.*, reg.bib_number, reg.seed, a.first_name, a.last_name, a.ussa_num, a.nation, a.fis_id, a.club,
             r.tl_carving, r.tl_abext, r.tl_upper_body, r.tl_deduction
@@ -15,11 +16,11 @@ async function rankedRunResults(eventId, runNumber) {
      ORDER BY r.total_score DESC`,
     [eventId, runNumber]
   );
-  return rankResults(runs);
+  return rankResults(runs, discipline);
 }
 
 // Shared helper: best score per athlete across multiple run_numbers
-async function bestScoreResults(eventId, runNumbers) {
+async function bestScoreResults(eventId, runNumbers, discipline) {
   const placeholders = runNumbers.map(() => '?').join(',');
   const runs = await queryAll(
     `SELECT r.*, reg.bib_number, reg.seed, a.first_name, a.last_name, a.ussa_num, a.nation, a.fis_id, a.club,
@@ -31,13 +32,8 @@ async function bestScoreResults(eventId, runNumbers) {
      ORDER BY r.total_score DESC`,
     [eventId, ...runNumbers]
   );
-  const best = {};
-  for (const r of runs) {
-    if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) {
-      best[r.registration_id] = r;
-    }
-  }
-  return rankResults(Object.values(best));
+  const best = pickBestRun(runs, discipline);
+  return rankResults(Object.values(best), discipline);
 }
 
 function getFormat(phases) {
@@ -79,103 +75,11 @@ router.get('/', async (req, res) => {
 
       if (!bracket.length) return res.json([]);
 
-      const placed = [];
-      const placedRegIds = new Set();
-
-      function computeAgeGroup(birthYear) {
-        if (!birthYear) return '';
-        const d = meet?.date ? new Date(meet.date) : new Date();
-        // Season runs July 1 – June 30; use the July year as reference
-        const seasonStartYear = d.getMonth() < 6 ? d.getFullYear() - 1 : d.getFullYear();
-        const age = seasonStartYear - parseInt(birthYear);
-        if (age <= 6) return '7';
-        if (age <= 8) return '9';
-        if (age <= 10) return '11';
-        if (age <= 12) return '13';
-        if (age <= 14) return '15';
-        if (age <= 16) return '17';
-        if (age <= 18) return '19';
-        if (age <= 20) return 'Sr';
-        return 'Vet';
-      }
-
-      function addAthlete(place, regId, first, last, bib, gender, birthYear, club, runStatus, regStatus) {
-        if (!regId || placedRegIds.has(regId)) return;
-        placedRegIds.add(regId);
-        const gp = (gender || '').charAt(0).toUpperCase() + computeAgeGroup(birthYear);
-        placed.push({
-          rank: place,
-          registration_id: regId,
-          bib_number: bib || '',
-          gp,
-          first_name: first || '',
-          last_name: last || '',
-          club: club || '',
-          run_status: runStatus || null,
-          reg_status: regStatus || null,
-        });
-      }
-
-      // Championship final (round 1, not small final)
-      const final1 = bracket.find(m => m.bracket_round === 1 && !m.is_small_final);
-      if (final1 && final1.status === 'complete') {
-        const winnerIsBlue = final1.winner_registration_id === final1.registration_id_blue;
-        if (winnerIsBlue) {
-          addAthlete(1, final1.registration_id_blue, final1.blue_first, final1.blue_last, final1.blue_bib, final1.blue_gender, final1.blue_birth_year, final1.blue_club, null, final1.blue_reg_status);
-          addAthlete(2, final1.registration_id_red, final1.red_first, final1.red_last, final1.red_bib, final1.red_gender, final1.red_birth_year, final1.red_club, final1.loser_status || null, final1.red_reg_status);
-        } else {
-          addAthlete(1, final1.registration_id_red, final1.red_first, final1.red_last, final1.red_bib, final1.red_gender, final1.red_birth_year, final1.red_club, null, final1.red_reg_status);
-          addAthlete(2, final1.registration_id_blue, final1.blue_first, final1.blue_last, final1.blue_bib, final1.blue_gender, final1.blue_birth_year, final1.blue_club, final1.loser_status || null, final1.blue_reg_status);
-        }
-      }
-
-      // Consolation matches (3rd/4th, 5th/6th, 7th/8th)
-      const consolMatches = bracket
-        .filter(m => m.is_small_final)
-        .sort((a, b) => a.bracket_position - b.bracket_position);
-      const consolPlaces = [3, 5, 7];
-      consolMatches.forEach((m, i) => {
-        if (m.status !== 'complete') return;
-        const startPlace = consolPlaces[i] || (3 + i * 2);
-        const winnerIsBlue = m.winner_registration_id === m.registration_id_blue;
-        if (winnerIsBlue) {
-          addAthlete(startPlace, m.registration_id_blue, m.blue_first, m.blue_last, m.blue_bib, m.blue_gender, m.blue_birth_year, m.blue_club, null, m.blue_reg_status);
-          addAthlete(startPlace + 1, m.registration_id_red, m.red_first, m.red_last, m.red_bib, m.red_gender, m.red_birth_year, m.red_club, m.loser_status || null, m.red_reg_status);
-        } else {
-          addAthlete(startPlace, m.registration_id_red, m.red_first, m.red_last, m.red_bib, m.red_gender, m.red_birth_year, m.red_club, null, m.red_reg_status);
-          addAthlete(startPlace + 1, m.registration_id_blue, m.blue_first, m.blue_last, m.blue_bib, m.blue_gender, m.blue_birth_year, m.blue_club, m.loser_status || null, m.blue_reg_status);
-        }
+      const placed = rankDualPlacements({
+        bracket,
+        meetDate: meet?.date,
+        isSeededGroups: true,
       });
-
-      // Remaining losers: ordered by round proximity to final, then by match
-      // judge points (higher = better), then by seed as tiebreaker
-      const mainCompleted = bracket
-        .filter(m => !m.is_small_final && m.status === 'complete' && m.bracket_round > 1)
-        .sort((a, b) => a.bracket_round - b.bracket_round || a.bracket_position - b.bracket_position);
-      let nextPlace = placed.length + 1;
-      const roundGroups = {};
-      for (const m of mainCompleted) {
-        if (!roundGroups[m.bracket_round]) roundGroups[m.bracket_round] = [];
-        const loserIsBlue = m.winner_registration_id !== m.registration_id_blue;
-        if (loserIsBlue && m.registration_id_blue && !placedRegIds.has(m.registration_id_blue)) {
-          const pts = m.loser_status ? -1 : (m.blue_total || 0);
-          roundGroups[m.bracket_round].push({ regId: m.registration_id_blue, first: m.blue_first, last: m.blue_last, bib: m.blue_bib, gender: m.blue_gender, birthYear: m.blue_birth_year, club: m.blue_club, seed: m.blue_dual_seed || 999, points: pts, loser_status: m.loser_status || null, reg_status: m.blue_reg_status });
-        } else if (!loserIsBlue && m.registration_id_red && !placedRegIds.has(m.registration_id_red)) {
-          const pts = m.loser_status ? -1 : (m.red_total || 0);
-          roundGroups[m.bracket_round].push({ regId: m.registration_id_red, first: m.red_first, last: m.red_last, bib: m.red_bib, gender: m.red_gender, birthYear: m.red_birth_year, club: m.red_club, seed: m.red_dual_seed || 999, points: pts, loser_status: m.loser_status || null, reg_status: m.red_reg_status });
-        }
-      }
-      const roundKeys = Object.keys(roundGroups).map(Number).sort((a, b) => a - b);
-      for (const round of roundKeys) {
-        const losers = roundGroups[round].sort((a, b) => {
-          if (b.points !== a.points) return b.points - a.points;
-          return (a.seed || 999) - (b.seed || 999);
-        });
-        for (const l of losers) {
-          addAthlete(nextPlace, l.regId, l.first, l.last, l.bib, l.gender, l.birthYear, l.club, l.loser_status, l.reg_status);
-          nextPlace++;
-        }
-      }
 
       // FFSP: only when event is complete
       if (event.status === 'complete') {
@@ -196,10 +100,11 @@ router.get('/', async (req, res) => {
 
     if (phases.length > 0) {
       const format = getFormat(phases);
+      const discipline = event ? event.discipline : 'mogul';
 
       if (format === 'best_of_2') {
         const runNumbers = phases.map(p => p.run_number);
-        const results = await bestScoreResults(eventId, runNumbers);
+        const results = await bestScoreResults(eventId, runNumbers, discipline);
         // Flagged
         const flaggedRuns = await queryAll(
           `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club
@@ -225,24 +130,25 @@ router.get('/', async (req, res) => {
 
         // Tier 1: Final 2
         if (f2 && f2.status === 'finalized') {
-          const f2Results = await rankedRunResults(eventId, f2.run_number);
-          for (const r of f2Results) { r.rank = globalRank++; r.tier = 'final_2'; tiers.push(r); rankedIds.add(r.registration_id); }
+          const f2Results = await rankedRunResults(eventId, f2.run_number, discipline);
+          globalRank = applyTierRanks(f2Results, discipline, globalRank);
+          for (const r of f2Results) { r.tier = 'final_2'; tiers.push(r); rankedIds.add(r.registration_id); }
         }
 
         // Tier 2: Final 1 not in F2
         if (f1) {
-          const f1Results = await rankedRunResults(eventId, f1.run_number);
-          for (const r of f1Results.filter(r => !rankedIds.has(r.registration_id))) {
-            r.rank = globalRank++; r.tier = 'final_1'; tiers.push(r); rankedIds.add(r.registration_id);
-          }
+          const f1Results = await rankedRunResults(eventId, f1.run_number, discipline);
+          const f1Tier = f1Results.filter(r => !rankedIds.has(r.registration_id));
+          globalRank = applyTierRanks(f1Tier, discipline, globalRank);
+          for (const r of f1Tier) { r.tier = 'final_1'; tiers.push(r); rankedIds.add(r.registration_id); }
         }
 
         // Tier 3: Qualifiers not in Finals
         if (qualRunNumbers.length > 0) {
-          const qualResults = await bestScoreResults(eventId, qualRunNumbers);
-          for (const r of qualResults.filter(r => !rankedIds.has(r.registration_id))) {
-            r.rank = globalRank++; r.tier = 'qualifier'; tiers.push(r); rankedIds.add(r.registration_id);
-          }
+          const qualResults = await bestScoreResults(eventId, qualRunNumbers, discipline);
+          const qualTier = qualResults.filter(r => !rankedIds.has(r.registration_id));
+          globalRank = applyTierRanks(qualTier, discipline, globalRank);
+          for (const r of qualTier) { r.tier = 'qualifier'; tiers.push(r); rankedIds.add(r.registration_id); }
         }
 
         // Flagged
@@ -259,7 +165,7 @@ router.get('/', async (req, res) => {
       }
 
       // Single phase - just rank run 1
-      const results = await rankedRunResults(eventId, 1);
+      const results = await rankedRunResults(eventId, 1, discipline);
       return res.json(results);
     }
 
@@ -278,12 +184,8 @@ router.get('/', async (req, res) => {
     const flagged = runs.filter(r => r.run_status);
     const scored  = runs.filter(r => !r.run_status);
 
-    const best = {};
-    for (const r of scored) {
-      if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) {
-        best[r.registration_id] = r;
-      }
-    }
+    const discipline = event ? event.discipline : 'mogul';
+    const best = pickBestRun(scored, discipline);
 
     const bestFlag = {};
     for (const r of flagged) {
@@ -292,7 +194,7 @@ router.get('/', async (req, res) => {
       }
     }
 
-    const rankedScored = rankResults(Object.values(best));
+    const rankedScored = rankResults(Object.values(best), discipline);
     const flaggedList  = Object.values(bestFlag).map(r => ({ ...r, rank: null }));
 
     res.json([...rankedScored, ...flaggedList]);

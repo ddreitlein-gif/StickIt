@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { queryAll, queryOne } = require('../db/schema');
-const { rankResults } = require('../scoring/engine');
+const { rankResults, pickBestRun } = require('../scoring/engine');
 const { normalizeGender } = require('../utils/gender');
 
 // Printable HTML results page -- open in browser and print to PDF
@@ -21,11 +21,8 @@ router.get('/results/:eventId', async (req, res) => {
       [req.params.eventId, round]
     );
 
-    const best = {};
-    for (const r of runs) {
-      if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) best[r.registration_id] = r;
-    }
-    const results = rankResults(Object.values(best));
+    const best = pickBestRun(runs, event.discipline);
+    const results = rankResults(Object.values(best), event.discipline);
 
     const roundLabel = round.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
     const genderLabel = normalizeGender(event.gender) === 'M' ? 'Male' : 'Female';

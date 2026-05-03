@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.22
+**Current version:** v1.16.24
 
 ## Commands
 
@@ -157,6 +157,59 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.24 Feature Notes
+
+### Tied-Rank Compliance (ICR 4207.3.4) + FIS-Compliant Best-Run Selection (v1.16.24)
+
+Two correctness fixes in result-assembly paths.
+
+**#7 — Tied athletes now share a rank (Olympic-style skip).** Previously, in qualifier/finals tiered events, after `rankResults()` correctly produced tied ranks, every assembly path overwrote them with `globalRank++`, splitting tied athletes into sequential ranks (e.g., 4, 5 instead of 4, 4). Per ICR 4207.3.4, when athletes tie at the unbreakable level (Total → Turns → Air-no-DD → Speed all equal), they share a rank and the next rank skips by the size of the tied group.
+
+**#8 — Best-run selection now applies the FIS tie-break.** Previously, when an athlete's two runs had equal total scores, the inline `r.total_score > best[id].total_score` loops kept whichever run was iterated first (arbitrary). The selected run could place the athlete worse against the field. Now uses `tieBreakMogul()`/`tieBreakAerials()` to pick the FIS-stronger run.
+
+**New helpers — `server/scoring/engine.js`:**
+- `pickBestRun(runs, discipline, keyFn = r => r.registration_id)` — picks the best run per key using the discipline's FIS-compliant comparator. The `keyFn` parameter handles `dual.js`'s `computeOfficialPlacings` which keys by `athlete_id`.
+- `applyTierRanks(athletes, discipline, startRank)` — applies Olympic-style skip ranking to a tier already ordered by tie-break, starting from `startRank`. Returns `startRank + athletes.length` so callers can chain tiers (Final 2 → Final 1 → Qualifiers).
+
+**Defensive assertion — `server/dual/placement.js`:** End of `buildPlacement()` now asserts that every real seed (1..R) appears exactly once in the order array. Belt-and-suspenders against a future regression in `applyBandRandomization`.
+
+**Replaced inline best-run loops:** `server/routes/results.js` (qualifier_finals + bestScoreResults + legacy non-phased), `server/routes/phases.js` (best-of-2 + qualifier_finals tiers), `server/routes/export.js` (~7 sites + 3 tier sites), `server/routes/pdf.js` (~4 sites + 3 tier sites), `server/routes/print.js`, `server/routes/dual.js` (`computeOfficialPlacings`).
+
+**Verification:** `node server/scripts/verify_v16.js` continues to pass 24/24. Defensive assertion verified against synthetic corrupt orders (duplicate seed and missing seed both throw; valid order passes through).
+
+**Files modified:** `server/scoring/engine.js`, `server/dual/placement.js`, `server/routes/results.js`, `server/routes/phases.js`, `server/routes/export.js`, `server/routes/pdf.js`, `server/routes/print.js`, `server/routes/dual.js`
+
+---
+
+## v1.16.23 Feature Notes
+
+### Mogul Tie-Break Compliance — FIS ICR 4207.3 (v1.16.23)
+
+Brought the mogul tie-break procedure into compliance with FIS ICR 4207.3 (also the rule USSS follows). Previous order was Total → Air (post-DD) → Turns → Speed; the FIS rule is Total → Turns → Air WITHOUT Degree of Difficulty (raw execution) → Speed. Two problems with the old code: Turns and Air were swapped, and the air comparison used the post-DD value instead of the pre-DD raw execution score.
+
+**New column — `runs.air_score_no_dd REAL`:** Stores the pre-DD raw air execution score, defined as `avg(judges per jump 1) + avg(judges per jump 2)`, floored to 2 decimal places. No 20-point cap (the FIS rule isolates execution quality). Existing `runs.air_score` (post-DD) is unchanged. Single-jump events double the one jump's average so the value is comparable to two-jump runs.
+
+**Backfill on startup:** `server/db/schema.js` calls `backfillAirScoreNoDd()` after `seedAerialsDDs()`. For every completed mogul run with `air_score_no_dd IS NULL`, computes the value from `judge_scores` (rows where `score_type IN ('air_jump1','air_jump2')`). Runs with no per-judge data (manually entered legacy runs) get `air_score_no_dd = air_score` as a non-strict fallback so they still rank sensibly.
+
+**Engine — `server/scoring/engine.js`:**
+- `calcMogulScore()` now returns a new `airNoDd` field alongside the existing `airContrib` (post-DD).
+- New `tieBreakMogul(a, b)` implements the FIS order with `Math.abs(... - ...) > 0.001` epsilon comparison.
+- New `tieBreakAerials(a, b)` retains the legacy order (Total → Air post-DD → Turns → Speed) — aerials is explicitly out of scope this release.
+- `rankResults(results, discipline)` now accepts a discipline parameter and dispatches: `'aerials'` → `tieBreakAerials`, anything else (including no arg) → `tieBreakMogul`. Default = mogul so all existing call sites get the corrected order.
+- `tieBreak` kept as a backwards-compatible alias for `tieBreakMogul`.
+
+**Persisted in every write path — `server/routes/runs.js`:** Finalize (tablet path), manual entry, edit-score, paper-score, and re-finalize after code-clear all write `air_score_no_dd` for mogul runs. Aerials runs leave the column NULL by design — aerials uses its own tie-break that doesn't reference it.
+
+**Discipline passed to all `rankResults` call sites:** `server/routes/results.js`, `server/routes/phases.js`, `server/routes/pdf.js`, `server/routes/export.js`, `server/routes/print.js`, `server/routes/meets.js` (close-and-export), `server/routes/transmit.js` (USSS XML). `server/routes/dual.js` `computeOfficialPlacings()` explicitly passes `'mogul'` since it ranks the source mogul event used for dual seeding.
+
+**Manual Score Modal:** No new UI field. The existing modal already collects per-judge raw air arrays (`a1Arr`, `a2Arr`); the engine now derives `airNoDd` from those arrays automatically, so the modal needs no change to opt into FIS-strict tie-breaking.
+
+**Out of scope (explicit):** Aerials tie-break order is unchanged this release. Dual moguls use a separate placement algorithm (`server/dual/placement.js`) and are not affected. Historical totals (`runs.total_score`) are not recomputed — only the new column is backfilled.
+
+**Files modified:** `server/scoring/engine.js`, `server/db/schema.js`, `server/routes/runs.js`, `server/routes/results.js`, `server/routes/phases.js`, `server/routes/pdf.js`, `server/routes/export.js`, `server/routes/print.js`, `server/routes/meets.js`, `server/routes/transmit.js`, `server/routes/dual.js`
 
 ---
 

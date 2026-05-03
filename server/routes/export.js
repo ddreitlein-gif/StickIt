@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { queryAll, queryOne } = require('../db/schema');
-const { rankResults } = require('../scoring/engine');
+const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 
 // v1.9.00: Phase-aware results helper (shared across export endpoints)
@@ -9,6 +9,9 @@ async function getPhaseAwareResults(eventId) {
     `SELECT * FROM event_phases WHERE event_id=? ORDER BY sequence_order`, [eventId]
   );
   if (!phases.length) return null; // caller should use legacy path
+
+  const evRow = await queryOne('SELECT discipline FROM events WHERE id=?', [eventId]);
+  const disc = evRow ? evRow.discipline : 'mogul';
 
   const types = phases.map(p => p.phase_type);
   const isBestOf2 = types.includes('best_of_2');
@@ -30,11 +33,8 @@ async function getPhaseAwareResults(eventId) {
   if (isBestOf2) {
     const runNumbers = phases.map(p => p.run_number);
     const runs = await runQuery(runNumbers);
-    const best = {};
-    for (const r of runs) {
-      if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) best[r.registration_id] = r;
-    }
-    return rankResults(Object.values(best));
+    const best = pickBestRun(runs, disc);
+    return rankResults(Object.values(best), disc);
   }
 
   if (isQualFinals) {
@@ -48,39 +48,37 @@ async function getPhaseAwareResults(eventId) {
 
     const rankedRunResults = async (runNumber) => {
       const runs = await runQuery([runNumber]);
-      return rankResults(runs);
+      return rankResults(runs, disc);
     };
     const bestScoreResults = async (runNumbers) => {
       const runs = await runQuery(runNumbers);
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) best[r.registration_id] = r;
-      }
-      return rankResults(Object.values(best));
+      const best = pickBestRun(runs, disc);
+      return rankResults(Object.values(best), disc);
     };
 
     if (f2 && f2.status === 'finalized') {
       const f2Results = await rankedRunResults(f2.run_number);
-      for (const r of f2Results) { r.rank = globalRank++; r.tier = 'final_2'; tiers.push(r); rankedIds.add(r.registration_id); }
+      globalRank = applyTierRanks(f2Results, disc, globalRank);
+      for (const r of f2Results) { r.tier = 'final_2'; tiers.push(r); rankedIds.add(r.registration_id); }
     }
     if (f1) {
       const f1Results = await rankedRunResults(f1.run_number);
-      for (const r of f1Results.filter(r => !rankedIds.has(r.registration_id))) {
-        r.rank = globalRank++; r.tier = 'final_1'; tiers.push(r); rankedIds.add(r.registration_id);
-      }
+      const f1Tier = f1Results.filter(r => !rankedIds.has(r.registration_id));
+      globalRank = applyTierRanks(f1Tier, disc, globalRank);
+      for (const r of f1Tier) { r.tier = 'final_1'; tiers.push(r); rankedIds.add(r.registration_id); }
     }
     if (qualRunNumbers.length > 0) {
       const qualResults = await bestScoreResults(qualRunNumbers);
-      for (const r of qualResults.filter(r => !rankedIds.has(r.registration_id))) {
-        r.rank = globalRank++; r.tier = 'qualifier'; tiers.push(r); rankedIds.add(r.registration_id);
-      }
+      const qTier = qualResults.filter(r => !rankedIds.has(r.registration_id));
+      globalRank = applyTierRanks(qTier, disc, globalRank);
+      for (const r of qTier) { r.tier = 'qualifier'; tiers.push(r); rankedIds.add(r.registration_id); }
     }
     return tiers;
   }
 
   // Single phase
   const runs = await runQuery([1]);
-  return rankResults(runs);
+  return rankResults(runs, disc);
 }
 
 // GET CSV export of results for an event
@@ -103,11 +101,8 @@ router.get('/csv/:eventId', async (req, res) => {
          WHERE r.event_id=? AND r.round=? AND r.status='complete'`,
         [req.params.eventId, round]
       );
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) best[r.registration_id] = r;
-      }
-      ranked = rankResults(Object.values(best));
+      const best = pickBestRun(runs, event.discipline);
+      ranked = rankResults(Object.values(best), event.discipline);
     }
 
     const headers = ['Place','Bib','Last Name','First Name','USSA#','Club','Turns','Air','Time','Speed','Total','Jump 1','Jump 2'];
@@ -142,11 +137,8 @@ router.get('/ussas/:eventId', async (req, res) => {
          WHERE r.event_id=? AND r.status='complete' AND r.round='qualification'`,
         [req.params.eventId]
       );
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) best[r.registration_id] = r;
-      }
-      ranked = rankResults(Object.values(best));
+      const best = pickBestRun(runs, event.discipline);
+      ranked = rankResults(Object.values(best), event.discipline);
     }
 
     // USSAS tab-delimited format: Place, USSA#, LastName, FirstName, BirthYear, Gender, Score
@@ -178,12 +170,8 @@ router.get('/results-csv/:eventId', async (req, res) => {
          WHERE r.event_id=? AND r.round=? AND r.status='complete'`,
         [req.params.eventId, round]
       );
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score)
-          best[r.registration_id] = r;
-      }
-      ranked = rankResults(Object.values(best));
+      const best = pickBestRun(runs, event.discipline);
+      ranked = rankResults(Object.values(best), event.discipline);
     }
 
     // Pull judge scores for the winning runs
@@ -332,12 +320,8 @@ router.get('/results-xlsx/:eventId', async (req, res) => {
          WHERE r.event_id=? AND r.round=? AND r.status='complete'`,
         [req.params.eventId, round]
       );
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score)
-          best[r.registration_id] = r;
-      }
-      ranked = rankResults(Object.values(best));
+      const best = pickBestRun(runs, event.discipline);
+      ranked = rankResults(Object.values(best), event.discipline);
     }
 
     const runIds = ranked.map(r => r.id);
@@ -517,12 +501,8 @@ router.get('/results-html/:eventId', async (req, res) => {
          WHERE r.event_id=? AND r.round=? AND r.status='complete'`,
         [req.params.eventId, round]
       );
-      const best = {};
-      for (const r of runs) {
-        if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score)
-          best[r.registration_id] = r;
-      }
-      ranked = rankResults(Object.values(best));
+      const best = pickBestRun(runs, event.discipline);
+      ranked = rankResults(Object.values(best), event.discipline);
     }
 
     const fmt = (v) => (v != null && v !== '') ? Number(v).toFixed(2) : '--';

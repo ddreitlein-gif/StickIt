@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
-const { rankResults } = require('../scoring/engine');
+const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
 const { requireUnlocked } = require('../middleware/lockCheck');
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
@@ -9,8 +9,14 @@ router.use((req, res, next) => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Resolve event discipline once (cached per call site by callers)
+async function getDiscipline(eventId) {
+  const evt = await queryOne('SELECT discipline FROM events WHERE id=?', [eventId]);
+  return evt ? evt.discipline : 'mogul';
+}
+
 // Get ranked results for a given run_number within an event
-async function rankedRunResults(eventId, runNumber) {
+async function rankedRunResults(eventId, runNumber, discipline) {
   const runs = await queryAll(
     `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club, a.nation, a.fis_id, a.birth_year
      FROM runs r
@@ -20,11 +26,12 @@ async function rankedRunResults(eventId, runNumber) {
      ORDER BY r.total_score DESC`,
     [eventId, runNumber]
   );
-  return rankResults(runs);
+  const disc = discipline || await getDiscipline(eventId);
+  return rankResults(runs, disc);
 }
 
 // Get best score per athlete across multiple run_numbers
-async function bestScoreResults(eventId, runNumbers) {
+async function bestScoreResults(eventId, runNumbers, discipline) {
   const placeholders = runNumbers.map(() => '?').join(',');
   const runs = await queryAll(
     `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club, a.nation, a.fis_id, a.birth_year
@@ -35,13 +42,9 @@ async function bestScoreResults(eventId, runNumbers) {
      ORDER BY r.total_score DESC`,
     [eventId, ...runNumbers]
   );
-  const best = {};
-  for (const r of runs) {
-    if (!best[r.registration_id] || r.total_score > best[r.registration_id].total_score) {
-      best[r.registration_id] = r;
-    }
-  }
-  return rankResults(Object.values(best));
+  const disc = discipline || await getDiscipline(eventId);
+  const best = pickBestRun(runs, disc);
+  return rankResults(Object.values(best), disc);
 }
 
 // Determine the event format from existing phases
@@ -692,48 +695,46 @@ router.get('/results', async (req, res) => {
       const q2 = phases.find(p => p.phase_type === 'qualifier_2');
       const qualRunNumbers = phases.filter(p => p.phase_type === 'run' || p.phase_type === 'qualifier_2').map(p => p.run_number);
 
+      const discipline = await getDiscipline(eventId);
       const tiers = [];
       let globalRank = 1;
       const rankedIds = new Set();
 
       // Tier 1: Final 2 athletes
       if (f2 && f2.status === 'finalized') {
-        const f2Results = await rankedRunResults(eventId, f2.run_number);
+        const f2Results = await rankedRunResults(eventId, f2.run_number, discipline);
+        globalRank = applyTierRanks(f2Results, discipline, globalRank);
         for (const r of f2Results) {
-          r.rank = globalRank;
           r.tier = 'final_2';
           r.tier_label = 'Final 2';
           tiers.push(r);
           rankedIds.add(r.registration_id);
-          globalRank++;
         }
       }
 
       // Tier 2: Final 1 athletes not in Final 2
       if (f1) {
-        const f1Results = await rankedRunResults(eventId, f1.run_number);
+        const f1Results = await rankedRunResults(eventId, f1.run_number, discipline);
         const f1Filtered = f1Results.filter(r => !rankedIds.has(r.registration_id));
+        globalRank = applyTierRanks(f1Filtered, discipline, globalRank);
         for (const r of f1Filtered) {
-          r.rank = globalRank;
           r.tier = 'final_1';
           r.tier_label = 'Final 1';
           tiers.push(r);
           rankedIds.add(r.registration_id);
-          globalRank++;
         }
       }
 
       // Tier 3: Qualifier athletes not in Finals
       if (qualRunNumbers.length > 0) {
-        const qualResults = await bestScoreResults(eventId, qualRunNumbers);
+        const qualResults = await bestScoreResults(eventId, qualRunNumbers, discipline);
         const qFiltered = qualResults.filter(r => !rankedIds.has(r.registration_id));
+        globalRank = applyTierRanks(qFiltered, discipline, globalRank);
         for (const r of qFiltered) {
-          r.rank = globalRank;
           r.tier = 'qualifier';
           r.tier_label = q2 ? 'Qualification' : 'Qualifier 1';
           tiers.push(r);
           rankedIds.add(r.registration_id);
-          globalRank++;
         }
       }
 
