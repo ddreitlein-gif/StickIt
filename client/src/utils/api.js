@@ -63,6 +63,7 @@ export const api = {
     return apiFetch(`/events/${eventId}/runs${q ? `?${q}` : ''}`);
   },
   getActiveRun: (eventId) => apiFetch(`/events/${eventId}/runs/active`),
+  getUpcomingAthletes: (eventId, runNumber) => apiFetch(`/events/${eventId}/runs/upcoming${runNumber ? `?run_number=${runNumber}` : ''}`),
   createRun: (eventId, data) => apiFetch(`/events/${eventId}/runs`, { method: 'POST', body: data }),
   startForerunner: (eventId) => apiFetch(`/events/${eventId}/runs/forerunner`, { method: 'POST' }),
   updateRun: (eventId, runId, data) => apiFetch(`/events/${eventId}/runs/${runId}`, { method: 'PUT', body: data }),

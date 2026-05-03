@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.28
+**Current version:** v1.16.29
 
 ## Commands
 
@@ -157,6 +157,26 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.29 Feature Notes
+
+### Live Scoreboard — Upcoming Athletes Box (v1.16.29)
+
+The live scoreboard at `/scoreboard/<short>` now shows an **Upcoming Athletes** card directly below the rank table for individual mogul and aerials events. The card lists the remaining queue for the current run/phase, ordered by run order. As soon as an athlete's run starts (status flips to `'scoring'`) they leave the upcoming card and appear in the **Now Competing** banner; once finalized they appear in the rank table.
+
+**Header text** reflects the active phase: `Run 1 — Up Next`, `Run 2 — Up Next`, `Qualifier 1 — Up Next`, `Qualifier 2 — Up Next`, `Final 1 — Up Next`, `Final 2 — Up Next`. For single-run events without phases, the header reads `Run 1 — Up Next`.
+
+**Columns:** Order | Bib | Name (e.g., `Doe, John`). The visual treatment is intentionally muted vs. the rank table — `bg-gray-900/50` card, `bg-gray-800/40`/`/60` headers, `opacity-70` body rows, dimmer gray text — so it reads as secondary information.
+
+**Scope:** standard mogul, best-of-2 mogul, qualifier/finals mogul, and aerials. Dual mogul (bracket-driven, no run order) is unchanged.
+
+**New endpoint — `GET /api/events/:eventId/runs/upcoming?run_number=N`:** returns `{ run_number, phase_label, athletes: [{ id, bib_number, run_order, first_name, last_name }, ...] }` ordered by `run_order ASC`. Mirrors the phase-resolution logic of `/runs/next-up` (active phase → first not-started → fall-through to legacy `registrations.run_order`) but drops the `LIMIT 1`. Returns `{ run_number: null, phase_label: null, athletes: [] }` when the event is complete (all phases finalized or `events.status='complete'`). The existing `NOT IN (SELECT registration_id FROM runs WHERE run_number = ?)` filter naturally excludes the currently-scoring athlete (their run row exists with `status='scoring'`).
+
+**Reactivity:** the upcoming fetch is added to the existing `Promise.all` in `loadResults()`. All existing WebSocket handlers (`score_update`, `run_started`, `run_updated`) and the 5-second polling already call `loadResults()`, so the card refreshes automatically with no new listener wiring.
+
+**Files modified:** `server/routes/runs.js`, `client/src/utils/api.js`, `client/src/pages/Scoreboard.jsx`
 
 ---
 

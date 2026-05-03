@@ -193,6 +193,71 @@ router.get('/next-up', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET upcoming athletes (full ordered queue for the current/next run)
+// Mirrors /next-up phase resolution but returns the full list instead of LIMIT 1.
+router.get('/upcoming', async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const requestedRunNumber = req.query.run_number ? parseInt(req.query.run_number) : null;
+
+    // If event itself is marked complete, return empty.
+    const evt = await queryOne(`SELECT status FROM events WHERE id=?`, [eventId]);
+    if (evt && evt.status === 'complete') {
+      return res.json({ run_number: null, phase_label: null, athletes: [] });
+    }
+
+    const phases = await queryAll(
+      `SELECT * FROM event_phases WHERE event_id=? ORDER BY sequence_order`, [eventId]
+    );
+
+    if (phases.length > 0) {
+      // All phases finalized → event effectively complete.
+      if (phases.every(p => p.status === 'finalized')) {
+        return res.json({ run_number: null, phase_label: null, athletes: [] });
+      }
+
+      let activePhase = phases.find(p => p.status === 'in_progress');
+      if (!activePhase) {
+        const lastFinalized = [...phases].reverse().find(p => p.status === 'finalized');
+        if (lastFinalized) {
+          activePhase = phases.find(p => p.sequence_order > lastFinalized.sequence_order && p.status === 'not_started');
+        } else {
+          activePhase = phases.find(p => p.status === 'not_started');
+        }
+      }
+      const runNumber = requestedRunNumber || (activePhase ? activePhase.run_number : 1);
+      const phase = phases.find(p => p.run_number === runNumber);
+
+      if (phase) {
+        const rows = await queryAll(
+          `SELECT reg.id, reg.bib_number, pro.run_order, a.first_name, a.last_name
+           FROM phase_run_order pro
+           JOIN registrations reg ON reg.id = pro.registration_id
+           JOIN athletes a ON a.id = reg.athlete_id
+           WHERE pro.phase_id = ? AND reg.status = 'registered'
+             AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
+           ORDER BY pro.run_order ASC`,
+          [phase.id, eventId, runNumber]
+        );
+        return res.json({ run_number: runNumber, phase_label: phase.label, athletes: rows });
+      }
+    }
+
+    // Legacy / no-phases path
+    const runNumber = requestedRunNumber || 1;
+    const rows = await queryAll(
+      `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name
+       FROM registrations reg
+       JOIN athletes a ON a.id = reg.athlete_id
+       WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL
+         AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
+       ORDER BY reg.run_order ASC`,
+      [eventId, eventId, runNumber]
+    );
+    res.json({ run_number: runNumber, phase_label: `Run ${runNumber}`, athletes: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET active run -- includes run_position and total_runners when run_order is set
 router.get('/active', async (req, res) => {
   try {

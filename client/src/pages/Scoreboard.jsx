@@ -24,6 +24,7 @@ export default function Scoreboard() {
   const [placements, setPlacements] = useState([])
   const [judgeScores, setJudgeScores] = useState({})
   const [allRuns, setAllRuns] = useState([])
+  const [upcoming, setUpcoming] = useState(null)
   const [downloading, setDownloading] = useState(false)
   const wsRef = useRef(null)
 
@@ -79,11 +80,12 @@ export default function Scoreboard() {
 
   const loadResults = async () => {
     try {
-      const [res, active, pd, jsData] = await Promise.all([
+      const [res, active, pd, jsData, up] = await Promise.all([
         fetch(`/api/events/${eventId}/results`).then(r => r.json()),
         fetch(`/api/events/${eventId}/runs/active`).then(r => r.json()),
         fetch(`/api/events/${eventId}/phases/results`).then(r => r.json()).catch(() => null),
         fetch(`/api/events/${eventId}/results/judge-scores`).then(r => r.json()).catch(() => null),
+        fetch(`/api/events/${eventId}/runs/upcoming`).then(r => r.json()).catch(() => null),
       ])
       setResults(res)
       setActiveRun(active && !active.event_completed ? active : null)
@@ -92,6 +94,7 @@ export default function Scoreboard() {
         setJudgeScores(jsData.judgeScores || {})
         setAllRuns(jsData.runs || [])
       }
+      setUpcoming(up && Array.isArray(up.athletes) ? up : null)
     } catch {}
   }
 
@@ -705,6 +708,7 @@ export default function Scoreboard() {
             </tbody>
           </table>
         </div>
+        <UpcomingAthletes data={upcoming} />
       </div>
     )
   }
@@ -795,6 +799,7 @@ export default function Scoreboard() {
             <div className="bg-gray-900 rounded-2xl p-10 text-center text-gray-600 border border-gray-800">No results yet</div>
           )}
         </div>
+        <UpcomingAthletes data={upcoming} />
       </div>
     )
   }
@@ -860,6 +865,7 @@ export default function Scoreboard() {
           </tbody>
         </table>
       </div>
+      <UpcomingAthletes data={upcoming} />
     </div>
   )
 }
@@ -891,4 +897,34 @@ function roundLabel(m) {
   if (m.bracket_round === 2) return m.is_small_final ? 'Semi 3/4' : 'Semifinal'
   if (m.bracket_round === 3) return m.is_small_final ? 'QF 3/4' : 'Quarterfinal'
   return `Round ${m.bracket_round}`
+}
+
+function UpcomingAthletes({ data }) {
+  if (!data || !Array.isArray(data.athletes) || data.athletes.length === 0) return null
+  const heading = data.phase_label ? `${data.phase_label} — Up Next` : 'Up Next'
+  return (
+    <div className="bg-gray-900/50 rounded-2xl overflow-hidden border border-gray-800/60 mt-6">
+      <div className="px-4 py-2 bg-gray-800/60 text-xs uppercase tracking-wider text-gray-500 font-semibold">
+        {heading}
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-800/40 text-gray-500 text-xs uppercase tracking-wider">
+            <th className="px-4 py-2 text-left w-12">Order</th>
+            <th className="px-4 py-2 text-left w-12">Bib</th>
+            <th className="px-4 py-2 text-left">Name</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-800/60">
+          {data.athletes.map(a => (
+            <tr key={a.id} className="opacity-70">
+              <td className="px-4 py-2 text-gray-500 font-mono">{a.run_order}</td>
+              <td className="px-4 py-2 text-gray-400">{a.bib_number}</td>
+              <td className="px-4 py-2 text-gray-300">{a.last_name}, {a.first_name}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
