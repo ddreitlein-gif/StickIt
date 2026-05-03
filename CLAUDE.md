@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.26
+**Current version:** v1.16.27
 
 ## Commands
 
@@ -157,6 +157,35 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.27 Feature Notes
+
+### Compact Bracket — Right-Column Consolation + Final Place Medals (v1.16.27)
+
+Two refinements to the compact dual mogul bracket PDF (`POST /api/pdf/dual-bracket`, helper `renderCompactBracketPages` in `server/routes/pdf.js`).
+
+**1. Consolation moved into the right column.** Consolation matches no longer span the full page width below the main tree. They now stack tight directly below the Championship Final box, matching the Final's x and width (`colW - 16`), in order Final → 3rd/4th → 5/6 → 7/8 (when `runoff_to_8th`). The horizontal rule and the standalone "Consolation" header are dropped; per-match place labels ("3rd / 4th Place" etc.) remain centered above each consolation box.
+
+Implementation: `mainH` no longer reserves 35% for full-width consolation (uses full `BKH`). After `drawBracketSection`, `pos[finalRound]?.[1]` gives the Championship Final position; consolation x/y/width are derived from it. Stack constants: `firstGap=14`, `interGap=8`, `labelH=10`. Split-halves pages are unaffected (`hasConsol: false` on those).
+
+**2. Final-place medal annotations on finals matches.** The compact bracket now renders ordinal place labels (`1st`, `2nd`, `3rd`, `4th`, and `5th`–`8th` when `runoff_to_8th`) on the athlete rows of finals-stage matches, centered in the visual gap between the rendered athlete name and the score breakdown.
+
+- **Scope:** Championship Final (1st/2nd) and the 3rd/4th match always. With `runoff_to_8th` only, also 5/6 and 7/8.
+- **Visibility:** Only when the match is `status='complete'` and has a winner. Pending/incomplete matches show no place text.
+- **Colors:** Gold `#d4af37` (1st), silver `#a8a8a8` (2nd), bronze `#b8732e` (3rd), gray `#64748b` (4th–8th). Bold Helvetica, fontSize 6.
+- **Position:** Centered in the gap between `nameX + widthOfString(name)` and `scoreStartX = x + w - scoreW - 3`. Width 26pt. Falls through correctly for DNF/DNS/DSQ losers (where `scoreW=22`).
+
+Implementation:
+- `drawAthleteRow(...)` accepts a new trailing `place` param and renders the medal text after the score/loserStatus.
+- `drawMatch(m, x, y, w, opts={})` accepts `{ bluePlace, redPlace }` and threads them through the redOnTop swap before passing to each row.
+- `drawBracketSection` passes `m._places || {}` as the new opts arg to `drawMatchFn`.
+- `renderCompactBracketPages` annotates the Championship Final via `finalMatch._places` (so `drawBracketSection` picks it up) and computes per-side opts inside the existing `consolMatches.forEach`. `runoffOption` is threaded through the `layout` parameter.
+
+Quarterfinal, semifinal, and qualifier rounds receive no opts and render exactly as before. The `bracket-keeper` PDF route is unchanged (different code path; ignores the harmless extra arg passed by the shared `drawBracketSection` helper).
+
+**Files modified:** `server/routes/pdf.js`
 
 ---
 

@@ -92,7 +92,7 @@ function AboutPanel({ onClose }) {
             <p className="text-slate-400 text-sm mt-1">Freestyle Mogul Scoring Application</p>
           </div>
           <div className="text-slate-500 text-sm space-y-1">
-            <p>Version 1.16.22</p>
+            <p>Version 1.16.27</p>
             <p>&copy; 2026 Rocky Mountain Freestyle.  All rights reserved.</p>
           </div>
         </div>
@@ -182,7 +182,7 @@ export default function Layout() {
               <p className="font-display text-3xl font-bold leading-none tracking-wide">
                 <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
               </p>
-              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.16.26</p>
+              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.16.27</p>
             </div>
           )}
         </div>

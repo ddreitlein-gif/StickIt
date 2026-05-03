@@ -2631,7 +2631,7 @@ function drawBracketSection(doc, rounds, pos, allMain, colW, boxW, areaTop, draw
       const bPos = parseInt(posStr);
       const m = allMain.find(mm => mm.bracket_round === round && mm.bracket_position === bPos);
       if (!m) continue;
-      drawMatchFn(m, loc.x + 2, loc.y, boxW);
+      drawMatchFn(m, loc.x + 2, loc.y, boxW, m._places || {});
       if (!drawnLabels.has(round)) {
         drawnLabels.add(round);
         doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
@@ -2710,7 +2710,18 @@ function renderBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout) 
 // Page split: 16-athletes -> 1 page, 32 -> 2 pages, 64 -> 3 pages.
 function renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout) {
   const { mainMatches, consolMatches, totalRound } = bk;
-  const { MARG, UW, BOX_H } = layout;
+  const { MARG, UW, BOX_H, runoffOption } = layout;
+  const ORDINAL = ['1st','2nd','3rd','4th','5th','6th','7th','8th'];
+
+  // Annotate the Championship Final with per-side place strings (1st/2nd) so
+  // drawBracketSection picks them up via m._places. Only when complete.
+  const finalMatch = mainMatches.find(m => m.bracket_round === 1 && !m.is_small_final);
+  if (finalMatch && finalMatch.status === 'complete' && !finalMatch.is_bye && finalMatch.winner_registration_id) {
+    const blueWon = finalMatch.winner_registration_id === finalMatch.registration_id_blue;
+    finalMatch._places = blueWon
+      ? { bluePlace: '1st', redPlace: '2nd' }
+      : { bluePlace: '2nd', redPlace: '1st' };
+  }
 
   const compactLabel = (round) => round === 1 ? 'Final'
     : round === 2 ? 'Semifinals'
@@ -2770,8 +2781,9 @@ function renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, l
     const { BKTOP, BKH } = hdr;
 
     const showConsol = hasConsol && consolMatches.length > 0;
-    const mainH = showConsol ? Math.floor(BKH * 0.65) : BKH;
-    const consolTop = showConsol ? BKTOP + mainH + 14 : null;
+    const mainH = BKH;
+    let finalPos = null;
+    let finalBoxW = null;
 
     if (splitHalves) {
       const round = rounds[0];
@@ -2802,22 +2814,34 @@ function renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, l
         .sort((a, b) => a.bracket_position - b.bracket_position);
       const pos = buildBracketPositions(rounds, seedMatches, colW, boxW, MARG, BKTOP, mainH, mainMatches, totalRound, BOX_H);
       drawBracketSection(doc, rounds, pos, mainMatches, colW, boxW, BKTOP, drawMatchFn, colors);
+      const finalRound = rounds[rounds.length - 1];
+      finalPos = pos[finalRound]?.[1] || null;
+      finalBoxW = boxW;
     }
 
-    if (showConsol) {
-      doc.moveTo(MARG, consolTop - 6).lineTo(MARG + UW, consolTop - 6)
-        .strokeColor(colors.connector).lineWidth(0.4).stroke();
-      doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
-        .text('Consolation', MARG, consolTop - 4, { width: UW, align: 'center' });
+    if (showConsol && finalPos) {
       const consolLabels = ['3rd / 4th Place', '5th / 6th Place', '7th / 8th Place'];
-      const cW = UW / consolMatches.length;
+      const cx = finalPos.x;
+      const cw = finalBoxW;
+      const labelH = 10;
+      const interGap = 8;
+      const firstGap = 14;
+      let y = finalPos.y + BOX_H + firstGap;
       consolMatches.forEach((m, i) => {
-        const cx = MARG + i * cW + 4;
-        const cw = cW - 8;
         const lbl = consolLabels[i] || `Place ${i * 2 + 3} / ${i * 2 + 4}`;
         doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
-          .text(lbl, cx, consolTop + 8, { width: cw, align: 'center' });
-        drawMatchFn(m, cx, consolTop + 20, cw);
+          .text(lbl, cx, y, { width: cw, align: 'center' });
+        let opts = {};
+        const includeThis = i === 0 || runoffOption === 'runoff_to_8th';
+        if (includeThis && m.status === 'complete' && !m.is_bye && m.winner_registration_id) {
+          const placeBase = 3 + i * 2;  // 3, 5, 7
+          const blueWon = m.winner_registration_id === m.registration_id_blue;
+          opts = blueWon
+            ? { bluePlace: ORDINAL[placeBase - 1], redPlace: ORDINAL[placeBase] }
+            : { bluePlace: ORDINAL[placeBase],     redPlace: ORDINAL[placeBase - 1] };
+        }
+        drawMatchFn(m, cx, y + labelH, cw, opts);
+        y += labelH + BOX_H + interGap;
       });
     }
   }
@@ -2900,6 +2924,13 @@ router.post('/dual-bracket', async (req, res) => {
     const GRAY  = '#64748b';
     const LGRAY = '#e2e8f0';
 
+    // Medal coloring for finals-stage place annotations
+    const ORDINAL = ['1st','2nd','3rd','4th','5th','6th','7th','8th'];
+    const MEDAL_COLORS = {
+      '1st': '#d4af37', '2nd': '#a8a8a8', '3rd': '#b8732e',
+      '4th': GRAY, '5th': GRAY, '6th': GRAY, '7th': GRAY, '8th': GRAY,
+    };
+
     // Layout constants (landscape letter = 792 × 612)
     const MARG     = 36;
     const PW       = 792;
@@ -2924,7 +2955,7 @@ router.post('/dual-bracket', async (req, res) => {
     // -----------------------------------------------------------------------
     // drawAthleteRow — one half of a match box
     // -----------------------------------------------------------------------
-    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus) {
+    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place) {
       const barClr = course === 'blue' ? BLUE : RED;
       const bgClr  = isTBD    ? '#f8fafc'
                    : isWinner ? (course === 'blue' ? '#bfdbfe' : '#fecaca')  // darker winner bg
@@ -2969,17 +3000,34 @@ router.post('/dual-bracket', async (req, res) => {
         doc.fillColor('#94a3b8').fontSize(6).font('Helvetica-Bold')
           .text(loserStatus, x + w - scoreW - 3, textY, { width: scoreW, align: 'right', lineBreak: false });
       }
+
+      // Final-place medal annotation (1st/2nd/3rd/4th, etc.) — centered in the
+      // visual gap between the rendered name and the score column.
+      if (place) {
+        const placeColor = MEDAL_COLORS[place] || GRAY;
+        doc.font('Helvetica-Bold').fontSize(6);
+        const nameWidth = Math.min(doc.widthOfString(nameStr), nameW);
+        const nameEndX  = nameX + nameWidth;
+        const scoreStartX = x + w - scoreW - 3;
+        const placeWidth  = 26;
+        const placeCenter = (nameEndX + scoreStartX) / 2;
+        const placeX      = placeCenter - placeWidth / 2;
+        doc.fillColor(placeColor)
+          .text(place, placeX, textY, { width: placeWidth, align: 'center', lineBreak: false });
+      }
     }
 
     // -----------------------------------------------------------------------
     // drawMatch — draw the two-row match box at (x, y) with given width
     // -----------------------------------------------------------------------
-    function drawMatch(m, x, y, w) {
+    function drawMatch(m, x, y, w, opts = {}) {
       const done    = m.status === 'complete';
       const blueWon = done && m.winner_registration_id === m.registration_id_blue;
       const redWon  = done && m.winner_registration_id === m.registration_id_red;
       const blueTBD = !m.registration_id_blue;
       const redTBD  = !m.registration_id_red;
+      const bluePlace = opts.bluePlace || null;
+      const redPlace  = opts.redPlace  || null;
 
       // Get score data for completed matches
       const sc = done ? matchScores[m.id] : null;
@@ -3006,6 +3054,7 @@ router.post('/dual-bracket', async (req, res) => {
         const topTBD     = redOnTop ? redTBD       : blueTBD;
         const topScore   = redOnTop ? redScore     : blueScore;
         const topLoser   = redOnTop ? redLoserStatus  : blueLoserStatus;
+        const topPlace   = redOnTop ? redPlace        : bluePlace;
         const botFirst   = redOnTop ? m.blue_first : m.red_first;
         const botLast    = redOnTop ? m.blue_last  : m.red_last;
         const botBib     = redOnTop ? m.blue_bib   : m.red_bib;
@@ -3013,8 +3062,9 @@ router.post('/dual-bracket', async (req, res) => {
         const botTBD     = redOnTop ? blueTBD      : redTBD;
         const botScore   = redOnTop ? blueScore    : redScore;
         const botLoser   = redOnTop ? blueLoserStatus : redLoserStatus;
-        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser);
-        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser);
+        const botPlace   = redOnTop ? bluePlace       : redPlace;
+        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace);
+        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace);
       }
 
       // Pairing number — just above the match box (compact layout has no
@@ -3027,7 +3077,7 @@ router.post('/dual-bracket', async (req, res) => {
     }
 
     const colors = { connector: '#94a3b8', label: NAVY };
-    renderCompactBracketPages(doc, bk, drawHeader, drawMatch, colors, { MARG, UW, BOX_H });
+    renderCompactBracketPages(doc, bk, drawHeader, drawMatch, colors, { MARG, UW, BOX_H, runoffOption });
 
     stampFooter(doc);
     doc.end();

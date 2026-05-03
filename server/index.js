@@ -191,7 +191,7 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 initSchema().then(() => {
-  server.listen(PORT, () => console.log(`StickIt v1.16.26 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt v1.16.27 ready on port ${PORT}`));
   startScheduledSync();
 }).catch(err => { console.error('Schema init failed:', err); process.exit(1); });
 
