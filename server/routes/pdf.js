@@ -2706,6 +2706,123 @@ function renderBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout) 
   }
 }
 
+// Compact horizontal-tree renderer used by /dual-bracket.
+// Page split: 16-athletes -> 1 page, 32 -> 2 pages, 64 -> 3 pages.
+function renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout) {
+  const { mainMatches, consolMatches, totalRound } = bk;
+  const { MARG, UW, BOX_H } = layout;
+
+  const compactLabel = (round) => round === 1 ? 'Final'
+    : round === 2 ? 'Semifinals'
+    : round === 3 ? 'Quarterfinals'
+    : `Round of ${Math.pow(2, round)}`;
+
+  function computePages() {
+    if (totalRound <= 4) {
+      const all = [];
+      for (let r = totalRound; r >= 1; r--) all.push(r);
+      return [{ rounds: all, splitHalves: false, hasConsol: true }];
+    }
+    if (totalRound === 5) {
+      return [
+        { rounds: [5, 4], splitHalves: false, hasConsol: false },
+        { rounds: [3, 2, 1], splitHalves: false, hasConsol: true },
+      ];
+    }
+    if (totalRound === 6) {
+      return [
+        { rounds: [6], splitHalves: true,  hasConsol: false },
+        { rounds: [5, 4], splitHalves: false, hasConsol: false },
+        { rounds: [3, 2, 1], splitHalves: false, hasConsol: true },
+      ];
+    }
+    const pages = [];
+    for (let r = totalRound; r >= 4; r -= 2) {
+      const numMatches = Math.pow(2, r - 1);
+      if (numMatches > 16) {
+        pages.push({ rounds: [r], splitHalves: true, hasConsol: false });
+      } else {
+        const pageRounds = [r];
+        if (r - 1 >= 4) pageRounds.push(r - 1);
+        pages.push({ rounds: pageRounds, splitHalves: false, hasConsol: false });
+      }
+    }
+    pages.push({ rounds: [3, 2, 1], splitHalves: false, hasConsol: true });
+    return pages;
+  }
+
+  const pages = computePages();
+  const totalPages = pages.length;
+  let firstPage = true;
+
+  for (let pi = 0; pi < pages.length; pi++) {
+    const { rounds, splitHalves, hasConsol } = pages[pi];
+    if (!firstPage) addPageWithFooter(doc);
+    firstPage = false;
+
+    const subtitle = totalPages === 1
+      ? 'Complete Bracket'
+      : rounds.length === 1
+        ? compactLabel(rounds[0])
+        : `${compactLabel(rounds[0])} \u2192 ${compactLabel(rounds[rounds.length - 1])}`;
+
+    const hdr = drawHeaderFn(subtitle);
+    const { BKTOP, BKH } = hdr;
+
+    const showConsol = hasConsol && consolMatches.length > 0;
+    const mainH = showConsol ? Math.floor(BKH * 0.65) : BKH;
+    const consolTop = showConsol ? BKTOP + mainH + 14 : null;
+
+    if (splitHalves) {
+      const round = rounds[0];
+      const allFirst = mainMatches
+        .filter(m => m.bracket_round === round)
+        .sort((a, b) => a.bracket_position - b.bracket_position);
+      const halfSize = Math.ceil(allFirst.length / 2);
+      const halves = [allFirst.slice(0, halfSize), allFirst.slice(halfSize)];
+      const halfW = (UW - 12) / 2;
+      const halfBoxW = halfW - 16;
+      for (let hi = 0; hi < 2; hi++) {
+        const halfX = MARG + hi * (halfW + 12);
+        const n = halves[hi].length;
+        const gap = n > 1 ? (mainH - n * BOX_H) / (n + 1) : 0;
+        const startY = n > 1 ? BKTOP + gap : BKTOP + (mainH - BOX_H) / 2;
+        halves[hi].forEach((m, i) => {
+          const y = startY + i * (BOX_H + gap);
+          drawMatchFn(m, halfX + 2, y, halfBoxW);
+        });
+      }
+      doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
+        .text(roundLabel(round), MARG, BKTOP - 12, { width: UW, align: 'center' });
+    } else {
+      const colW = UW / rounds.length;
+      const boxW = colW - 16;
+      const seedMatches = mainMatches
+        .filter(m => m.bracket_round === rounds[0])
+        .sort((a, b) => a.bracket_position - b.bracket_position);
+      const pos = buildBracketPositions(rounds, seedMatches, colW, boxW, MARG, BKTOP, mainH, mainMatches, totalRound, BOX_H);
+      drawBracketSection(doc, rounds, pos, mainMatches, colW, boxW, BKTOP, drawMatchFn, colors);
+    }
+
+    if (showConsol) {
+      doc.moveTo(MARG, consolTop - 6).lineTo(MARG + UW, consolTop - 6)
+        .strokeColor(colors.connector).lineWidth(0.4).stroke();
+      doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
+        .text('Consolation', MARG, consolTop - 4, { width: UW, align: 'center' });
+      const consolLabels = ['3rd / 4th Place', '5th / 6th Place', '7th / 8th Place'];
+      const cW = UW / consolMatches.length;
+      consolMatches.forEach((m, i) => {
+        const cx = MARG + i * cW + 4;
+        const cw = cW - 8;
+        const lbl = consolLabels[i] || `Place ${i * 2 + 3} / ${i * 2 + 4}`;
+        doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
+          .text(lbl, cx, consolTop + 8, { width: cw, align: 'center' });
+        drawMatchFn(m, cx, consolTop + 20, cw);
+      });
+    }
+  }
+}
+
 // ===========================================================================
 // POST /api/pdf/dual-bracket  — FIS-style bracket tree
 // ===========================================================================
@@ -2788,8 +2905,8 @@ router.post('/dual-bracket', async (req, res) => {
     const PW       = 792;
     const PH       = 612;
     const UW       = PW - 2 * MARG;   // 720
-    const BAR_W    = 5;                // colored course-indicator bar
-    const ROW_H    = 19;               // height of one athlete row
+    const BAR_W    = 4;                // colored course-indicator bar
+    const ROW_H    = 11;               // height of one athlete row (compact)
     const BOX_H    = ROW_H * 2;       // height of one match box (2 rows)
 
     function drawHeader(subtitle) {
@@ -2821,8 +2938,8 @@ router.post('/dual-bracket', async (req, res) => {
       doc.rect(x, y, w, ROW_H).strokeColor(LGRAY).lineWidth(0.3).stroke();
 
       if (isTBD) {
-        doc.fillColor('#94a3b8').fontSize(7).font('Helvetica')
-          .text('TBD', x + BAR_W + 3, y + (ROW_H - 7) / 2, { width: w - BAR_W - 6 });
+        doc.fillColor('#94a3b8').fontSize(6).font('Helvetica')
+          .text('TBD', x + BAR_W + 3, y + (ROW_H - 6) / 2, { width: w - BAR_W - 6 });
         return;
       }
       const bibStr  = bib  ? String(bib)  : '—';
@@ -2830,13 +2947,13 @@ router.post('/dual-bracket', async (req, res) => {
         ? `${(last || '').toUpperCase()}, ${first || ''}`
         : '—';
       const bibX    = x + BAR_W + 3;
-      const bibW    = 22;
+      const bibW    = 18;
       const nameX   = bibX + bibW + 3;
-      const scoreW  = scoreStr ? 55 : (loserStatus ? 25 : 0);
+      const scoreW  = scoreStr ? 45 : (loserStatus ? 22 : 0);
       const nameW   = w - BAR_W - bibW - 10 - scoreW;
-      const textY   = y + (ROW_H - 8) / 2;
+      const textY   = y + (ROW_H - 7) / 2;
 
-      doc.fillColor(isWinner ? NAVY : GRAY).fontSize(8)
+      doc.fillColor(isWinner ? NAVY : GRAY).fontSize(7)
         .font('Helvetica-Bold')
         .text(bibStr, bibX, textY, { width: bibW, align: 'right' });
       doc.fillColor(isWinner ? NAVY : GRAY)
@@ -2845,11 +2962,11 @@ router.post('/dual-bracket', async (req, res) => {
 
       // Score or loser status on right side
       if (scoreStr) {
-        doc.fillColor(isWinner ? NAVY : '#94a3b8').fontSize(6.5)
+        doc.fillColor(isWinner ? NAVY : '#94a3b8').fontSize(5.5)
           .font(isWinner ? 'Helvetica-Bold' : 'Helvetica')
-          .text(scoreStr, x + w - scoreW - 3, y + ROW_H - 9, { width: scoreW, align: 'right', lineBreak: false });
+          .text(scoreStr, x + w - scoreW - 3, y + ROW_H - 8, { width: scoreW, align: 'right', lineBreak: false });
       } else if (loserStatus) {
-        doc.fillColor('#94a3b8').fontSize(7).font('Helvetica-Bold')
+        doc.fillColor('#94a3b8').fontSize(6).font('Helvetica-Bold')
           .text(loserStatus, x + w - scoreW - 3, textY, { width: scoreW, align: 'right', lineBreak: false });
       }
     }
@@ -2900,16 +3017,17 @@ router.post('/dual-bracket', async (req, res) => {
         drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser);
       }
 
-      // Pairing number — upper-right of match box
+      // Pairing number — just above the match box (compact layout has no
+      // room inside the row without colliding with the per-row score).
       const lbl = pairingLabel(m);
       if (lbl) {
-        doc.fillColor(NAVY).fontSize(6).font('Helvetica-Bold')
-          .text(lbl, x, y + 1, { width: w - 3, align: 'right' });
+        doc.fillColor(NAVY).fontSize(5.5).font('Helvetica-Bold')
+          .text(lbl, x, y - 7, { width: w - 3, align: 'right' });
       }
     }
 
     const colors = { connector: '#94a3b8', label: NAVY };
-    renderBracketPages(doc, bk, drawHeader, drawMatch, colors, { MARG, UW, BOX_H });
+    renderCompactBracketPages(doc, bk, drawHeader, drawMatch, colors, { MARG, UW, BOX_H });
 
     stampFooter(doc);
     doc.end();

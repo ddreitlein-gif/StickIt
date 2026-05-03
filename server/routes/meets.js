@@ -115,7 +115,7 @@ router.get('/export-all', async (req, res) => {
     outerZip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2)));
 
     const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="StickIt_AllMeets_${dateStamp}.zip"`);
     res.send(outerZip.toBuffer());
   } catch (e) {
@@ -720,7 +720,7 @@ router.get('/:id/export', async (req, res) => {
   try {
     const result = await buildMeetExportZip(req.params.id);
     if (!result) return res.status(404).json({ error: 'Meet not found' });
-    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.buffer);
   } catch (e) {

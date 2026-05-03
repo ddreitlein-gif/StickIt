@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.24
+**Current version:** v1.16.26
 
 ## Commands
 
@@ -159,6 +159,40 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
 
 ---
+
+## v1.16.26 Feature Notes
+
+### Compact Dual Mogul Bracket PDF (v1.16.26)
+
+Redesigned the dual mogul bracket PDF (`POST /api/pdf/dual-bracket`) to fit horizontally as a tree, like the Scoreboard's live Bracket tab, instead of stacking matches in a single column with empty white space. Page count now scales by bracket size:
+
+- **16 athletes** → 1 page (R16 → QF → SF → Final, plus consolation block)
+- **32 athletes** → 2 pages (R32 → R16 / QF → SF → Final + consolation)
+- **64 athletes** → 3 pages (R64 split into two side-by-side halves / R32 → R16 / QF → SF → Final + consolation)
+
+Component-score split (`2+5+0+4+0=11`) still rendered per row. Consolation matches (3rd/4th, optional 5/6 + 7/8 with `runoff_to_8th`) live on the finals page below the main tree.
+
+**New helper — `renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout)`** in `server/routes/pdf.js`. Reuses the existing `parseBracketData`, `buildBracketPositions`, `drawBracketSection`, and `BRACKET_SQL` helpers — only the page-level layout changes. The `bracket-keeper` route still uses the original `renderBracketPages` (untouched).
+
+**Compact match dimensions:** ROW_H 19→11, BAR_W 5→4, font sizes 8/6.5/7 → 7/5.5/6, bibW 22→18, scoreW 55→45. Pairing label moved from inside the top-right of the box to just above the box (no longer collides with the per-row score). The 64-athlete page-1 split places 16 R64 matches in each of two side-by-side columns with no inter-half connectors.
+
+**Subtitles** are derived from the rounds shown on each page: `Complete Bracket` (single-page case), `Round of 32 → Round of 16`, `Quarterfinals → Final`, `Round of 64`, etc.
+
+**Files modified:** `server/routes/pdf.js`
+
+---
+
+## v1.16.25 Feature Notes
+
+### Meet Export Content-Type Fix — Safari Auto-Extract (v1.16.25)
+
+Fixed Safari auto-extracting downloaded meet export ZIP files on macOS. Symptom: downloads from the Railway-hosted server in Safari arrived as either an extracted folder (`StickIt_AllMeets_YYYYMMDD/` containing `manifest.json` + child meet zips) or a bare `meet_export.json` file (single-meet export's inner contents), instead of the intended `.zip`. Local Chrome/Firefox downloads were unaffected.
+
+**Root cause:** Safari's "Open 'safe' files after downloading" preference (enabled by default on macOS) runs Archive Utility on any download whose `Content-Type` is `application/zip`. The single-meet zip contains exactly one entry (`meet_export.json`), so post-extraction the user sees only that JSON file. The multi-meet zip extracts to a folder containing `manifest.json` + child zips. The actual response on the wire was always a valid ZIP — Safari was unpacking it client-side before the user saw it.
+
+**Fix:** Both export endpoints now send `Content-Type: application/octet-stream` instead of `application/zip`. Safari treats octet-stream as a generic binary blob and skips the auto-extract heuristic. The `Content-Disposition` filename retains the `.zip` extension, so the file saves correctly and double-clicking still extracts it normally via Archive Utility.
+
+**Files modified:** `server/routes/meets.js` (`GET /:id/export`, `GET /export-all`)
 
 ## v1.16.24 Feature Notes
 
