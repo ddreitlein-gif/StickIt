@@ -2981,7 +2981,12 @@ router.post('/dual-bracket', async (req, res) => {
       const bibW    = 18;
       const nameX   = bibX + bibW + 3;
       const scoreW  = scoreStr ? 45 : (loserStatus ? 22 : 0);
-      const nameW   = w - BAR_W - bibW - 10 - scoreW;
+      // When a final-place medal is shown, reserve a fixed slot to the left of
+      // the score column so place labels line up vertically across all rows.
+      const placeW    = place ? 22 : 0;
+      const placeGap  = place ? 8  : 0;
+      const scoreRsv  = place ? 45 : scoreW;
+      const nameW   = w - BAR_W - bibW - 10 - scoreRsv - placeGap - placeW;
       const textY   = y + (ROW_H - 7) / 2;
 
       doc.fillColor(isWinner ? NAVY : GRAY).fontSize(7)
@@ -3001,19 +3006,16 @@ router.post('/dual-bracket', async (req, res) => {
           .text(loserStatus, x + w - scoreW - 3, textY, { width: scoreW, align: 'right', lineBreak: false });
       }
 
-      // Final-place medal annotation (1st/2nd/3rd/4th, etc.) — centered in the
-      // visual gap between the rendered name and the score column.
+      // Final-place medal annotation (1st/2nd/3rd/4th, etc.) — right-aligned at
+      // a fixed offset from the box right edge so labels line up vertically
+      // across all rows in the finals column regardless of name length or
+      // whether the row shows a real score (45pt) or a DNF/DNS/DSQ tag (22pt).
       if (place) {
         const placeColor = MEDAL_COLORS[place] || GRAY;
-        doc.font('Helvetica-Bold').fontSize(6);
-        const nameWidth = Math.min(doc.widthOfString(nameStr), nameW);
-        const nameEndX  = nameX + nameWidth;
-        const scoreStartX = x + w - scoreW - 3;
-        const placeWidth  = 26;
-        const placeCenter = (nameEndX + scoreStartX) / 2;
-        const placeX      = placeCenter - placeWidth / 2;
-        doc.fillColor(placeColor)
-          .text(place, placeX, textY, { width: placeWidth, align: 'center', lineBreak: false });
+        const placeRightX = x + w - 45 - placeGap;  // left of max scoreW reserve
+        const placeX      = placeRightX - placeW;
+        doc.fillColor(placeColor).font('Helvetica-Bold').fontSize(7)
+          .text(place, placeX, textY, { width: placeW, align: 'right', lineBreak: false });
       }
     }
 

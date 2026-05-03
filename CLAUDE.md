@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.27
+**Current version:** v1.16.28
 
 ## Commands
 
@@ -157,6 +157,25 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.28 Feature Notes
+
+### Compact Bracket — Vertical-Aligned Bold Place Labels (v1.16.28)
+
+Refinement to the v1.16.27 final-place medal annotations on the compact dual mogul bracket PDF. Previously the place text (`1st`, `2nd`, etc.) was centered in the visual gap between the rendered athlete name and the score column, so its x-position varied row-by-row depending on name length — producing a ragged appearance when both rows of the same match had different name lengths.
+
+**Fix:** Place text now renders at a fixed offset from the right edge of the match box, right-aligned, so all final-place labels in the same column line up vertically regardless of name length. Font also bumped from 6pt to 7pt and remains bold (Helvetica-Bold) for readability.
+
+Implementation in `drawAthleteRow` (`server/routes/pdf.js`):
+- New row reservations when `place` is provided: `placeW = 22`, `placeGap = 8`, `scoreRsv = 45` (locked to the wide score reserve regardless of DNF/DNS narrow status width).
+- Name column width reduced by `placeGap + placeW` so the place label has guaranteed clear space.
+- Place label x = `x + w - 45 - placeGap - placeW` (≈ `x + w - 75`), drawn with `align: 'right'`, `lineBreak: false`, `fontSize: 7`, bold.
+
+DNF/DNS rows (which use `scoreW = 22`) now share the same place-label x as scored rows, since `scoreRsv` is forced to the maximum (45) when a place label is present. Non-finals matches receive no `place` argument and are unaffected — `placeW`/`placeGap` default to 0 so name width and rendering are identical to pre-v1.16.27.
+
+**Files modified:** `server/routes/pdf.js`
 
 ---
 
