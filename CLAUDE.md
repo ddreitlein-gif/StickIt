@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.31
+**Current version:** v1.17.00
 
 ## Commands
 
@@ -107,10 +107,12 @@ WebSocket endpoint `/ws` handles live scoring. Clients subscribe to a specific `
 
 ### Scoring Engine (`server/scoring/engine.js`)
 
-Scoring weights (configurable per event, default: 60% turns / 20% air / 20% speed):
-- **Turns:** Drop high/low from 3+ judges, average the rest
-- **Air:** Per-jump score × DD (difficulty degree) from `jump_dd_table`, capped at 20 pts
-- **Speed:** `pace_time / run_time × pace_factor`, capped at 15 pts
+Total = Turns + Air + Speed (max 100.0):
+- **Turns (max 60):** Sum the 3 counting T&L judge scores (5-judge format) or drop-high/drop-low and sum the 3 counting scores (7-judge format), per FIS JH 6203
+- **Air (max 20):** Per-jump average of `(judge_score × DD)` summed across jumps, capped at 20 pts (FIS JH 6204). Single-jump-in-2-jump-event capped at 10 per USSS 4210.2.2
+- **Speed (max 20):** `max(0, 48 − 32 × (run_time / pace_time))` capped at 20, per USSS / FIS ICR 4206.3. `pace_time` derives from course length and pace standard (USSS 9.70 / 8.20 m/s; FIS 10.30 / 9.00 m/s)
+
+All published values are truncated (floor) to 2 decimals per FIS rules; DDs preserved at full precision.
 
 Aerials use a separate scoring path. Dual mogul uses numbered judge 5-point split scoring (defined in `dual/placement.js`).
 
@@ -157,6 +159,68 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.17.00 Feature Notes
+
+### Public Surfaces Redesign (v1.17.00)
+
+Complete visual redesign of the four public-facing surfaces — Home, Live Scores, Scoreboard (mogul + dual), and Broadcast Overlay — to a modern athlete-card layout with a dark navy palette and red accent. Officials, admin, and tablet pages are visually unchanged. **Zero changes to scoring logic, server routes, database schema, WebSocket events, or API contracts.** The motivation is spectator UX: the prior `/scoreboard/<short>` was unreadable on iPhone portrait (8-column wide table), the broadcast overlay was dated, and public surfaces did not convey "live action" prominently.
+
+**New token system (additive, public-only):** New CSS variables on a `[data-stickit-public="1"][data-theme="dark"|"sun"]` wrapper provide the new palette (`--bg #070d1a`, `--bg-panel #0e1628`, `--red #e63946`, `--blue #3b7dd8`, `--gold #f5c518`, etc.). Selectors are scoped — Officials/Admin/Tablet pages are not wrapped and inherit the existing Tailwind theme unchanged. New fonts (Inter Tight, Barlow Condensed, JetBrains Mono) load via Google Fonts CDN injected at runtime by `PublicLayout`. `tailwind.config.js` adds `font-inter-tight` and `font-barlow-condensed` family aliases (additive — `mountain`, `ice`, `display`, `body`, `mono` keys untouched).
+
+**Sun Mode (high-contrast theme):** A toggleable `sun` theme provides high-contrast tokens for outdoor / bright-light viewing. State persisted in `localStorage.stickit.sunMode` and threaded via `PublicThemeContext`. Toggle button is a fixed-position sun/moon icon visible on every public page (Home, LiveScores, Scoreboard).
+
+**New component library — `client/src/components/public/`:**
+`PublicLayout.jsx` (theme wrapper + font/style injection + Sun Mode context + toggle), `LiveDot.jsx`, `StatusPill.jsx`, `RankChip.jsx` (gold/silver/bronze for top-3, neutral for others), `BibChip.jsx`, `DivisionFilter.jsx` (horizontal scroll pill row), `MeetPanel.jsx` (collapsible meet card), `EventRow.jsx`, `AthleteCard.jsx` (collapsed/expanded states), `DualMatchCard.jsx`, `OverlayRibbon.jsx`, `OverlayAthleteCard.jsx`, `OverlayScoreReveal.jsx`, `OverlayDualVS.jsx`, `OverlayStandings.jsx`.
+
+**Home (`client/src/pages/Home.jsx`):** Atmospheric mountain background image at 0.18 opacity with mix-blend-mode screen, large logo with drop-shadow, "FREESTYLE SCORING" tagline at 0.3em letter-spacing, primary "Live Scores" CTA with `LiveDot` and red gradient + lift-on-hover, "LOGIN REQUIRED" divider, Officials/Admin SecondaryButton grid with original SVG icons, RMF footer + version. `fetch('/api/version')` behavior preserved.
+
+**LiveScores (`client/src/pages/LiveScores.jsx`):** Sticky header with back-to-Home, title, and `<DivisionFilter>`. New `LiveStrip` component renders red-gradient cards for events with `status==='active'` across visible meets. Meets list uses `<MeetPanel>` cards. Same API: `GET /api/meets/livescores?page=&limit=10&division=`. Same DIVISIONS list.
+
+**Scoreboard (`client/src/pages/Scoreboard.jsx`):** Full presentation rewrite, all data flows preserved verbatim. **All 11 API calls preserved** (`/events/:id`, `/results`, `/runs/active`, `/phases/results`, `/results/judge-scores`, `/runs/upcoming`, `/dual/active-match`, `/dual`, `/dual/{matchId}/judge-points`, `/dual/review-state`, PDF endpoints). **All WebSocket handlers preserved** (`dual_match_started`, `score_update` + isDual, `run_updated` + dualComplete, `dual_match_cleared`, `dual_bracket_review`, `dual_bracket_sent_back`, `event_finalized`, `run_started`). **5-second polling preserved**. `useResolveIds` short-code resolution preserved.
+
+Mogul layout: athlete-card list. Collapsed card shows rank chip + bib + name + best total + 4-up component grid (Turns/Air/Time/Speed). Tap to expand → per-phase sections with per-judge breakdowns (TL, A1, A2 arrays from existing `/results/judge-scores` response shape). Multi-phase events (Best of 2, Qualifier/Finals) surface every phase in the expanded view with the winning run starred.
+
+Dual mogul layout: three-tab strip **MATCH | BRACKET | PLACE** with **Match as the default**. When `dualState.activeMatch` is null, Match tab falls back to the most-recently-completed match (sorted by `bracket_round` then `bracket_position`) with a "MOST RECENT COMPLETED MATCH" label; if zero matches completed, shows a "WAITING FOR FIRST MATCH" placeholder pointing to the Bracket tab. Bracket tab is a tree view with consolation matches in the final column. Place tab is a ranked list with FFSP points (preserved from v1.16.19) and DNS/DSQ/SCR/DNF status indicators.
+
+`UpcomingAthletes` re-skinned (v1.16.29 functionality preserved). DNS/DNF/DSQ status text in score column preserved (v1.16.11). Click-to-expand judge breakdown preserved. PDF download buttons preserved.
+
+**Overlay (`client/src/pages/Overlay.jsx`):** Full visual rewrite using `OverlayRibbon`, `OverlayAthleteCard`, `OverlayScoreReveal`, `OverlayDualVS`. **Transparent canvas preserved** for OBS/YoloBox browser source — body/html background forced to transparent via `useLayoutEffect setProperty('background', 'transparent', 'important')`. **1920×1080 fixed canvas + viewport scaling preserved**. **All WebSocket event listeners preserved** (`run_started`, `score_update` single + dual, `dual_match_started`, `OVERLAY_HIDE`). **3-second polling fallback preserved** for hardware encoders.
+
+Score reveal animation uses `cubic-bezier(0.34, 1.56, 0.64, 1)` overshoot per spec (480ms duration, 380ms delay after stat-block fade-ins). `OverlayScoreReveal` now exposes Turns/Air/Time/Speed components staggered (50/130/210/290ms fade-ins) — when those values are present in the `score_update` payload they render; otherwise the reveal degrades gracefully to total-only. Dual VS frame shows blue/red gradient sides with 5-judge points only revealed after scoring; a winner label (1ST/2ND for finals, 3RD/4TH for small final, WINNER for non-finals) appears after `scored=true`.
+
+Hydration-on-mount preserves the existing single-mogul + dual rehydration flow (skip manually-entered runs; show most recent updated_at for last score).
+
+The Overlay does NOT mount `PublicLayout` (which would set `body.background`, breaking transparency). Instead it injects only the CSS variables, fonts, and keyframes onto a scoped `.stickit-overlay-root` class, leaving body transparent.
+
+**App routes & version strings:**
+- `client/src/App.jsx` — public routes (`/`, `/livescores`, `/scoreboard/:eventId`, `/overlay/:eventId`) wrap themselves in `<PublicLayout>` (Overlay opts out of body-background mutation).
+- `server/index.js` line 111 + line 194: `v1.16.32` → `v1.17.00`.
+- `client/src/components/Layout.jsx` line 185: officials sidebar version bump.
+- `tailwind.config.js`: added `inter-tight` + `barlow-condensed` font families.
+
+**Out of scope (deferred to v1.17.01+):** iPad and laptop split-pane layouts, reveal animations beyond the score-reveal beat, PDF report restyling. Aerials scoreboard uses the same `AthleteCard` component as mogul (single-run; no per-phase expansion needed).
+
+**Files created:** `client/src/components/public/PublicLayout.jsx`, `LiveDot.jsx`, `StatusPill.jsx`, `RankChip.jsx`, `BibChip.jsx`, `DivisionFilter.jsx`, `MeetPanel.jsx`, `EventRow.jsx`, `AthleteCard.jsx`, `DualMatchCard.jsx`, `OverlayRibbon.jsx`, `OverlayAthleteCard.jsx`, `OverlayScoreReveal.jsx`, `OverlayDualVS.jsx`, `OverlayStandings.jsx`
+**Files modified:** `client/src/pages/Home.jsx`, `client/src/pages/LiveScores.jsx`, `client/src/pages/Scoreboard.jsx`, `client/src/pages/Overlay.jsx`, `client/src/App.jsx`, `client/tailwind.config.js`, `client/src/components/Layout.jsx`, `server/index.js`, `CLAUDE.md`
+
+---
+
+## v1.16.32 Feature Notes
+
+### Cut-Line Tie Expansion — ICR 4207.3.4 Compliance (v1.16.32)
+
+Brought the qualifier→finals cut application in `server/routes/phases.js` into compliance with FIS/USSS ICR 4207.3.4. v1.16.24 fixed the rank-assignment side (tied athletes now share an Olympic-style skip rank), but the phase-creation flow still applied each cut with positional `Array.slice(0, N)`, which arbitrarily dropped a tied athlete sitting on the boundary. Per the rule, when athletes tie at the unbreakable level (Total → Turns → Air-no-DD → Speed all equal), all tied athletes share a rank — and when that shared rank straddles a cut line, **all** of them must advance.
+
+**Fix:** New helper `takeUpToRank(ranked, n)` in `server/scoring/engine.js` returns every athlete with `rank ≤ rank-of-Nth-athlete`. Five cut sites in `phases.js` (Q1→Q2 pass-through ID set, F1 pass-through, F1 fill from Q2, F1 from Q1-only, F2 from F1) now call this helper instead of slicing positionally. Each cut applies independently with its configured target size.
+
+**Field-size implication:** When ties expand a cut, the resulting field can exceed the configured `final_size`. For example, a 16-athlete final with a two-way tie at rank 16 becomes a 17-athlete final. This is the rules-correct behavior. The phase-creation response's `eligible_count` reflects the expanded size naturally; no operator-visible banner is shown (silent expansion).
+
+**No runtime changes needed.** The cut is materialized into `phase_run_order` at phase-creation time, and `/runs/next-up` strictly draws from it — fixing the slice sites is sufficient.
+
+**Files modified:** `server/scoring/engine.js` (helper + export), `server/routes/phases.js` (5 cut sites, require), `server/scripts/verify_v16.js` (synthetic tests), `CLAUDE.md`
 
 ---
 

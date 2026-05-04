@@ -7,6 +7,8 @@ export default {
         display: ['Bebas Neue', 'Impact', 'sans-serif'],
         body: ['DM Sans', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
+        'inter-tight': ['Inter Tight', 'system-ui', 'sans-serif'],
+        'barlow-condensed': ['Barlow Condensed', 'Inter Tight', 'sans-serif'],
       },
       colors: {
         mountain: {

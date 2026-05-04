@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
-const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
+const { rankResults, pickBestRun, applyTierRanks, takeUpToRank } = require('../scoring/engine');
 const { requireUnlocked } = require('../middleware/lockCheck');
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
@@ -283,7 +283,7 @@ router.post('/', async (req, res) => {
       // Remove pass-through athletes (top N from Q1)
       const q1Ranked = await rankedRunResults(eventId, 1);
       const ptCount = pass_through_count || 0;
-      const passThroughIds = new Set(q1Ranked.slice(0, ptCount).map(r => r.registration_id));
+      const passThroughIds = new Set(takeUpToRank(q1Ranked, ptCount).map(r => r.registration_id));
       eligible = allRegs.filter(r => !passThroughIds.has(r.id));
       priorRanked = q1Ranked;
     } else if (phase_type === 'final_1') {
@@ -294,12 +294,12 @@ router.post('/', async (req, res) => {
         // Pass-through from Q1 + top from Q2
         const ptCount = q2Phase.pass_through_count || 0;
         const q1Ranked = await rankedRunResults(eventId, 1);
-        const passThrough = q1Ranked.slice(0, ptCount);
+        const passThrough = takeUpToRank(q1Ranked, ptCount);
         const passThroughIds = new Set(passThrough.map(r => r.registration_id));
 
         const q2Ranked = await rankedRunResults(eventId, q2Phase.run_number);
         const remainingSlots = fSize - ptCount;
-        const q2Qualifiers = q2Ranked.slice(0, Math.max(0, remainingSlots));
+        const q2Qualifiers = takeUpToRank(q2Ranked, Math.max(0, remainingSlots));
 
         const eligibleIds = new Set([
           ...passThrough.map(r => r.registration_id),
@@ -313,7 +313,7 @@ router.post('/', async (req, res) => {
       } else {
         // No Q2 - just top from Q1
         const q1Ranked = await rankedRunResults(eventId, 1);
-        const topQ1 = q1Ranked.slice(0, fSize);
+        const topQ1 = takeUpToRank(q1Ranked, fSize);
         const eligibleIds = new Set(topQ1.map(r => r.registration_id));
         eligible = allRegs.filter(r => eligibleIds.has(r.id));
         priorRanked = topQ1;
@@ -322,7 +322,7 @@ router.post('/', async (req, res) => {
       const f1Phase = allPhases.find(p => p.phase_type === 'final_1');
       const fSize = final_size || 8;
       const f1Ranked = await rankedRunResults(eventId, f1Phase.run_number);
-      const topF1 = f1Ranked.slice(0, fSize);
+      const topF1 = takeUpToRank(f1Ranked, fSize);
       const eligibleIds = new Set(topF1.map(r => r.registration_id));
       eligible = allRegs.filter(r => eligibleIds.has(r.id));
       priorRanked = topF1;

@@ -1,82 +1,74 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { useParams } from 'react-router-dom'
-import useResolveIds from '../hooks/useResolveIds'
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
+import useResolveIds from '../hooks/useResolveIds';
+import PublicLayout from '../components/public/PublicLayout';
+import LiveDot from '../components/public/LiveDot';
+import StatusPill from '../components/public/StatusPill';
+import RankChip from '../components/public/RankChip';
+import BibChip from '../components/public/BibChip';
+import AthleteCard from '../components/public/AthleteCard';
+import DualMatchCard from '../components/public/DualMatchCard';
 
-// StickIt v1.6.05 Scoreboard
-// - Single / aerials: classic results table + now-competing banner.
-// - Dual mogul: compact current-match banner + completed bracket results table.
+const DISCIPLINE_LABEL = { mogul: 'MOGULS', dual_mogul: 'DUAL MOGULS', aerials: 'AERIALS' };
+
+function fmt2(n) { if (n == null || n === '' || isNaN(Number(n))) return '–'; return Number(n).toFixed(2); }
+function fmt1(n) { if (n == null || n === '' || isNaN(Number(n))) return '–'; return Number(n).toFixed(1); }
 
 export default function Scoreboard() {
-  const { eventId: rawEventId } = useParams()
-  const { eventId: rEvt, loading: resolving } = useResolveIds({ event: rawEventId })
-  const eventId = rEvt || rawEventId
-  const [results, setResults] = useState([])
-  const [phaseData, setPhaseData] = useState(null)
-  const [event, setEvent] = useState(null)
-  const [activeRun, setActiveRun] = useState(null)
-  const [dualState, setDualState] = useState(null)
-  const [bracketMatches, setBracketMatches] = useState([])
-  const [reviewStatus, setReviewStatus] = useState(null)
-  const [expandedRegId, setExpandedRegId] = useState(null)
-  const [judgePointsByMatch, setJudgePointsByMatch] = useState({})
-  const [expandedMatchId, setExpandedMatchId] = useState(null)
-  const [dualTab, setDualTab] = useState('bracket')
-  const [placements, setPlacements] = useState([])
-  const [judgeScores, setJudgeScores] = useState({})
-  const [allRuns, setAllRuns] = useState([])
-  const [upcoming, setUpcoming] = useState(null)
-  const [downloading, setDownloading] = useState(false)
-  const wsRef = useRef(null)
+  const { eventId: rawEventId } = useParams();
+  const { eventId: rEvt, loading: resolving } = useResolveIds({ event: rawEventId });
+  const eventId = rEvt || rawEventId;
+
+  const [results, setResults] = useState([]);
+  const [phaseData, setPhaseData] = useState(null);
+  const [event, setEvent] = useState(null);
+  const [activeRun, setActiveRun] = useState(null);
+  const [dualState, setDualState] = useState(null);
+  const [bracketMatches, setBracketMatches] = useState([]);
+  const [reviewStatus, setReviewStatus] = useState(null);
+  const [expandedRegId, setExpandedRegId] = useState(null);
+  const [judgePointsByMatch, setJudgePointsByMatch] = useState({});
+  const [expandedMatchId, setExpandedMatchId] = useState(null);
+  const [dualTab, setDualTab] = useState('match');
+  const [placements, setPlacements] = useState([]);
+  const [judgeScores, setJudgeScores] = useState({});
+  const [allRuns, setAllRuns] = useState([]);
+  const [upcoming, setUpcoming] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const wsRef = useRef(null);
+
+  const isDual = event && event.discipline === 'dual_mogul';
 
   const downloadPdf = async (endpoint, suffix) => {
-    if (!event || event.status !== 'complete' || downloading) return
-    setDownloading(true)
+    if (!event || event.status !== 'complete' || downloading) return;
+    setDownloading(true);
     try {
       const res = await fetch(`/api/pdf/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ eventId: event.id }),
-      })
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j.error || 'PDF failed')
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(event.name || 'event').replace(/\s+/g, '_')}_${suffix}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
+      });
+      if (!res.ok) throw new Error('PDF failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(event.name || 'event').replace(/\s+/g, '_')}_${suffix}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
-      console.error('PDF download failed:', e)
+      console.error('PDF download failed:', e);
     } finally {
-      setDownloading(false)
+      setDownloading(false);
     }
-  }
-
-  const PdfButton = () => (
-    event?.status === 'complete' ? (
-      <div className="text-center mb-4">
-        <button
-          disabled={downloading}
-          onClick={() => downloadPdf('event-results-detailed', 'event_results_detailed')}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-sm font-semibold text-white"
-        >
-          {downloading ? 'Preparing…' : 'Download PDF'}
-        </button>
-      </div>
-    ) : null
-  )
+  };
 
   const loadEvent = async () => {
     try {
-      const ev = await fetch(`/api/events/${eventId}`).then(r => r.json())
-      setEvent(ev)
+      const ev = await fetch(`/api/events/${eventId}`).then(r => r.json());
+      setEvent(ev);
     } catch {}
-  }
-
-  const isDual = event && event.discipline === 'dual_mogul'
+  };
 
   const loadResults = async () => {
     try {
@@ -86,62 +78,56 @@ export default function Scoreboard() {
         fetch(`/api/events/${eventId}/phases/results`).then(r => r.json()).catch(() => null),
         fetch(`/api/events/${eventId}/results/judge-scores`).then(r => r.json()).catch(() => null),
         fetch(`/api/events/${eventId}/runs/upcoming`).then(r => r.json()).catch(() => null),
-      ])
-      setResults(res)
-      setActiveRun(active && !active.event_completed ? active : null)
-      setPhaseData(pd && pd.format !== 'none' ? pd : null)
+      ]);
+      setResults(res);
+      setActiveRun(active && !active.event_completed ? active : null);
+      setPhaseData(pd && pd.format !== 'none' ? pd : null);
       if (jsData) {
-        setJudgeScores(jsData.judgeScores || {})
-        setAllRuns(jsData.runs || [])
+        setJudgeScores(jsData.judgeScores || {});
+        setAllRuns(jsData.runs || []);
       }
-      setUpcoming(up && Array.isArray(up.athletes) ? up : null)
+      setUpcoming(up && Array.isArray(up.athletes) ? up : null);
     } catch {}
-  }
+  };
 
   const loadActiveDual = async () => {
     try {
-      const r = await fetch(`/api/events/${eventId}/dual/active-match`)
-      if (!r.ok) return
-      const data = await r.json()
+      const r = await fetch(`/api/events/${eventId}/dual/active-match`);
+      if (!r.ok) return;
+      const data = await r.json();
       if (!data || !data.id) {
-        setDualState(null)
-        return
+        setDualState(null);
+        return;
       }
       setDualState({
         matchId: data.id,
-        blue: {
-          bib:  data.blue_bib  || '',
-          name: [data.blue_first, data.blue_last].filter(Boolean).join(' '),
-        },
-        red: {
-          bib:  data.red_bib  || '',
-          name: [data.red_first, data.red_last].filter(Boolean).join(' '),
-        },
+        blue: { bib: data.blue_bib || '', name: [data.blue_first, data.blue_last].filter(Boolean).join(' '), first: data.blue_first, last: data.blue_last },
+        red: { bib: data.red_bib || '', name: [data.red_first, data.red_last].filter(Boolean).join(' '), first: data.red_first, last: data.red_last },
         blueTotal: null,
-        redTotal:  null,
-        winner:    null,
-        scored:    false,
-      })
+        redTotal: null,
+        winner: null,
+        scored: false,
+      });
     } catch {}
-  }
+  };
 
   const loadBracket = async () => {
     try {
-      const r = await fetch(`/api/events/${eventId}/dual`)
-      if (!r.ok) return
-      const data = await r.json()
-      const matches = Array.isArray(data) ? data : []
-      setBracketMatches(matches)
-      loadJudgePointsForBracket(matches)
+      const r = await fetch(`/api/events/${eventId}/dual`);
+      if (!r.ok) return;
+      const data = await r.json();
+      const matches = Array.isArray(data) ? data : [];
+      setBracketMatches(matches);
+      loadJudgePointsForBracket(matches);
     } catch {}
-  }
+  };
 
   const loadJudgePointsForBracket = async (matches) => {
     try {
-      const eligible = matches.filter(m => !m.is_bye && m.status === 'complete')
+      const eligible = matches.filter(m => !m.is_bye && m.status === 'complete');
       if (eligible.length === 0) {
-        setJudgePointsByMatch({})
-        return
+        setJudgePointsByMatch({});
+        return;
       }
       const results = await Promise.all(
         eligible.map(m =>
@@ -150,781 +136,1076 @@ export default function Scoreboard() {
             .then(data => [m.id, Array.isArray(data?.rows) ? data.rows : []])
             .catch(() => [m.id, []])
         )
-      )
-      const map = {}
-      for (const [id, rows] of results) map[id] = rows
-      setJudgePointsByMatch(map)
+      );
+      const map = {};
+      for (const [id, rows] of results) map[id] = rows;
+      setJudgePointsByMatch(map);
     } catch {}
-  }
+  };
 
   const loadPlacements = async () => {
     try {
-      const r = await fetch(`/api/events/${eventId}/results`)
-      if (!r.ok) return
-      const data = await r.json()
-      setPlacements(Array.isArray(data) ? data : [])
+      const r = await fetch(`/api/events/${eventId}/results`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setPlacements(Array.isArray(data) ? data : []);
     } catch {}
-  }
+  };
 
-  // v1.16.17 -- bracket-complete review state for dual mogul scoreboard banner
   const loadReviewState = async () => {
     try {
-      const r = await fetch(`/api/events/${eventId}/dual/review-state`)
-      if (!r.ok) return
-      const data = await r.json()
-      setReviewStatus(data.status || null)
+      const r = await fetch(`/api/events/${eventId}/dual/review-state`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setReviewStatus(data.status || null);
     } catch {}
-  }
+  };
 
-  useEffect(() => { if (!resolving) loadEvent() }, [eventId, resolving])
+  useEffect(() => { if (!resolving) loadEvent(); }, [eventId, resolving]);
 
   useEffect(() => {
-    if (event == null) return
+    if (event == null) return;
     if (isDual) {
-      loadActiveDual()
-      loadBracket()
-      loadPlacements()
-      loadReviewState()
+      loadActiveDual();
+      loadBracket();
+      loadPlacements();
+      loadReviewState();
     } else {
-      loadResults()
+      loadResults();
     }
 
     const iv = setInterval(() => {
       if (isDual) {
-        loadActiveDual()
-        loadBracket()
-        loadPlacements()
-        loadReviewState()
+        loadActiveDual();
+        loadBracket();
+        loadPlacements();
+        loadReviewState();
       } else {
-        loadResults()
+        loadResults();
       }
-    }, 5000)
+    }, 5000);
 
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${wsProto}//${location.host}`)
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProto}//${location.host}`);
     ws.onmessage = (e) => {
       try {
-        const msg = JSON.parse(e.data)
-        if (msg.eventId !== eventId) return
-        const d = msg.data || {}
+        const msg = JSON.parse(e.data);
+        if (msg.eventId !== eventId) return;
+        const d = msg.data || {};
         if (isDual) {
           if (msg.type === 'dual_match_started') {
-            loadActiveDual()
-            loadBracket()
-            loadPlacements()
+            loadActiveDual();
+            loadBracket();
+            loadPlacements();
           } else if (msg.type === 'score_update' && d.isDual) {
             setDualState(prev => {
               const base = prev || {
                 matchId: d.matchId,
-                blue: d.blue ? { bib: d.blue.bib || '', name: d.blue.name || '' } : { bib: '', name: '' },
-                red:  d.red  ? { bib: d.red.bib  || '', name: d.red.name  || '' } : { bib: '', name: '' },
-              }
-              let winner = null
-              if (d.winner && d.blue && d.winner.registrationId === d.blue.registrationId) winner = 'blue'
-              else if (d.winner && d.red && d.winner.registrationId === d.red.registrationId) winner = 'red'
+                blue: d.blue ? { bib: d.blue.bib || '', name: d.blue.name || '', first: d.blue.first, last: d.blue.last } : { bib: '', name: '' },
+                red: d.red ? { bib: d.red.bib || '', name: d.red.name || '', first: d.red.first, last: d.red.last } : { bib: '', name: '' },
+              };
+              let winner = null;
+              if (d.winner && d.blue && d.winner.registrationId === d.blue.registrationId) winner = 'blue';
+              else if (d.winner && d.red && d.winner.registrationId === d.red.registrationId) winner = 'red';
               return {
                 ...base,
-                matchId:   d.matchId || base.matchId,
+                matchId: d.matchId || base.matchId,
                 blueTotal: d.blueTotal,
-                redTotal:  d.redTotal,
+                redTotal: d.redTotal,
                 winner,
-                scored:    true,
-              }
-            })
-            loadBracket()
-            loadPlacements()
+                scored: true,
+              };
+            });
+            loadBracket();
+            loadPlacements();
           } else if (msg.type === 'run_updated' && d.dualComplete) {
-            loadBracket()
-            loadPlacements()
+            loadBracket();
+            loadPlacements();
           } else if (msg.type === 'dual_match_cleared') {
-            setDualState(null)
-            loadBracket()
-            loadPlacements()
+            setDualState(null);
+            loadBracket();
+            loadPlacements();
           } else if (msg.type === 'dual_bracket_review' || msg.type === 'dual_bracket_sent_back') {
-            // v1.16.17 -- bracket-complete review state changed
-            loadReviewState()
-            loadBracket()
-            loadPlacements()
+            loadReviewState();
+            loadBracket();
+            loadPlacements();
           } else if (msg.type === 'event_finalized') {
-            // v1.16.17 -- event finalized -> show "Finalized" banner
-            setReviewStatus('approved')
-            loadEvent()
-            loadBracket()
-            loadPlacements()
+            setReviewStatus('approved');
+            loadEvent();
+            loadBracket();
+            loadPlacements();
           }
         } else {
           if (msg.type === 'score_update' || msg.type === 'run_started' || msg.type === 'run_updated') {
-            loadResults()
+            loadResults();
           }
         }
       } catch {}
-    }
-    wsRef.current = ws
-    return () => { clearInterval(iv); ws.close() }
-  }, [eventId, event, isDual])
+    };
+    wsRef.current = ws;
+    return () => { clearInterval(iv); ws.close(); };
+  }, [eventId, event, isDual]);
 
-  // --- Click-to-expand score detail ---
-  const toggleExpand = (regId) => setExpandedRegId(prev => prev === regId ? null : regId)
-
-  // Clear expanded match if it's no longer in the bracket
   useEffect(() => {
     if (expandedMatchId && !bracketMatches.some(m => m.id === expandedMatchId)) {
-      setExpandedMatchId(null)
+      setExpandedMatchId(null);
     }
-  }, [bracketMatches, expandedMatchId])
+  }, [bracketMatches, expandedMatchId]);
 
-  // Get runs for a given registration_id, grouped from allRuns
-  const getRunsForReg = (regId) => allRuns.filter(r => r.registration_id === regId).sort((a, b) => a.run_number - b.run_number)
+  const toggleExpand = (regId) => setExpandedRegId(prev => prev === regId ? null : regId);
 
-  const ScoreDetailRow = ({ regId, colSpan, phaseRuns }) => {
-    // phaseRuns is used for best_of_2 where r.runs is already provided
-    let runs
-    if (phaseRuns) {
-      runs = Object.values(phaseRuns).sort((a, b) => a.run_number - b.run_number)
-    } else {
-      runs = getRunsForReg(regId)
-    }
-    if (!runs.length) return null
+  const getRunsForReg = (regId) => allRuns
+    .filter(r => r.registration_id === regId)
+    .sort((a, b) => a.run_number - b.run_number);
 
+  const eventLabel = event ? `${(event.gender === 'M' ? 'MEN' : event.gender === 'F' ? 'WOMEN' : '')} ${DISCIPLINE_LABEL[event.discipline] || ''}`.trim() : '';
+
+  // -----------------------------
+  //  DUAL MOGUL
+  // -----------------------------
+  if (isDual) {
     return (
-      <tr className="bg-gray-800/60">
-        <td colSpan={colSpan} className="px-4 py-2">
-          {runs.map(run => {
-            if (run.run_status) {
-              return (
-                <div key={run.run_number} className="text-xs font-mono text-gray-400">
-                  <span className="text-gray-500">Run {run.run_number}:</span>{' '}
-                  <span className="text-red-400 font-semibold">{run.run_status}</span>
-                </div>
-              )
-            }
-            const js = judgeScores[run.id] || { tl: [], air1: [], air2: [] }
-            const codes = [run.jump1_code, run.jump2_code].filter(Boolean).join('/')
-            return (
-              <div key={run.run_number} className="text-xs font-mono text-gray-300 whitespace-nowrap overflow-x-auto">
-                <span className="text-gray-500">Run {run.run_number}:</span>
-                {js.tl.map((s, i) => (
-                  <span key={`tl${i}`} className="ml-3">
-                    <span className="text-gray-500">TL{i + 1}</span> {s != null ? s.toFixed(1) : '–'}
-                  </span>
-                ))}
-                {codes && <span className="ml-3 text-blue-400">{codes}</span>}
-                {js.air1.map((s, i) => (
-                  <span key={`a${i}`} className="ml-3">
-                    <span className="text-gray-500">A{i + 1}</span> {s != null ? s.toFixed(1) : '–'}
-                  </span>
-                ))}
-                {run.run_time != null && (
-                  <span className="ml-3">
-                    <span className="text-gray-500">T:</span> {run.run_time == -1 ? 'NT' : Number(run.run_time).toFixed(2)}
-                  </span>
-                )}
-                {run.speed_score != null && (
-                  <span className="ml-3">
-                    <span className="text-gray-500">TPt:</span> {run.speed_score.toFixed(2)}
-                  </span>
-                )}
-                <span className="ml-3 text-white font-semibold">
-                  <span className="text-gray-500">Total:</span> {run.total_score != null ? run.total_score.toFixed(2) : '–'}
-                </span>
-              </div>
-            )
-          })}
-        </td>
-      </tr>
-    )
+      <PublicLayout>
+        <DualScoreboard
+          event={event}
+          eventLabel={eventLabel}
+          dualState={dualState}
+          bracketMatches={bracketMatches}
+          judgePointsByMatch={judgePointsByMatch}
+          placements={placements}
+          reviewStatus={reviewStatus}
+          dualTab={dualTab}
+          setDualTab={setDualTab}
+          expandedMatchId={expandedMatchId}
+          setExpandedMatchId={setExpandedMatchId}
+          downloading={downloading}
+          downloadPdf={downloadPdf}
+        />
+      </PublicLayout>
+    );
   }
 
-  if (isDual) {
-    // Bracket tree data processing
-    const mainMatches = bracketMatches.filter(m => !m.is_small_final)
-    const consolMatches = bracketMatches.filter(m => m.is_small_final).sort((a, b) => a.bracket_position - b.bracket_position)
-    const totalRound = mainMatches.length > 0 ? Math.max(...mainMatches.map(m => m.bracket_round)) : 0
-    const roundMatches = {}
-    for (const m of mainMatches) {
-      if (!roundMatches[m.bracket_round]) roundMatches[m.bracket_round] = []
-      roundMatches[m.bracket_round].push(m)
-    }
-    for (const r in roundMatches) roundMatches[r].sort((a, b) => a.bracket_position - b.bracket_position)
-    const rounds = []
-    for (let r = totalRound; r >= 1; r--) rounds.push(r)
-
-    const CARD_H = 44
-    const GAP = 6
-
-    const sbRoundLabel = (r) => {
-      if (r === 1) return 'Big Final'
-      if (r === 2) return 'Semifinals'
-      if (r === 3) return 'Quarterfinals'
-      return `Round of ${Math.pow(2, r)}`
-    }
-
-    const SbMatchCard = ({ m }) => {
-      const blueWon = m.status === 'complete' && m.winner_registration_id === m.registration_id_blue
-      const redWon = m.status === 'complete' && m.winner_registration_id === m.registration_id_red
-      const isDone = m.status === 'complete'
-      const blueLost = isDone && redWon
-      const redLost = isDone && blueWon
-      const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1
-
-      if (m.is_bye) {
-        return (
-          <div className="bg-gray-800/30 border border-gray-700 rounded text-xs" style={{ minWidth: 150 }}>
-            <div className="border-b border-gray-700 px-2 py-1 flex justify-between items-center">
-              <span className="text-blue-400 font-medium">{m.blue_first ? `${m.blue_last}, ${m.blue_first}` : 'TBD'}</span>
-              <span className="text-gray-600 text-[10px]">BYE</span>
+  // -----------------------------
+  //  MOGUL / AERIALS
+  // -----------------------------
+  return (
+    <PublicLayout>
+      <div style={{ minHeight: '100vh', background: 'var(--gradient-bg)', paddingBottom: 80 }}>
+        <ScoreboardHeader event={event} eventLabel={eventLabel} />
+        {activeRun && <NowCompetingBanner run={activeRun} />}
+        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 16px' }}>
+          {event?.status === 'complete' && (
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <button
+                disabled={downloading}
+                onClick={() => downloadPdf('event-results-detailed', 'event_results_detailed')}
+                className="sk-display"
+                style={{
+                  padding: '10px 22px',
+                  borderRadius: 10,
+                  background: 'var(--bg-panel)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--fg)',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  cursor: downloading ? 'wait' : 'pointer',
+                  opacity: downloading ? 0.6 : 1
+                }}
+              >
+                {downloading ? 'PREPARING…' : '↓ DOWNLOAD PDF'}
+              </button>
             </div>
-            <div className="px-2 py-1 text-gray-600">—</div>
-          </div>
-        )
-      }
+          )}
 
-      const athleteRow = (course, first, last, won, lost, total, loserStatus, isTop) => (
-        <div className={`${isTop ? 'border-b border-gray-700' : ''} px-2 py-1 flex justify-between items-center gap-1 ${won ? (course === 'blue' ? 'bg-blue-900/40' : 'bg-red-900/40') : 'bg-gray-800/50'}`}>
-          <div className="flex items-center gap-1 min-w-0 flex-1">
-            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${course === 'blue' ? 'bg-blue-500' : 'bg-red-500'}`}></span>
-            <span className={`truncate ${won ? 'text-white font-semibold' : first ? 'text-gray-300' : 'text-gray-600'}`}>
-              {first ? `${last}, ${first}` : 'TBD'}
+          {phaseData && phaseData.format === 'best_of_2' ? (
+            <BestOfTwoLayout
+              phaseData={phaseData}
+              event={event}
+              expandedRegId={expandedRegId}
+              toggleExpand={toggleExpand}
+              judgeScores={judgeScores}
+              getRunsForReg={getRunsForReg}
+            />
+          ) : phaseData && phaseData.format === 'qualifier_finals' ? (
+            <QualifierFinalsLayout
+              phaseData={phaseData}
+              event={event}
+              expandedRegId={expandedRegId}
+              toggleExpand={toggleExpand}
+              judgeScores={judgeScores}
+              getRunsForReg={getRunsForReg}
+            />
+          ) : (
+            <StandardLayout
+              results={results}
+              event={event}
+              expandedRegId={expandedRegId}
+              toggleExpand={toggleExpand}
+              judgeScores={judgeScores}
+              getRunsForReg={getRunsForReg}
+            />
+          )}
+
+          <UpcomingAthletes data={upcoming} />
+        </div>
+      </div>
+    </PublicLayout>
+  );
+}
+
+// =============================================================================
+// Header
+// =============================================================================
+function ScoreboardHeader({ event, eventLabel }) {
+  return (
+    <div style={{
+      maxWidth: 760,
+      margin: '0 auto',
+      padding: '24px 16px 16px',
+      textAlign: 'center'
+    }}>
+      <div className="sk-display" style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.3em', color: 'var(--fg-dim)', marginBottom: 4 }}>
+        STICKIT · LIVE SCOREBOARD
+      </div>
+      <div className="sk-display" style={{ fontSize: 26, fontWeight: 800, letterSpacing: '0.04em', color: 'var(--fg)' }}>
+        {eventLabel || 'EVENT'}
+      </div>
+      {event?.name && (
+        <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 4 }}>
+          {event.name}
+        </div>
+      )}
+      {event && (
+        <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+          <StatusPill status={event.status} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Now Competing banner
+// =============================================================================
+function NowCompetingBanner({ run }) {
+  return (
+    <div style={{
+      maxWidth: 760,
+      margin: '0 auto 20px',
+      padding: '16px 20px',
+      background: 'var(--gradient-red)',
+      borderRadius: 14,
+      marginLeft: 16,
+      marginRight: 16,
+      boxShadow: '0 6px 24px rgba(230,57,70,0.35)',
+      color: '#fff',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14
+    }}>
+      <LiveDot size={10} color="#fff" />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="sk-display" style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.2em', opacity: 0.9 }}>
+          NOW COMPETING
+        </div>
+        <div className="sk-display" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>
+          {(run.last_name || '').toUpperCase()}, {run.first_name || ''}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div className="sk-display" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.15em', opacity: 0.85 }}>
+          BIB
+        </div>
+        <div className="sk-mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>
+          {run.bib_number ?? '–'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Standard layout
+// =============================================================================
+function buildAthleteRowsStd(results) {
+  return results.map(r => {
+    const status = r.run_status && ['DNS', 'DNF', 'DSQ', 'RNS', 'SCR'].includes(r.run_status) ? r.run_status : null;
+    const bestRun = {
+      id: r.run_id || r.id,
+      run_id: r.run_id || r.id,
+      total_score: r.total_score,
+      turns_score: r.turns_score,
+      air_score: r.air_score,
+      speed_score: r.speed_score,
+      run_time: r.run_time,
+      run_number: r.run_number,
+      jump1_code: r.jump1_code,
+      jump2_code: r.jump2_code,
+      run_status: r.run_status,
+    };
+    return {
+      regId: r.registration_id || r.id,
+      rank: r.rank,
+      bib: r.bib_number,
+      first: r.first_name,
+      last: r.last_name,
+      club: r.club,
+      total: r.total_score,
+      status,
+      bestRun
+    };
+  });
+}
+
+function StandardLayout({ results, event, expandedRegId, toggleExpand, judgeScores, getRunsForReg }) {
+  const rows = useMemo(() => buildAthleteRowsStd(results), [results]);
+  if (rows.length === 0) {
+    return <EmptyState />;
+  }
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {rows.map(row => {
+        const allRuns = getRunsForReg(row.regId).map(r => ({ ...r, phaseLabel: `Run ${r.run_number}` }));
+        return (
+          <AthleteCard
+            key={row.regId}
+            rank={row.rank}
+            bib={row.bib}
+            firstName={row.first}
+            lastName={row.last}
+            club={row.club}
+            bestRun={row.bestRun}
+            allRuns={allRuns}
+            judgeScoresMap={judgeScores}
+            totalScore={row.total}
+            status={row.status}
+            expanded={expandedRegId === row.regId}
+            onToggle={() => toggleExpand(row.regId)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// =============================================================================
+// Best of 2 layout
+// =============================================================================
+function BestOfTwoLayout({ phaseData, event, expandedRegId, toggleExpand, judgeScores, getRunsForReg }) {
+  const phases = phaseData.phases || [];
+  const rows = phaseData.results || [];
+  if (rows.length === 0) {
+    return <EmptyState />;
+  }
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {rows.map(r => {
+        const regId = r.registration_id || r.id;
+        const status = r.run_status && ['DNS', 'DNF', 'DSQ', 'RNS', 'SCR'].includes(r.run_status) ? r.run_status : null;
+        const phaseRuns = r.runs || {};
+
+        // Identify the run that produced the best total
+        const sortedRuns = Object.values(phaseRuns)
+          .filter(rr => !rr.run_status)
+          .sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
+        const bestRun = sortedRuns[0] || null;
+        const allRuns = phases.map(p => {
+          const rd = phaseRuns[p.run_number];
+          return rd ? { ...rd, phaseLabel: p.label } : { run_number: p.run_number, phaseLabel: p.label };
+        });
+
+        return (
+          <AthleteCard
+            key={regId}
+            rank={r.rank}
+            bib={r.bib_number}
+            firstName={r.first_name}
+            lastName={r.last_name}
+            club={r.club}
+            bestRun={bestRun}
+            allRuns={allRuns}
+            judgeScoresMap={judgeScores}
+            totalScore={r.total_score}
+            status={status}
+            expanded={expandedRegId === regId}
+            onToggle={() => toggleExpand(regId)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// =============================================================================
+// Qualifier / Finals layout
+// =============================================================================
+function QualifierFinalsLayout({ phaseData, event, expandedRegId, toggleExpand, judgeScores, getRunsForReg }) {
+  const tiers = {};
+  for (const r of phaseData.results || []) {
+    const t = r.tier || 'qualifier';
+    if (!tiers[t]) tiers[t] = [];
+    tiers[t].push(r);
+  }
+  const tierOrder = ['final_2', 'final_1', 'qualifier', 'flagged'];
+  const tierLabels = { final_2: 'FINAL 2', final_1: 'FINAL 1', qualifier: 'QUALIFICATION', flagged: '' };
+
+  if ((phaseData.results || []).length === 0) return <EmptyState />;
+
+  return (
+    <div style={{ display: 'grid', gap: 24 }}>
+      {tierOrder.map(tier => {
+        const rows = tiers[tier];
+        if (!rows || rows.length === 0) return null;
+        return (
+          <div key={tier}>
+            {tierLabels[tier] && (
+              <div className="sk-display" style={{
+                fontSize: 12,
+                fontWeight: 800,
+                letterSpacing: '0.2em',
+                color: 'var(--fg-muted)',
+                paddingLeft: 4,
+                marginBottom: 10
+              }}>
+                {tierLabels[tier]}
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: 10 }}>
+              {rows.map(r => {
+                const regId = r.registration_id || r.id;
+                const status = r.run_status && ['DNS', 'DNF', 'DSQ', 'RNS', 'SCR'].includes(r.run_status) ? r.run_status : null;
+                const bestRun = {
+                  id: r.run_id || r.id,
+                  run_id: r.run_id || r.id,
+                  total_score: r.total_score,
+                  turns_score: r.turns_score,
+                  air_score: r.air_score,
+                  speed_score: r.speed_score,
+                  run_time: r.run_time,
+                  jump1_code: r.jump1_code,
+                  jump2_code: r.jump2_code,
+                };
+                const allRuns = getRunsForReg(regId).map(rr => ({ ...rr, phaseLabel: `Run ${rr.run_number}` }));
+                return (
+                  <AthleteCard
+                    key={regId}
+                    rank={r.rank}
+                    bib={r.bib_number}
+                    firstName={r.first_name}
+                    lastName={r.last_name}
+                    club={r.club}
+                    bestRun={bestRun}
+                    allRuns={allRuns}
+                    judgeScoresMap={judgeScores}
+                    totalScore={r.total_score}
+                    status={status}
+                    expanded={expandedRegId === regId}
+                    onToggle={() => toggleExpand(regId)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div style={{
+      padding: '60px 20px',
+      textAlign: 'center',
+      color: 'var(--fg-dim)',
+      background: 'var(--bg-panel)',
+      borderRadius: 14,
+      border: '1px solid var(--border)'
+    }}>
+      No results yet
+    </div>
+  );
+}
+
+// =============================================================================
+// Upcoming Athletes
+// =============================================================================
+function UpcomingAthletes({ data }) {
+  if (!data || !Array.isArray(data.athletes) || data.athletes.length === 0) return null;
+  const heading = data.phase_label ? `${data.phase_label} — Up Next` : 'Up Next';
+  return (
+    <div style={{
+      marginTop: 24,
+      background: 'var(--bg-panel)',
+      borderRadius: 14,
+      border: '1px solid var(--border)',
+      overflow: 'hidden',
+      opacity: 0.85
+    }}>
+      <div className="sk-display" style={{
+        padding: '10px 16px',
+        fontSize: 11,
+        letterSpacing: '0.2em',
+        color: 'var(--fg-muted)',
+        fontWeight: 700,
+        background: 'var(--bg-elev)',
+        borderBottom: '1px solid var(--border)'
+      }}>
+        {heading}
+      </div>
+      <div>
+        {data.athletes.map((a, i) => (
+          <div
+            key={a.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 16px',
+              borderBottom: i < data.athletes.length - 1 ? '1px solid var(--border)' : 'none'
+            }}
+          >
+            <span className="sk-mono" style={{ fontSize: 12, color: 'var(--fg-dim)', minWidth: 30 }}>
+              {a.run_order}
+            </span>
+            <BibChip bib={a.bib_number} size="sm" />
+            <span className="sk-display" style={{ fontSize: 13, color: 'var(--fg)', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {a.last_name}, {a.first_name}
             </span>
           </div>
-          {isDone && total != null && (
-            <span className={`font-bold flex-shrink-0 ml-1 ${won ? 'text-white' : 'text-gray-500'}`}>{total}</span>
-          )}
-          {lost && loserStatus && (
-            <span className="font-bold flex-shrink-0 ml-1 text-white">{loserStatus}</span>
-          )}
-        </div>
-      )
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      const blueRow = (isTop) => athleteRow('blue', m.blue_first, m.blue_last, blueWon, blueLost, m.blue_total, blueLost && m.loser_status ? m.loser_status : null, isTop)
-      const redRow = (isTop) => athleteRow('red', m.red_first, m.red_last, redWon, redLost, m.red_total, redLost && m.loser_status ? m.loser_status : null, isTop)
+// =============================================================================
+// DUAL Scoreboard
+// =============================================================================
+function DualScoreboard({
+  event, eventLabel, dualState, bracketMatches, judgePointsByMatch,
+  placements, reviewStatus, dualTab, setDualTab,
+  expandedMatchId, setExpandedMatchId, downloading, downloadPdf
+}) {
+  // Find the most recently completed match for fallback
+  const recentCompleted = useMemo(() => {
+    const done = bracketMatches.filter(m => !m.is_bye && m.status === 'complete');
+    if (done.length === 0) return null;
+    const sorted = [...done].sort((a, b) => {
+      if (a.bracket_round !== b.bracket_round) return a.bracket_round - b.bracket_round;
+      return (a.bracket_position || 0) - (b.bracket_position || 0);
+    });
+    return sorted[0];
+  }, [bracketMatches]);
 
-      const isExpandable = !m.is_bye && isDone
-      const isExpanded = isExpandable && expandedMatchId === m.id
-      const onCardClick = () => {
-        if (!isExpandable) return
-        setExpandedMatchId(prev => prev === m.id ? null : m.id)
-      }
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--gradient-bg)', paddingBottom: 80 }}>
+      <ScoreboardHeader event={event} eventLabel={eventLabel} />
 
-      const renderDetailRow = () => {
-        const points = judgePointsByMatch[m.id] || []
-        const fmt = (rows, side) => {
-          if (!rows.length) return null
-          const parts = rows.map(p => {
-            if (p.time_tied) return 'TT'
-            return String(side === 'blue' ? (p.blue_points ?? 0) : (p.red_points ?? 0))
-          })
-          const sum = rows.reduce((acc, p) => acc + (side === 'blue' ? (p.blue_points || 0) : (p.red_points || 0)), 0)
-          return { expr: parts.join('+'), sum }
-        }
-        const blue = fmt(points, 'blue')
-        const red = fmt(points, 'red')
-        return (
-          <div className="border-t border-gray-700 px-2 py-1 bg-gray-900/60 text-[10px] font-mono tabular-nums leading-tight">
-            <div className="flex justify-between items-center">
-              <span className="text-blue-400">{blue ? blue.expr : '–'}</span>
-              <span className="text-blue-300 font-semibold">{blue ? `= ${blue.sum}` : ''}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-red-400">{red ? red.expr : '–'}</span>
-              <span className="text-red-300 font-semibold">{red ? `= ${red.sum}` : ''}</span>
-            </div>
-          </div>
-        )
-      }
-
-      return (
-        <div
-          className={`border rounded text-xs ${isDone ? 'border-gray-600' : 'border-gray-700'} ${isExpandable ? 'cursor-pointer active:bg-gray-700/30' : ''}`}
-          style={{ minWidth: 150 }}
-          onClick={isExpandable ? onCardClick : undefined}
-          onTouchEnd={isExpandable ? (e) => { e.preventDefault(); onCardClick() } : undefined}
-          role={isExpandable ? 'button' : undefined}
-          tabIndex={isExpandable ? 0 : undefined}
-        >
-          {redOnTop ? redRow(true) : blueRow(true)}
-          {redOnTop ? blueRow(false) : redRow(false)}
-          {isExpanded && renderDetailRow()}
-        </div>
-      )
-    }
-
-    return (
-      <div className="min-h-screen bg-gray-950 text-white font-sans p-6 flex flex-col gap-4">
-        <div className="text-center">
-          <div className="text-4xl font-black tracking-tight">
-            <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
-            <span className="text-white"> DUAL MOGULS</span>
-          </div>
-          <div className="text-blue-400 text-lg mt-1">Live Scoreboard</div>
-        </div>
-
-        {/* Current match */}
+      {/* Banner row */}
+      <div style={{ maxWidth: 880, margin: '0 auto 16px', padding: '0 16px' }}>
         {dualState ? (
-          <div className="bg-blue-900/40 border border-blue-800 rounded-2xl p-4">
-            <div className="text-xs uppercase tracking-widest text-blue-300 text-center mb-3 font-bold">
-              Now Competing
-            </div>
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
-              <DualCard
-                side="blue"
-                bib={dualState.blue.bib}
-                name={dualState.blue.name}
-                total={dualState.blueTotal}
-                isWinner={dualState.winner === 'blue'}
-                isLoser={dualState.scored && dualState.winner && dualState.winner !== 'blue'}
-              />
-              <div className="text-gray-500 text-2xl font-bold text-center">vs</div>
-              <DualCard
-                side="red"
-                bib={dualState.red.bib}
-                name={dualState.red.name}
-                total={dualState.redTotal}
-                isWinner={dualState.winner === 'red'}
-                isLoser={dualState.scored && dualState.winner && dualState.winner !== 'red'}
-              />
+          <div style={{
+            padding: '14px 18px',
+            background: 'var(--gradient-red)',
+            borderRadius: 14,
+            color: '#fff',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            boxShadow: '0 6px 24px rgba(230,57,70,0.3)'
+          }}>
+            <LiveDot size={10} color="#fff" />
+            <div className="sk-display" style={{ fontSize: 13, fontWeight: 800, letterSpacing: '0.15em' }}>
+              NOW COMPETING — {dualState.blue.last || ''} VS {dualState.red.last || ''}
             </div>
           </div>
         ) : (event && event.status === 'complete') || reviewStatus === 'approved' ? (
-          <div className="bg-emerald-900/30 border border-emerald-700 rounded-2xl p-4 text-center text-emerald-300 text-xl font-semibold">
-            Finalized
+          <div style={{
+            padding: '14px 18px',
+            background: 'var(--bg-panel)',
+            borderRadius: 14,
+            border: '1px solid var(--blue)',
+            color: 'var(--fg)',
+            textAlign: 'center'
+          }}>
+            <div className="sk-display" style={{ fontSize: 13, fontWeight: 800, letterSpacing: '0.15em', color: 'var(--blue)' }}>
+              EVENT FINALIZED
+            </div>
           </div>
         ) : reviewStatus === 'pending' || reviewStatus === 'sent_back' ? (
-          <div className="bg-amber-900/20 border border-amber-700 rounded-2xl p-4 text-center text-amber-300 text-xl">
-            Awaiting Head Judge Approval
+          <div style={{
+            padding: '14px 18px',
+            background: 'var(--bg-panel)',
+            borderRadius: 14,
+            border: '1px solid var(--gold)',
+            color: 'var(--fg)',
+            textAlign: 'center'
+          }}>
+            <div className="sk-display" style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.15em', color: 'var(--gold)' }}>
+              AWAITING HEAD JUDGE APPROVAL
+            </div>
           </div>
-        ) : (
-          <div className="bg-blue-900/20 border border-blue-900 rounded-2xl p-4 text-center text-blue-500 text-xl">
-            Waiting for next match...
-          </div>
-        )}
+        ) : null}
+      </div>
 
-        {/* Bracket / Place tabs */}
-        {bracketMatches.length > 0 ? (
-          <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-800 flex-1">
-            <div className="px-2 pt-2 bg-gray-800 flex gap-1 border-b border-gray-700 items-center">
-              {['bracket', 'place'].map(t => (
-                <button
-                  key={t}
-                  onClick={() => setDualTab(t)}
-                  className={`px-4 py-2 text-xs uppercase tracking-wider font-semibold border-b-2 -mb-px transition-colors ${dualTab === t ? 'text-white border-blue-500' : 'text-gray-400 border-transparent hover:text-gray-200'}`}
-                >
-                  {t === 'bracket' ? 'Bracket' : 'Place'}
-                </button>
-              ))}
-              {event?.status === 'complete' && (
-                <div className="ml-auto pr-1 pb-1">
-                  <button
-                    disabled={downloading}
-                    onClick={() => downloadPdf(
-                      dualTab === 'bracket' ? 'dual-bracket' : 'dual-results',
-                      dualTab === 'bracket' ? 'dual_bracket' : 'dual_results',
-                    )}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-semibold text-white"
-                  >
-                    {downloading ? 'Preparing…' : 'Download PDF'}
-                  </button>
+      {/* Tabs */}
+      <div style={{ maxWidth: 880, margin: '0 auto', padding: '0 16px' }}>
+        <div style={{
+          display: 'flex',
+          gap: 2,
+          background: 'var(--bg-panel)',
+          padding: 4,
+          borderRadius: 12,
+          border: '1px solid var(--border)',
+          marginBottom: 20
+        }}>
+          {['match', 'bracket', 'place'].map(t => (
+            <button
+              key={t}
+              onClick={() => setDualTab(t)}
+              className="sk-display"
+              style={{
+                flex: 1,
+                padding: '10px 12px',
+                borderRadius: 8,
+                background: dualTab === t ? 'var(--gradient-red)' : 'transparent',
+                border: 'none',
+                color: dualTab === t ? '#fff' : 'var(--fg-muted)',
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: '0.15em',
+                cursor: 'pointer'
+              }}
+            >
+              {t.toUpperCase()}
+            </button>
+          ))}
+          {event?.status === 'complete' && (
+            <button
+              disabled={downloading}
+              onClick={() => downloadPdf(
+                dualTab === 'bracket' ? 'dual-bracket' : 'dual-results',
+                dualTab === 'bracket' ? 'dual_bracket' : 'dual_results',
+              )}
+              className="sk-display"
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'var(--bg-elev)',
+                border: '1px solid var(--border)',
+                color: 'var(--fg)',
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                cursor: downloading ? 'wait' : 'pointer',
+                marginLeft: 8
+              }}
+            >
+              {downloading ? '…' : '↓ PDF'}
+            </button>
+          )}
+        </div>
+
+        {dualTab === 'match' && (
+          <DualMatchTab
+            dualState={dualState}
+            recentCompleted={recentCompleted}
+            judgePointsByMatch={judgePointsByMatch}
+          />
+        )}
+        {dualTab === 'bracket' && (
+          <DualBracketTab
+            bracketMatches={bracketMatches}
+            judgePointsByMatch={judgePointsByMatch}
+            expandedMatchId={expandedMatchId}
+            setExpandedMatchId={setExpandedMatchId}
+          />
+        )}
+        {dualTab === 'place' && (
+          <DualPlaceTab placements={placements} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
+  if (dualState) {
+    const blueAth = { bib_number: dualState.blue.bib, first_name: dualState.blue.first, last_name: dualState.blue.last };
+    const redAth = { bib_number: dualState.red.bib, first_name: dualState.red.first, last_name: dualState.red.last };
+    const blueP = []; const redP = [];
+    return (
+      <DualMatchCard
+        match={{ round_label: 'CURRENT MATCH' }}
+        blueAthlete={blueAth}
+        redAthlete={redAth}
+        bluePoints={dualState.blueTotal != null ? [dualState.blueTotal] : blueP}
+        redPoints={dualState.redTotal != null ? [dualState.redTotal] : redP}
+        isLive={true}
+        isFinal={false}
+      />
+    );
+  }
+  if (recentCompleted) {
+    const m = recentCompleted;
+    const points = judgePointsByMatch[m.id] || [];
+    const bluePoints = points.map(p => p.time_tied ? 0 : (p.blue_points || 0));
+    const redPoints = points.map(p => p.time_tied ? 0 : (p.red_points || 0));
+    return (
+      <div>
+        <DualMatchCard
+          match={{ round_label: roundLabel(m).toUpperCase() }}
+          blueAthlete={{ bib_number: m.blue_bib, first_name: m.blue_first, last_name: m.blue_last }}
+          redAthlete={{ bib_number: m.red_bib, first_name: m.red_first, last_name: m.red_last }}
+          bluePoints={bluePoints}
+          redPoints={redPoints}
+          isLive={false}
+          isFinal={true}
+        />
+        <div className="sk-display" style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-dim)', letterSpacing: '0.15em', marginTop: 16 }}>
+          MOST RECENT COMPLETED MATCH
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      padding: 60,
+      textAlign: 'center',
+      background: 'var(--bg-panel)',
+      borderRadius: 14,
+      border: '1px solid var(--border)',
+      color: 'var(--fg-dim)'
+    }}>
+      <div className="sk-display" style={{ fontSize: 14, letterSpacing: '0.15em', marginBottom: 8 }}>
+        WAITING FOR FIRST MATCH
+      </div>
+      <div style={{ fontSize: 12 }}>Check the Bracket tab for the upcoming schedule.</div>
+    </div>
+  );
+}
+
+function DualBracketTab({ bracketMatches, judgePointsByMatch, expandedMatchId, setExpandedMatchId }) {
+  const mainMatches = bracketMatches.filter(m => !m.is_small_final);
+  const consolMatches = bracketMatches.filter(m => m.is_small_final).sort((a, b) => a.bracket_position - b.bracket_position);
+  const totalRound = mainMatches.length > 0 ? Math.max(...mainMatches.map(m => m.bracket_round)) : 0;
+  const roundMatches = {};
+  for (const m of mainMatches) {
+    if (!roundMatches[m.bracket_round]) roundMatches[m.bracket_round] = [];
+    roundMatches[m.bracket_round].push(m);
+  }
+  for (const r in roundMatches) roundMatches[r].sort((a, b) => a.bracket_position - b.bracket_position);
+  const rounds = [];
+  for (let r = totalRound; r >= 1; r--) rounds.push(r);
+
+  if (bracketMatches.length === 0) {
+    return <EmptyState />;
+  }
+
+  const sbRoundLabel = (r) => {
+    if (r === 1) return 'BIG FINAL';
+    if (r === 2) return 'SEMIFINALS';
+    if (r === 3) return 'QUARTERFINALS';
+    return `ROUND OF ${Math.pow(2, r)}`;
+  };
+
+  const CARD_H = 52;
+  const GAP = 8;
+
+  return (
+    <div style={{
+      background: 'var(--bg-panel)',
+      borderRadius: 14,
+      border: '1px solid var(--border)',
+      padding: 16,
+      overflowX: 'auto'
+    }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', minWidth: rounds.length * 200 }}>
+        {rounds.map((r, colIdx) => {
+          const matches = roundMatches[r] || [];
+          const spacingMultiplier = Math.pow(2, colIdx);
+          const isFinalCol = r === 1;
+          return (
+            <div key={r} style={{ flexShrink: 0, width: 200 }}>
+              <div className="sk-display" style={{
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: '0.15em',
+                color: 'var(--fg-muted)',
+                marginBottom: 10,
+                textAlign: 'center'
+              }}>
+                {sbRoundLabel(r)}
+              </div>
+              {isFinalCol && consolMatches.length > 0 ? (
+                <div>
+                  <div style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
+                    {matches.map(m => (
+                      <BracketMatchCard key={m.id} m={m}
+                        totalRound={totalRound}
+                        expandedMatchId={expandedMatchId}
+                        setExpandedMatchId={setExpandedMatchId}
+                        judgePointsByMatch={judgePointsByMatch}
+                      />
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gap: 10, marginTop: 24 }}>
+                    {consolMatches.map(m => {
+                      const label = m.bracket_round === 1 && m.bracket_position === 2 ? 'SMALL FINAL'
+                        : m.bracket_round === 2 && m.bracket_position === 3 ? '5TH/6TH RUNOFF'
+                        : m.bracket_round === 2 && m.bracket_position === 4 ? '7TH/8TH RUNOFF'
+                        : 'CONSOLATION';
+                      return (
+                        <div key={m.id}>
+                          <div className="sk-display" style={{
+                            fontSize: 9,
+                            fontWeight: 800,
+                            letterSpacing: '0.15em',
+                            color: 'var(--gold)',
+                            marginBottom: 4,
+                            textAlign: 'center'
+                          }}>
+                            {label}
+                          </div>
+                          <BracketMatchCard m={m}
+                            totalRound={totalRound}
+                            expandedMatchId={expandedMatchId}
+                            setExpandedMatchId={setExpandedMatchId}
+                            judgePointsByMatch={judgePointsByMatch}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
+                  {matches.map(m => (
+                    <div key={m.id} style={{ marginBottom: (spacingMultiplier - 1) * (CARD_H + GAP) || GAP }}>
+                      <BracketMatchCard m={m}
+                        totalRound={totalRound}
+                        expandedMatchId={expandedMatchId}
+                        setExpandedMatchId={setExpandedMatchId}
+                        judgePointsByMatch={judgePointsByMatch}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-            {dualTab === 'bracket' ? (
-              <div className="overflow-x-auto p-4">
-                <div className="flex gap-3 items-start" style={{ minWidth: rounds.length * 170 }}>
-                  {rounds.map((r, colIdx) => {
-                    const matches = roundMatches[r] || []
-                    const spacingMultiplier = Math.pow(2, colIdx)
-                    const isFinalCol = r === 1
-                    return (
-                      <div key={r} className="flex-shrink-0" style={{ width: 170 }}>
-                        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2 text-center">
-                          {sbRoundLabel(r)}
-                        </div>
-                        {isFinalCol && consolMatches.length > 0 ? (
-                          <div>
-                            <div style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
-                              {matches.map(m => (
-                                <SbMatchCard key={m.id} m={m} />
-                              ))}
-                            </div>
-                            <div className="space-y-3" style={{ marginTop: 32 }}>
-                              {consolMatches.sort((a, b) => {
-                                if (a.bracket_round !== b.bracket_round) return a.bracket_round - b.bracket_round
-                                return a.bracket_position - b.bracket_position
-                              }).map(m => {
-                                const label = m.bracket_round === 1 && m.bracket_position === 2 ? 'Small Final'
-                                  : m.bracket_round === 2 && m.bracket_position === 3 ? '5th/6th Runoff'
-                                  : m.bracket_round === 2 && m.bracket_position === 4 ? '7th/8th Runoff'
-                                  : 'Consolation'
-                                return (
-                                  <div key={m.id}>
-                                    <div className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide mb-1 text-center">{label}</div>
-                                    <SbMatchCard m={m} />
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-1" style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
-                            {matches.map(m => (
-                              <div key={m.id} style={{ marginBottom: (spacingMultiplier - 1) * (CARD_H + GAP) }}>
-                                <SbMatchCard m={m} />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-800/50 text-gray-500 text-xs uppercase tracking-wider">
-                      <th className="px-4 py-2 text-left w-16">Place</th>
-                      <th className="px-4 py-2 text-left w-12">Bib</th>
-                      <th className="px-4 py-2 text-left w-12">Gp</th>
-                      <th className="px-4 py-2 text-left">Name</th>
-                      <th className="px-4 py-2 text-left">Club</th>
-                      <th className="px-4 py-2 text-right font-bold text-white">Points</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800">
-                    {placements.map((r) => {
-                      const flagged = (r.run_status === 'DNS' || r.run_status === 'DSQ' || r.reg_status === 'scratched')
-                      return (
-                        <tr key={r.registration_id} className={r.rank === 1 ? 'bg-yellow-900/20' : r.rank <= 3 ? 'bg-gray-800/40' : ''}>
-                          <td className="px-4 py-3">
-                            {flagged ? (
-                              <span className="text-red-400 font-semibold text-sm">{r.run_status === 'DSQ' ? 'DSQ' : (r.reg_status === 'scratched' ? 'SCR' : 'DNS')}</span>
-                            ) : (
-                              <span className={`font-bold text-lg ${r.rank === 1 ? 'text-yellow-400' : r.rank === 2 ? 'text-gray-300' : r.rank === 3 ? 'text-amber-600' : 'text-gray-500'}`}>
-                                {r.rank}
-                              </span>
-                            )}
-                            {r.run_status === 'DNF' && <span className="ml-2 text-xs text-amber-400">DNF</span>}
-                          </td>
-                          <td className="px-4 py-3 text-gray-400">{r.bib_number}</td>
-                          <td className="px-4 py-3 text-gray-400 font-mono">{r.gp}</td>
-                          <td className="px-4 py-3 font-semibold">{r.last_name}, {r.first_name}</td>
-                          <td className="px-4 py-3 text-gray-400">{r.club}</td>
-                          <td className="px-4 py-3 text-right font-mono text-white">
-                            {r.ffsp != null ? Number(r.ffsp).toFixed(2) : '—'}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    {!placements.length && (
-                      <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-600">No placements yet</td></tr>
-                    )}
-                  </tbody>
-                </table>
-                {placements.some(p => p.ffsp != null) && (
-                  <div className="text-center text-[11px] text-gray-500 italic px-4 py-3">
-                    Official FFSP scores are calculated by U.S. Ski and Snowboard and are subject to change.
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        ) : !dualState ? (
-          <div className="flex-1 flex items-center justify-center text-gray-700 text-xl">
-            No results yet
-          </div>
-        ) : null}
-
-        <div className="text-center text-[11px] text-gray-500 tracking-wide pt-1 pb-2">
-          <span className="text-gray-400 font-semibold mr-2">Judge Roles:</span>
-          J1 Turns • J2 Turns • J3 Air • J4 Time • J5 Overall
-        </div>
+          );
+        })}
       </div>
-    )
-  }
-
-  // Best of 2 scoreboard: show both runs side by side
-  if (phaseData && phaseData.format === 'best_of_2') {
-    const pd = phaseData
-    return (
-      <div className="min-h-screen bg-gray-950 text-white font-sans p-6">
-        <div className="text-center mb-8">
-          <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
-          <div className="text-blue-400 text-lg mt-1">Live Scoreboard — Best of 2</div>
-        </div>
-        <PdfButton />
-        {activeRun && (
-          <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">
-            <div className="text-xs uppercase tracking-widest text-blue-200 mb-1">Now Competing</div>
-            <div className="text-4xl font-black">{activeRun.first_name} {activeRun.last_name}</div>
-            <div className="text-blue-200 mt-1">Bib #{activeRun.bib_number}</div>
-          </div>
-        )}
-        <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-800">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-800 text-gray-400 text-xs uppercase tracking-wider">
-                <th className="px-4 py-3 text-left w-12">Rank</th>
-                <th className="px-4 py-3 text-left w-12">Bib</th>
-                <th className="px-4 py-3 text-left">Name</th>
-                {pd.phases.map(p => (
-                  <th key={p.run_number} className="px-4 py-3 text-right">{p.label}</th>
-                ))}
-                <th className="px-4 py-3 text-right font-bold text-white">Final Score</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800">
-              {pd.results.map((r, i) => {
-                const regId = r.registration_id || r.id
-                return (
-                  <React.Fragment key={regId}>
-                    <tr className={`cursor-pointer active:bg-gray-800/70 ${r.rank === 1 ? 'bg-yellow-900/20' : r.rank <= 3 ? 'bg-gray-800/40' : ''}`} onClick={() => toggleExpand(regId)} onTouchEnd={(e) => { e.preventDefault(); toggleExpand(regId) }}>
-                      <td className="px-4 py-3">
-                        <span className={`font-bold text-lg ${r.rank === 1 ? 'text-yellow-400' : r.rank === 2 ? 'text-gray-300' : r.rank === 3 ? 'text-amber-600' : 'text-gray-500'}`}>
-                          {r.rank || '–'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-400">{r.bib_number}</td>
-                      <td className="px-4 py-3 font-semibold">{r.last_name}, {r.first_name}</td>
-                      {pd.phases.map(p => {
-                        const runData = r.runs && r.runs[p.run_number]
-                        return (
-                          <td key={p.run_number} className="px-4 py-3 text-right text-gray-300 font-mono">
-                            {runData ? (runData.run_status || Number(runData.total_score).toFixed(2)) : '–'}
-                          </td>
-                        )
-                      })}
-                      <td className="px-4 py-3 text-right font-bold text-white text-lg">
-                        {r.total_score != null ? Number(r.total_score).toFixed(2) : (r.run_status || '–')}
-                      </td>
-                    </tr>
-                    {expandedRegId === regId && <ScoreDetailRow regId={regId} colSpan={pd.phases.length + 4} phaseRuns={r.runs} />}
-                  </React.Fragment>
-                )
-              })}
-              {!pd.results.length && (
-                <tr><td colSpan={pd.phases.length + 4} className="px-4 py-10 text-center text-gray-600">No results yet</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <UpcomingAthletes data={upcoming} />
-      </div>
-    )
-  }
-
-  // Qualifier/Finals scoreboard: sections per phase, latest on top
-  if (phaseData && phaseData.format === 'qualifier_finals') {
-    const pd = phaseData
-    // Group results by tier
-    const tiers = {}
-    for (const r of pd.results) {
-      const t = r.tier || 'qualifier'
-      if (!tiers[t]) tiers[t] = []
-      tiers[t].push(r)
-    }
-
-    // Order: final_2, final_1, qualifier (latest on top)
-    const tierOrder = ['final_2', 'final_1', 'qualifier', 'flagged']
-    const tierLabels = { final_2: 'Final 2', final_1: 'Final 1', qualifier: 'Qualification', flagged: '' }
-
-    return (
-      <div className="min-h-screen bg-gray-950 text-white font-sans p-6">
-        <div className="text-center mb-8">
-          <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
-          <div className="text-blue-400 text-lg mt-1">Live Scoreboard</div>
-        </div>
-        <PdfButton />
-        {activeRun && (
-          <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">
-            <div className="text-xs uppercase tracking-widest text-blue-200 mb-1">Now Competing</div>
-            <div className="text-4xl font-black">{activeRun.first_name} {activeRun.last_name}</div>
-            <div className="text-blue-200 mt-1">Bib #{activeRun.bib_number}</div>
-          </div>
-        )}
-        <div className="space-y-4">
-          {tierOrder.map(tier => {
-            const rows = tiers[tier]
-            if (!rows || rows.length === 0) return null
-            return (
-              <div key={tier} className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-800">
-                {tierLabels[tier] && (
-                  <div className="px-4 py-2 bg-gray-800 text-xs uppercase tracking-wider text-gray-400 font-semibold">
-                    {tierLabels[tier]}
-                  </div>
-                )}
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-800/50 text-gray-500 text-xs uppercase tracking-wider">
-                      <th className="px-4 py-2 text-left w-12">Rank</th>
-                      <th className="px-4 py-2 text-left w-12">Bib</th>
-                      <th className="px-4 py-2 text-left">Name</th>
-                      <th className="px-4 py-2 text-right">Turns</th>
-                      <th className="px-4 py-2 text-right">Air</th>
-                      {event?.discipline !== 'aerials' && <th className="px-4 py-2 text-right">Time</th>}
-                      <th className="px-4 py-2 text-right">Speed</th>
-                      <th className="px-4 py-2 text-right font-bold text-white">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800">
-                    {rows.map((r, i) => {
-                      const regId = r.registration_id || r.id
-                      const colCount = event?.discipline !== 'aerials' ? 8 : 7
-                      return (
-                        <React.Fragment key={regId}>
-                          <tr className={`cursor-pointer active:bg-gray-800/70 ${r.rank === 1 ? 'bg-yellow-900/20' : r.rank <= 3 ? 'bg-gray-800/40' : ''}`} onClick={() => toggleExpand(regId)} onTouchEnd={(e) => { e.preventDefault(); toggleExpand(regId) }}>
-                            <td className="px-4 py-3">
-                              <span className={`font-bold text-lg ${r.rank === 1 ? 'text-yellow-400' : r.rank === 2 ? 'text-gray-300' : r.rank === 3 ? 'text-amber-600' : 'text-gray-500'}`}>
-                                {r.rank || (r.run_status || '–')}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-gray-400">{r.bib_number}</td>
-                            <td className="px-4 py-3 font-semibold">{r.last_name}, {r.first_name}</td>
-                            <td className="px-4 py-3 text-right text-gray-300">{r.turns_score?.toFixed(1) || '–'}</td>
-                            <td className="px-4 py-3 text-right text-gray-300">{r.air_score?.toFixed(2) || '–'}</td>
-                            {event?.discipline !== 'aerials' && <td className="px-4 py-3 text-right text-gray-400 font-mono">{r.run_time != null ? (r.run_time == -1 ? 'NT' : Number(r.run_time).toFixed(2)) : '–'}</td>}
-                            <td className="px-4 py-3 text-right text-gray-300">{r.speed_score?.toFixed(2) || '–'}</td>
-                            <td className="px-4 py-3 text-right font-bold text-white text-lg">{r.run_status || r.total_score?.toFixed(2) || '–'}</td>
-                          </tr>
-                          {expandedRegId === regId && <ScoreDetailRow regId={regId} colSpan={colCount} />}
-                        </React.Fragment>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
-          })}
-          {pd.results.length === 0 && (
-            <div className="bg-gray-900 rounded-2xl p-10 text-center text-gray-600 border border-gray-800">No results yet</div>
-          )}
-        </div>
-        <UpcomingAthletes data={upcoming} />
-      </div>
-    )
-  }
-
-  // Standard scoreboard (legacy or single run)
-  return (
-    <div className="min-h-screen bg-gray-950 text-white font-sans p-6">
-      <div className="text-center mb-8">
-        <div className="text-4xl font-black tracking-tight"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span><span className="text-white"> MOGULS</span></div>
-        <div className="text-blue-400 text-lg mt-1">Live Scoreboard</div>
-      </div>
-      <PdfButton />
-
-      {activeRun && (
-        <div className="bg-blue-600 rounded-2xl p-5 mb-6 text-center animate-pulse-slow">
-          <div className="text-xs uppercase tracking-widest text-blue-200 mb-1">Now Competing</div>
-          <div className="text-4xl font-black">{activeRun.first_name} {activeRun.last_name}</div>
-          <div className="text-blue-200 mt-1">Bib #{activeRun.bib_number}</div>
-        </div>
-      )}
-
-      <div className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-800">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-800 text-gray-400 text-xs uppercase tracking-wider">
-              <th className="px-4 py-3 text-left w-12">Rank</th>
-              <th className="px-4 py-3 text-left w-12">Bib</th>
-              <th className="px-4 py-3 text-left">Name</th>
-              <th className="px-4 py-3 text-right">Turns</th>
-              <th className="px-4 py-3 text-right">Air</th>
-              {event?.discipline !== 'aerials' && <th className="px-4 py-3 text-right">Time</th>}
-              <th className="px-4 py-3 text-right">Speed</th>
-              <th className="px-4 py-3 text-right font-bold text-white">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {results.map((r, i) => {
-              const regId = r.registration_id || r.id
-              const colCount = event?.discipline !== 'aerials' ? 8 : 7
-              return (
-                <React.Fragment key={regId}>
-                  <tr className={`cursor-pointer active:bg-gray-800/70 ${r.rank === 1 ? 'bg-yellow-900/20' : r.rank <= 3 ? 'bg-gray-800/40' : ''}`} onClick={() => toggleExpand(regId)} onTouchEnd={(e) => { e.preventDefault(); toggleExpand(regId) }}>
-                    <td className="px-4 py-3">
-                      <span className={`font-bold text-lg ${r.rank === 1 ? 'text-yellow-400' : r.rank === 2 ? 'text-gray-300' : r.rank === 3 ? 'text-amber-600' : 'text-gray-500'}`}>
-                        {r.rank}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">{r.bib_number}</td>
-                    <td className="px-4 py-3 font-semibold">{r.last_name}, {r.first_name}</td>
-                    <td className="px-4 py-3 text-right text-gray-300">{r.turns_score?.toFixed(1)}</td>
-                    <td className="px-4 py-3 text-right text-gray-300">{r.air_score?.toFixed(2)}</td>
-                    {event?.discipline !== 'aerials' && <td className="px-4 py-3 text-right text-gray-400 font-mono">{r.run_time != null ? (r.run_time == -1 ? 'NT' : Number(r.run_time).toFixed(2)) : '–'}</td>}
-                    <td className="px-4 py-3 text-right text-gray-300">{r.speed_score?.toFixed(2) || '–'}</td>
-                    <td className="px-4 py-3 text-right font-bold text-white text-lg">{r.run_status || r.total_score?.toFixed(2) || '–'}</td>
-                  </tr>
-                  {expandedRegId === regId && <ScoreDetailRow regId={regId} colSpan={colCount} />}
-                </React.Fragment>
-              )
-            })}
-            {!results.length && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-600">No results yet</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <UpcomingAthletes data={upcoming} />
     </div>
-  )
+  );
 }
 
-function DualCard({ side, bib, name, total, isWinner, isLoser }) {
-  const baseBg = side === 'blue' ? '#1D4ED8' : '#DC2626'
+function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, judgePointsByMatch }) {
+  const blueWon = m.status === 'complete' && m.winner_registration_id === m.registration_id_blue;
+  const redWon = m.status === 'complete' && m.winner_registration_id === m.registration_id_red;
+  const isDone = m.status === 'complete';
+  const blueLost = isDone && redWon;
+  const redLost = isDone && blueWon;
+  const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1;
+
+  if (m.is_bye) {
+    return (
+      <div style={{
+        background: 'var(--bg)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        fontSize: 11,
+        padding: 8,
+        opacity: 0.6
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: 'var(--blue)' }}>{m.blue_first ? `${m.blue_last}, ${m.blue_first}` : 'TBD'}</span>
+          <span className="sk-display" style={{ fontSize: 9, color: 'var(--fg-dim)', letterSpacing: '0.1em' }}>BYE</span>
+        </div>
+      </div>
+    );
+  }
+
+  const isExpandable = isDone;
+  const isExpanded = isExpandable && expandedMatchId === m.id;
+
+  const Row = ({ side, first, last, won, lost, total, loserStatus, isTop }) => {
+    const grad = side === 'blue' ? 'rgba(59,125,216,0.18)' : 'rgba(230,57,70,0.18)';
+    const accentColor = side === 'blue' ? 'var(--blue)' : 'var(--red)';
+    return (
+      <div style={{
+        padding: '6px 10px',
+        background: won ? grad : 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        borderBottom: isTop ? '1px solid var(--border)' : 'none'
+      }}>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: accentColor, flexShrink: 0 }} />
+        <span style={{
+          fontSize: 11,
+          color: won ? 'var(--fg)' : (first ? 'var(--fg-muted)' : 'var(--fg-dim)'),
+          fontWeight: won ? 700 : 500,
+          flex: 1,
+          minWidth: 0,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}>
+          {first ? `${last}, ${first}` : 'TBD'}
+        </span>
+        {isDone && total != null && (
+          <span className="sk-mono" style={{ fontSize: 11, fontWeight: 700, color: won ? 'var(--fg)' : 'var(--fg-dim)' }}>
+            {total}
+          </span>
+        )}
+        {lost && loserStatus && (
+          <span className="sk-mono" style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700 }}>{loserStatus}</span>
+        )}
+      </div>
+    );
+  };
+
+  const blueRow = (isTop) => <Row side="blue" first={m.blue_first} last={m.blue_last} won={blueWon} lost={blueLost} total={m.blue_total} loserStatus={blueLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
+  const redRow = (isTop) => <Row side="red" first={m.red_first} last={m.red_last} won={redWon} lost={redLost} total={m.red_total} loserStatus={redLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
+
+  const onClick = () => isExpandable && setExpandedMatchId(prev => prev === m.id ? null : m.id);
+
+  const renderDetail = () => {
+    const points = judgePointsByMatch[m.id] || [];
+    const fmt = (rows, side) => {
+      if (!rows.length) return null;
+      const parts = rows.map(p => p.time_tied ? 'TT' : String(side === 'blue' ? (p.blue_points ?? 0) : (p.red_points ?? 0)));
+      const sum = rows.reduce((acc, p) => acc + (side === 'blue' ? (p.blue_points || 0) : (p.red_points || 0)), 0);
+      return { expr: parts.join('+'), sum };
+    };
+    const blue = fmt(points, 'blue');
+    const red = fmt(points, 'red');
+    return (
+      <div style={{
+        padding: '6px 10px',
+        background: 'var(--bg)',
+        borderTop: '1px solid var(--border)',
+        fontSize: 10,
+        fontFamily: 'JetBrains Mono, monospace'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--blue)' }}>
+          <span>{blue ? blue.expr : '–'}</span>
+          <span style={{ fontWeight: 700 }}>{blue ? `= ${blue.sum}` : ''}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--red)' }}>
+          <span>{red ? red.expr : '–'}</span>
+          <span style={{ fontWeight: 700 }}>{red ? `= ${red.sum}` : ''}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div
-      className="rounded-xl p-4 flex flex-col items-center transition-all duration-500"
-      style={{ backgroundColor: baseBg, opacity: isLoser ? 0.45 : 1 }}
+      onClick={isExpandable ? onClick : undefined}
+      onTouchEnd={isExpandable ? (e) => { e.preventDefault(); onClick(); } : undefined}
+      style={{
+        background: 'var(--bg-elev)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        overflow: 'hidden',
+        cursor: isExpandable ? 'pointer' : 'default'
+      }}
     >
-      <div className="text-xs uppercase tracking-widest text-white/70 mb-1 font-bold">{side}</div>
-      {bib && <div className="text-lg text-white/80 font-semibold">Bib #{bib}</div>}
-      <div className="text-3xl font-black text-white text-center leading-tight my-1">{name || '—'}</div>
-      {total != null ? (
-        <div className="text-5xl font-black text-white tabular-nums">{Number(total).toFixed(0)}</div>
-      ) : (
-        <div className="text-lg text-white/50">Awaiting scores</div>
-      )}
-      {isWinner && (
-        <div className="mt-2 px-4 py-1 bg-white text-black text-sm font-black rounded-full">WINNER</div>
+      {redOnTop ? redRow(true) : blueRow(true)}
+      {redOnTop ? blueRow(false) : redRow(false)}
+      {isExpanded && renderDetail()}
+    </div>
+  );
+}
+
+function DualPlaceTab({ placements }) {
+  if (!placements || placements.length === 0) return <EmptyState />;
+  const showFfsp = placements.some(p => p.ffsp != null);
+  return (
+    <div style={{ background: 'var(--bg-panel)', borderRadius: 14, border: '1px solid var(--border)', overflow: 'hidden' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '60px 50px 50px 1fr 1fr 80px',
+        gap: 10,
+        padding: '10px 14px',
+        background: 'var(--bg-elev)',
+        borderBottom: '1px solid var(--border)',
+        fontSize: 10,
+        letterSpacing: '0.15em',
+        color: 'var(--fg-muted)',
+        fontWeight: 700
+      }} className="sk-display">
+        <span>PLACE</span>
+        <span>BIB</span>
+        <span>GP</span>
+        <span>NAME</span>
+        <span>CLUB</span>
+        <span style={{ textAlign: 'right' }}>POINTS</span>
+      </div>
+      {placements.map(r => {
+        const flagged = r.run_status === 'DNS' || r.run_status === 'DSQ' || r.reg_status === 'scratched';
+        const isTop3 = !flagged && r.rank <= 3;
+        return (
+          <div
+            key={r.registration_id}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '60px 50px 50px 1fr 1fr 80px',
+              gap: 10,
+              alignItems: 'center',
+              padding: '12px 14px',
+              borderBottom: '1px solid var(--border)',
+              background: r.rank === 1 ? 'rgba(245,197,24,0.08)' : 'transparent'
+            }}
+          >
+            <span>
+              {flagged ? (
+                <span className="sk-display" style={{ color: 'var(--red)', fontSize: 12, fontWeight: 700 }}>
+                  {r.run_status === 'DSQ' ? 'DSQ' : (r.reg_status === 'scratched' ? 'SCR' : 'DNS')}
+                </span>
+              ) : (
+                <RankChip rank={r.rank} size={28} />
+              )}
+              {r.run_status === 'DNF' && (
+                <span className="sk-display" style={{ marginLeft: 6, fontSize: 10, color: 'var(--gold)', fontWeight: 700 }}>DNF</span>
+              )}
+            </span>
+            <span className="sk-mono" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{r.bib_number}</span>
+            <span className="sk-mono" style={{ fontSize: 11, color: 'var(--fg-dim)' }}>{r.gp}</span>
+            <span style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {r.last_name}, {r.first_name}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--fg-muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {r.club}
+            </span>
+            <span className="sk-mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', textAlign: 'right' }}>
+              {r.ffsp != null ? Number(r.ffsp).toFixed(2) : '—'}
+            </span>
+          </div>
+        );
+      })}
+      {showFfsp && (
+        <div style={{
+          padding: '10px 14px',
+          fontSize: 10,
+          color: 'var(--fg-dim)',
+          fontStyle: 'italic',
+          textAlign: 'center'
+        }}>
+          Official FFSP scores are calculated by U.S. Ski and Snowboard and are subject to change.
+        </div>
       )}
     </div>
-  )
+  );
 }
 
 function roundLabel(m) {
-  if (m.bracket_round === 1) return m.is_small_final ? '3rd Place' : 'Final'
-  if (m.bracket_round === 2) return m.is_small_final ? 'Semi 3/4' : 'Semifinal'
-  if (m.bracket_round === 3) return m.is_small_final ? 'QF 3/4' : 'Quarterfinal'
-  return `Round ${m.bracket_round}`
-}
-
-function UpcomingAthletes({ data }) {
-  if (!data || !Array.isArray(data.athletes) || data.athletes.length === 0) return null
-  const heading = data.phase_label ? `${data.phase_label} — Up Next` : 'Up Next'
-  return (
-    <div className="bg-gray-900/50 rounded-2xl overflow-hidden border border-gray-800/60 mt-6">
-      <div className="px-4 py-2 bg-gray-800/60 text-xs uppercase tracking-wider text-gray-500 font-semibold">
-        {heading}
-      </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-800/40 text-gray-500 text-xs uppercase tracking-wider">
-            <th className="px-4 py-2 text-left w-12">Order</th>
-            <th className="px-4 py-2 text-left w-12">Bib</th>
-            <th className="px-4 py-2 text-left">Name</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-800/60">
-          {data.athletes.map(a => (
-            <tr key={a.id} className="opacity-70">
-              <td className="px-4 py-2 text-gray-500 font-mono">{a.run_order}</td>
-              <td className="px-4 py-2 text-gray-400">{a.bib_number}</td>
-              <td className="px-4 py-2 text-gray-300">{a.last_name}, {a.first_name}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
+  if (m.bracket_round === 1) return m.is_small_final ? '3rd Place' : 'Final';
+  if (m.bracket_round === 2) return m.is_small_final ? 'Semi 3/4' : 'Semifinal';
+  if (m.bracket_round === 3) return m.is_small_final ? 'QF 3/4' : 'Quarterfinal';
+  return `Round ${m.bracket_round}`;
 }

@@ -1,40 +1,28 @@
 /**
  * Freestyle Mogul Scoring Engine
- * US Ski & Snowboard Rules
+ * US Ski & Snowboard / FIS rules
  *
- * Score = Turns (60%) + Air (20%) + Speed (20%)
+ * Total = Turns + Air + Speed (max 100.0)
  *
- * Turns:
+ * Turns (max 60.0) -- FIS JH 6203:
  *   - Each T&L judge scores 0.1 to 20.0
- *   - If 3+ judges: drop highest and lowest, average remainder
- *   - If 2 judges: average both
- *   - If 1 judge: use that score
- *   - Turns score = averaged judge score * 0.60 * (20/20) -- already on 20pt scale
- *   - Final turns contribution = avg * turns_weight
+ *   - 5-judge format (3 TL judges):  sum all 3 scores  -> max 60
+ *   - 7-judge format (5 TL judges):  drop high and low, sum the 3 counting -> max 60
  *
- * Air:
- *   - Each jump scored 0-10 by air judge(s)
- *   - Jump score = raw_score * DD
- *   - If 2 air judges: average their scores for each jump
- *   - Air total = (jump1_scored + jump2_scored), max 20 points (FIS cap)
- *   - Air contribution to final = air_total * air_weight (normalized to 20-pt scale then weighted)
+ * Air (max 20.0) -- FIS JH 6204:
+ *   - Each jump scored 0-10 by air judges; per-judge contribution = score * DD
+ *   - jump_score = average of per-judge (score * DD) values
+ *   - air = jump1_score + jump2_score, capped at 20.0
+ *   - 1-jump events double the single jump; single-jump-in-2-jump-event capped
+ *     at 10.0 per USSS 4210.2.2
  *
- * Speed:
- *   - Speed score = pace_time / actual_time * 15 (capped at 15)
- *   - Or using the Winfree-style formula: speed points proportional to time vs pace
+ * Speed (max 20.0) -- USSS / FIS ICR 4206.3:
+ *   - speed = max(0, 48 - 32 * (run_time / pace_time)), capped at 20.0
+ *   - pace_time is derived from course length and the configured pace standard
+ *     (USSS: 9.70 m/s M / 8.20 m/s F; FIS: 10.30 m/s M / 9.00 m/s F)
  *
- * Final Score = turns_contribution + air_contribution + speed_contribution
- * Maximum = 20 * 0.60 + 25 * 0.25 + 15 * 0.15... we normalize everything to 100-pt scale
- *
- * Actual formula (matching Winfree):
- *   turns_pts  = drop_high_low(tl_scores_avg) -- on 0-20 scale
- *   air_pts    = sum of (judge_avg_per_jump * DD) for each jump -- max ~25 with DDs
- *   speed_pts  = (pace_time / run_time) * pace_time_factor -- see below
- *   total = turns_pts * turns_weight + air_pts * air_weight + speed_pts * speed_weight
- *
- * But we normalize so max total = 100:
- *   turns max = 20, air max = 25 (FIS pace, roughly), speed max = 15
- *   total = (turns/20)*60 + (air/25)*25 + (speed/15)*15  -- simplified per Winfree
+ * All published scores and intermediate values are truncated (floor) to 2
+ * decimal places per FIS rules; DD values are preserved at full precision.
  */
 
 /**
@@ -153,6 +141,13 @@ function calcPaceTime(courseLengthM, gender, standard) {
  *   Air:   2 judges averaged per jump, same as above
  *   Speed: same as above
  *
+ * Single-jump-in-2-jump-event cap (USSS 4210.2.2):
+ *   When the event is configured for 2 jumps but the athlete only lands one
+ *   (the other jump has no DD/code or no air judge scores), the landed jump's
+ *   air contribution is capped at 10.0 -- 50% of the 20-point air maximum --
+ *   so a high-DD single jump cannot match the air score of an athlete who
+ *   landed two jumps. Does not apply to 1-jump events (DEVO numJumps === 1).
+ *
  * @param {Object} params
  * @param {number[]} params.tlScores - T&L judge scores array (each 0.0-20.0)
  * @param {number[]} params.airScoresJump1 - Air judge scores for jump 1 (each 0-10)
@@ -209,7 +204,17 @@ function calcMogulScore(params) {
     // Single jump: double the score to compensate for missing second jump
     airRaw = floorToHundredth(Math.min(jump1Score * 2, 20.0));
   } else {
-    airRaw = floorToHundredth(Math.min(jump1Score + jump2Score, 20.0));
+    // USSS 4210.2.2: in a 2-jump event, if only one jump is landed (no DD/code
+    // or no air scores on the other), cap that single jump at 10 (50% of 20).
+    const jump1Landed = dd1 > 0 && airScoresJump1 && airScoresJump1.length > 0;
+    const jump2Landed = dd2 > 0 && airScoresJump2 && airScoresJump2.length > 0;
+    if (jump1Landed && !jump2Landed) {
+      airRaw = floorToHundredth(Math.min(jump1Score, 10.0));
+    } else if (!jump1Landed && jump2Landed) {
+      airRaw = floorToHundredth(Math.min(jump2Score, 10.0));
+    } else {
+      airRaw = floorToHundredth(Math.min(jump1Score + jump2Score, 20.0));
+    }
   }
   const airContrib = airRaw; // Already on the correct scale (max ~20 with typical DDs)
 
@@ -357,6 +362,35 @@ function areJumpsRepeats(code1, code2) {
   const p2 = parseJumpCode(code2);
   if (!p1 || !p2) return false;
   return p1.key === p2.key;
+}
+
+/**
+ * Apply the domestic jump-repetition rule, returning the adjusted DDs for the
+ * two jumps when they are repeats. Caller is responsible for detecting the
+ * repeat (via `areJumpsRepeats`) and for skipping aerials.
+ *
+ * USSS first-counts (default — DEVO, Comp Series, and any non-RQS division):
+ *   The first jump counts; the second jump's DD is zeroed.
+ *
+ * RMF RQS higher-counts (`events.division === 'rqs'`):
+ *   The higher-DD jump counts; the lower-DD jump's DD is zeroed.
+ *   On a tie (dd1 === dd2), falls through to first-counts (zero dd2).
+ *
+ * Reference: RMF Competition Guide (RQS section).
+ *
+ * @param {number} dd1 - resolved DD for jump 1
+ * @param {number} dd2 - resolved DD for jump 2
+ * @param {string} division - `events.division` (e.g. 'rqs', 'devo', 'comp')
+ * @returns {{ dd1: number, dd2: number }} adjusted DDs (one will be 0)
+ */
+function applyRepeatJumpRule(dd1, dd2, division) {
+  const a = Number(dd1) || 0;
+  const b = Number(dd2) || 0;
+  const div = (division || '').toLowerCase();
+  if (div === 'rqs' && b > a) {
+    return { dd1: 0, dd2: b };
+  }
+  return { dd1: a, dd2: 0 };
 }
 
 /**
@@ -670,6 +704,24 @@ function rankResults(results, discipline) {
   return sorted;
 }
 
+/**
+ * Take the top-N from a ranked list (output of rankResults), expanding the cut
+ * to include all athletes tied at the boundary rank. Per ICR 4207.3.4, when
+ * athletes tie at the cut line, all of them advance. Example: target=16 with
+ * ranks 1..15 then a 2-way tie at rank 16 -> returns 17 athletes (all rank<=16).
+ *
+ * @param {Object[]} ranked - output of rankResults (each item has .rank)
+ * @param {number} n        - target size (configured cut)
+ * @returns {Object[]} all athletes with rank <= rank-of-Nth-athlete
+ */
+function takeUpToRank(ranked, n) {
+  if (!Array.isArray(ranked) || ranked.length === 0 || n <= 0) return [];
+  if (n >= ranked.length) return ranked.slice();
+  const cutoff = ranked[n - 1].rank;
+  if (cutoff == null) return ranked.slice(0, n); // defensive -- shouldn't occur
+  return ranked.filter(r => r.rank != null && r.rank <= cutoff);
+}
+
 function roundToHundredth(n) {
   return Math.round(n * 100) / 100;
 }
@@ -722,7 +774,9 @@ module.exports = {
   calcPaceTime,
   dropHighLow,
   areJumpsRepeats,
+  applyRepeatJumpRule,
   rankResults,
+  takeUpToRank,
   tieBreak,
   tieBreakMogul,
   tieBreakAerials,

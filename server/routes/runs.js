@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, getClient } = require('../db/schema');
-const { calcMogulScore, calcAerialsScore, areJumpsRepeats } = require('../scoring/engine');
+const { calcMogulScore, calcAerialsScore, areJumpsRepeats, applyRepeatJumpRule } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const lockCheck = requireUnlocked();
@@ -427,12 +427,13 @@ router.post('/manual', async (req, res) => {
       catch (e) { return res.status(400).json({ error: e.message }); }
     }
     if (jump2_code) {
+      try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
       const duplicate = !!(jump1_code && areJumpsRepeats(jump1_code, jump2_code));
       if (duplicate && event.discipline !== 'aerials') {
-        dd2 = 0;
-      } else {
-        try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
-        catch (e) { return res.status(400).json({ error: e.message }); }
+        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
+        dd1 = adj.dd1;
+        dd2 = adj.dd2;
       }
     }
 
@@ -575,12 +576,13 @@ router.post('/:runId/manual-score', async (req, res) => {
       catch (e) { return res.status(400).json({ error: e.message }); }
     }
     if (jump2_code) {
+      try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
       const duplicate = !!(code1 && areJumpsRepeats(code1, jump2_code));
       if (duplicate && event.discipline !== 'aerials') {
-        dd2 = 0;
-      } else {
-        try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
-        catch (e) { return res.status(400).json({ error: e.message }); }
+        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
+        dd1 = adj.dd1;
+        dd2 = adj.dd2;
       }
     }
 
@@ -776,19 +778,19 @@ router.post('/', async (req, res) => {
       }
     }
     if (jump2_code) {
-      if (duplicateJumps && event.discipline !== 'aerials') {
-        // Repeat jump rule (domestic): only the first scoring jump counts.
-        // The second jump's DD is set to 0 so it contributes nothing to the score.
-        // Do NOT force dd2=1.0 (that silently distorts the second jump's value).
-        dd2 = 0;
+      const r = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`, [jump2_code, disc, eventGender]);
+      if (!r) {
+        const r2 = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`, [jump2_code, disc]);
+        dd2 = r2 ? r2.dd_value : null;
       } else {
-        const r = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`, [jump2_code, disc, eventGender]);
-        if (!r) {
-          const r2 = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`, [jump2_code, disc]);
-          dd2 = r2 ? r2.dd_value : null;
-        } else {
-          dd2 = r.dd_value;
-        }
+        dd2 = r.dd_value;
+      }
+      if (duplicateJumps && event.discipline !== 'aerials') {
+        // Repeat jump rule. USSS first-counts (default) zeros dd2;
+        // RMF RQS higher-counts zeros whichever jump has the lower DD.
+        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
+        dd1 = adj.dd1;
+        dd2 = adj.dd2;
       }
     }
 
@@ -927,19 +929,19 @@ router.put('/:runId', async (req, res) => {
         }
       }
       if (jump2_code) {
-        if (duplicateJumps && event.discipline !== 'aerials') {
-          // Repeat jump rule (domestic): only the first scoring jump counts.
-          // Set dd2=0 so the second jump contributes nothing to the score.
-          // Do NOT force dd2=1.0 (that silently distorts the second jump's value).
-          dd2 = 0;
+        const r = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`, [jump2_code, disc, eventGender]);
+        if (!r) {
+          const r2 = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`, [jump2_code, disc]);
+          dd2 = r2 ? r2.dd_value : null;
         } else {
-          const r = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`, [jump2_code, disc, eventGender]);
-          if (!r) {
-            const r2 = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`, [jump2_code, disc]);
-            dd2 = r2 ? r2.dd_value : null;
-          } else {
-            dd2 = r.dd_value;
-          }
+          dd2 = r.dd_value;
+        }
+        if (duplicateJumps && event.discipline !== 'aerials') {
+          // Repeat jump rule. USSS first-counts (default) zeros dd2;
+          // RMF RQS higher-counts zeros whichever jump has the lower DD.
+          const adj = applyRepeatJumpRule(dd1, dd2, event.division);
+          dd1 = adj.dd1;
+          dd2 = adj.dd2;
         }
       }
     }

@@ -312,6 +312,45 @@ check('effectiveBracketSize(33) = 64', effectiveBracketSize(33) === 64);
 check('effectiveBracketSize(129) = 128', effectiveBracketSize(129) === 128);
 
 // ---------------------------------------------------------------------------
+// takeUpToRank: ICR 4207.3.4 cut-line tie expansion
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('Cut-line tie expansion (ICR 4207.3.4):');
+
+try {
+  const { takeUpToRank } = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+
+  check('takeUpToRank: empty array -> []',
+    takeUpToRank([], 5).length === 0);
+
+  check('takeUpToRank: n=0 -> []',
+    takeUpToRank([{ rank: 1 }, { rank: 2 }], 0).length === 0);
+
+  check('takeUpToRank: n>=length returns full array',
+    takeUpToRank([{ rank: 1 }, { rank: 2 }, { rank: 3 }], 10).length === 3);
+
+  check('takeUpToRank: no ties at boundary, n=3 of [1,2,3,4,5] -> 3',
+    takeUpToRank([{ rank: 1 }, { rank: 2 }, { rank: 3 }, { rank: 4 }, { rank: 5 }], 3).length === 3);
+
+  check('takeUpToRank: tie at boundary, n=3 of [1,2,3,3,5] -> 4 (both rank-3 included)',
+    takeUpToRank([{ rank: 1 }, { rank: 2 }, { rank: 3 }, { rank: 3 }, { rank: 5 }], 3).length === 4);
+
+  check('takeUpToRank: tie below boundary, n=3 of [1,2,2,4,5] -> 3 (no rank-3 entry)',
+    takeUpToRank([{ rank: 1 }, { rank: 2 }, { rank: 2 }, { rank: 4 }, { rank: 5 }], 3).length === 3);
+
+  check('takeUpToRank: tie at start, n=1 of [1,1,3] -> 2',
+    takeUpToRank([{ rank: 1 }, { rank: 1 }, { rank: 3 }], 1).length === 2);
+
+  check('takeUpToRank: 3-way tie at boundary, n=16 with last 3 tied at 16 -> 18',
+    takeUpToRank(
+      Array.from({ length: 18 }, (_, i) => ({ rank: i < 15 ? i + 1 : 16 })),
+      16
+    ).length === 18);
+} catch (e) {
+  fail('takeUpToRank tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log('');
