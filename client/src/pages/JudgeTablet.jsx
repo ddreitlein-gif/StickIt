@@ -307,6 +307,8 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const [status, setStatus] = useState('Waiting for match...')
   // v1.16.17 -- event completed full-screen message
   const [eventCompleted, setEventCompleted] = useState(false)
+  // v1.16.30 -- manual score entry lockout
+  const [manualEntryActive, setManualEntryActive] = useState(false)
   const pollRef = useRef(null)
   const lastMatchIdRef = useRef(null)
   const submittedRef = useRef(false)
@@ -321,6 +323,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
       const r = await fetch(`${API}/events/${eventId}/dual/active-match`)
       const data = await r.json()
       const match = data?.id ? data : null
+      setManualEntryActive(!!(match && data?.manual_entry))
       if (match?.id !== lastMatchIdRef.current) {
         lastMatchIdRef.current = match?.id || null
         setActiveMatch(match)
@@ -365,6 +368,11 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
         )) {
           setEventCompleted(true)
           return
+        }
+        if (msg.eventId === eventId && msg.type === 'dual_manual_entry_started') {
+          setManualEntryActive(true)
+        } else if (msg.eventId === eventId && msg.type === 'dual_manual_entry_cleared') {
+          setManualEntryActive(false)
         }
       } catch {}
       fetchMatchRef.current()
@@ -422,6 +430,16 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
       <div className="text-center">
         <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
         <div className="text-xl text-slate-300">Thank You for Your Work</div>
+      </div>
+    </div>
+  )
+
+  // v1.16.30 -- manual score entry lockout overlay (TD entering scores manually)
+  if (manualEntryActive && activeMatch) return (
+    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center px-6`}>
+      <div className="text-center">
+        <div className="text-4xl font-display text-amber-400 mb-4">Manual Score Entry for This Round</div>
+        <div className="text-lg text-slate-300">Scores are being entered by the Technical Delegate.</div>
       </div>
     </div>
   )

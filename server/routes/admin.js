@@ -114,7 +114,7 @@ router.get('/system', async (req, res) => {
       const row = await queryOne(`SELECT COUNT(*) as cnt FROM ${table}`);
       counts[table] = row ? row.cnt : 0;
     }
-    res.json({ version: 'v1.16.23', counts });
+    res.json({ version: 'v1.16.31', counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -181,7 +181,7 @@ router.get('/dashboard', async (req, res) => {
     const PORT = process.env.PORT || 3001;
 
     res.json({
-      version: 'v1.16.23',
+      version: 'v1.16.31',
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
       ip_addresses: ips,
       port: PORT,
@@ -197,6 +197,119 @@ router.get('/dashboard', async (req, res) => {
       errors: (req.app.errorLog || []).slice(-50).reverse(),
       audit_log: auditLog,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Athletes Master Database (v1.16.31) ────────────────────────────────────
+
+router.get('/athletes', async (req, res) => {
+  try {
+    const { q, division } = req.query;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+    const conds = ['deleted_at IS NULL'];
+    const args = [];
+    if (q && q.trim()) {
+      const t = `%${q.trim()}%`;
+      conds.push('(last_name LIKE ? OR first_name LIKE ? OR ussa_num LIKE ? OR fis_id LIKE ? OR club LIKE ?)');
+      args.push(t, t, t, t, t);
+    }
+    if (division) {
+      if (division === '__none__') {
+        conds.push('(division IS NULL OR division = "")');
+      } else {
+        conds.push('division = ?');
+        args.push(division);
+      }
+    }
+    const where = `WHERE ${conds.join(' AND ')}`;
+    const totalRow = await queryOne(`SELECT COUNT(*) as c FROM athletes ${where}`, args);
+    const total = parseInt(totalRow?.c) || 0;
+    const offset = (page - 1) * limit;
+    const rows = await queryAll(
+      `SELECT a.*,
+              CASE WHEN a.ussa_num IS NULL OR a.ussa_num = '' THEN 0
+                   WHEN EXISTS (SELECT 1 FROM usss_people u WHERE u.ussa_id = a.ussa_num) THEN 1
+                   ELSE 0 END AS is_in_usss
+       FROM athletes a ${where}
+       ORDER BY a.last_name, a.first_name LIMIT ? OFFSET ?`,
+      [...args, limit, offset]
+    );
+    res.json({ rows, total, page, limit });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/athletes/divisions', async (req, res) => {
+  try {
+    const rows = await queryAll(
+      `SELECT COALESCE(NULLIF(TRIM(division), ''), '__none__') as division, COUNT(*) as cnt
+       FROM athletes WHERE deleted_at IS NULL
+       GROUP BY COALESCE(NULLIF(TRIM(division), ''), '__none__')
+       ORDER BY division`
+    );
+    res.json({ divisions: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Build SQL fragment + args from a delete request body. Always includes deleted_at IS NULL.
+async function buildDeleteFilter(body) {
+  const { mode, ids, division } = body || {};
+  const baseConds = ['deleted_at IS NULL'];
+  const args = [];
+  if (mode === 'reset') {
+    // no extra
+  } else if (mode === 'selected') {
+    if (!Array.isArray(ids) || !ids.length) return { error: 'ids required for mode=selected' };
+    const placeholders = ids.map(() => '?').join(',');
+    baseConds.push(`id IN (${placeholders})`);
+    args.push(...ids);
+  } else if (mode === 'by-division') {
+    if (division === undefined || division === null) return { error: 'division required for mode=by-division' };
+    if (division === '__none__' || division === '') {
+      baseConds.push('(division IS NULL OR division = "")');
+    } else {
+      baseConds.push('division = ?');
+      args.push(division);
+    }
+  } else if (mode === 'non-usss') {
+    baseConds.push(`(ussa_num IS NULL OR ussa_num = '' OR ussa_num NOT IN (SELECT ussa_id FROM usss_people))`);
+  } else {
+    return { error: 'mode must be one of: reset, selected, by-division, non-usss' };
+  }
+  return { where: baseConds.join(' AND '), args };
+}
+
+router.post('/athletes/preview-delete', async (req, res) => {
+  try {
+    const filter = await buildDeleteFilter(req.body);
+    if (filter.error) return res.status(400).json({ error: filter.error });
+    const countRow = await queryOne(`SELECT COUNT(*) as c FROM athletes WHERE ${filter.where}`, filter.args);
+    const count = parseInt(countRow?.c) || 0;
+    const sample = await queryAll(
+      `SELECT id, first_name, last_name, ussa_num, division FROM athletes WHERE ${filter.where} ORDER BY last_name, first_name LIMIT 10`,
+      filter.args
+    );
+    res.json({ count, sample });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/athletes/delete', async (req, res) => {
+  try {
+    const filter = await buildDeleteFilter(req.body);
+    if (filter.error) return res.status(400).json({ error: filter.error });
+    const countRow = await queryOne(`SELECT COUNT(*) as c FROM athletes WHERE ${filter.where}`, filter.args);
+    const count = parseInt(countRow?.c) || 0;
+    if (count > 0) {
+      await execute(
+        `UPDATE athletes SET deleted_at=datetime('now') WHERE ${filter.where}`,
+        filter.args
+      );
+    }
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('athletes_bulk_deleted', 'athlete', null, null, { mode: req.body.mode, count, division: req.body.division || null, ids: req.body.ids || null });
+    } catch (_) {}
+    res.json({ deleted: count });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

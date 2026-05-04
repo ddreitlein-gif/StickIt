@@ -5,6 +5,7 @@ const ADMIN_NAV = [
   { to: '/admin/users', label: 'Users', icon: '\u2699' },
   { to: '/admin/events', label: 'Events', icon: '\u26F7' },
   { to: '/admin/usss-people', label: 'USSS People', icon: '\uD83D\uDC65' },
+  { to: '/admin/athletes', label: 'Athletes', icon: '\uD83C\uDFC3' },
   { to: '/admin/backups', label: 'Backups', icon: '\uD83D\uDCBE' },
   { to: '/admin/audit', label: 'Audit Log', icon: '\uD83D\uDCCB' },
 ]

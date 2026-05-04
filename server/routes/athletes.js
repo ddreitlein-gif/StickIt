@@ -22,11 +22,11 @@ router.get('/', async (req, res) => {
     if (q && q.trim()) {
       const s = `%${q.trim()}%`;
       athletes = await queryAll(
-        `SELECT * FROM athletes WHERE first_name LIKE ? OR last_name LIKE ? OR ussa_num LIKE ? OR fis_id LIKE ? ORDER BY last_name, first_name LIMIT 50`,
+        `SELECT * FROM athletes WHERE deleted_at IS NULL AND (first_name LIKE ? OR last_name LIKE ? OR ussa_num LIKE ? OR fis_id LIKE ?) ORDER BY last_name, first_name LIMIT 50`,
         [s, s, s, s]
       );
     } else {
-      athletes = await queryAll('SELECT * FROM athletes ORDER BY last_name, first_name LIMIT 500');
+      athletes = await queryAll('SELECT * FROM athletes WHERE deleted_at IS NULL ORDER BY last_name, first_name LIMIT 500');
     }
     res.json(athletes);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -155,7 +155,14 @@ router.post('/from-usss', async (req, res) => {
 
       const existing = await queryOne('SELECT * FROM athletes WHERE ussa_num = ?', [String(ussa_id)]);
       if (existing) {
-        out.push({ athlete_id: existing.id, ussa_id, created: false, first_name: existing.first_name, last_name: existing.last_name });
+        // v1.16.31 -- if soft-deleted, restore by clearing deleted_at
+        if (existing.deleted_at) {
+          await execute('UPDATE athletes SET deleted_at=NULL WHERE id=?', [existing.id]);
+          try { await logAudit('athlete_restored', 'athlete', existing.id, { deleted_at: existing.deleted_at }, { source: 'usss', ussa_num: ussa_id }); } catch (_) {}
+          out.push({ athlete_id: existing.id, ussa_id, created: false, restored: true, first_name: existing.first_name, last_name: existing.last_name });
+        } else {
+          out.push({ athlete_id: existing.id, ussa_id, created: false, first_name: existing.first_name, last_name: existing.last_name });
+        }
         continue;
       }
 
@@ -191,7 +198,7 @@ router.post('/reconcile', async (req, res) => {
     const { rows } = parseCSV(text);
     if (!rows.length) return res.status(400).json({ error: 'No data rows in CSV' });
 
-    const dbAthletes = await queryAll('SELECT * FROM athletes ORDER BY last_name, first_name');
+    const dbAthletes = await queryAll('SELECT * FROM athletes WHERE deleted_at IS NULL ORDER BY last_name, first_name');
 
     const toAdd     = [];
     const toUpdate  = [];
@@ -288,7 +295,7 @@ router.post('/reconcile/apply', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/usss-sync', async (req, res) => {
   try {
-    const athletes = await queryAll("SELECT * FROM athletes WHERE ussa_num IS NOT NULL AND ussa_num != ''");
+    const athletes = await queryAll("SELECT * FROM athletes WHERE deleted_at IS NULL AND ussa_num IS NOT NULL AND ussa_num != ''");
     let matched = 0, updated = 0, not_found = 0;
 
     for (const a of athletes) {

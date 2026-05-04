@@ -598,6 +598,8 @@ async function processCsvRows(rows, event, eventId, commit, overrideEventCheck =
         if (!athlete.birth_year && birthYear) { updates.push('birth_year=?'); params.push(birthYear); }
         if (!athlete.gender && gender) { updates.push('gender=?'); params.push(gender); }
         if (!athlete.club && team) { updates.push('club=?'); params.push(team); }
+        // v1.16.31 -- restore soft-deleted athlete when re-imported via CSV
+        if (athlete.deleted_at) { updates.push('deleted_at=NULL'); }
         if (updates.length) { params.push(athleteId); await execute(`UPDATE athletes SET ${updates.join(', ')} WHERE id=?`, params); }
       }
     } else {

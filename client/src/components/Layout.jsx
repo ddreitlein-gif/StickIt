@@ -182,7 +182,7 @@ export default function Layout() {
               <p className="font-display text-3xl font-bold leading-none tracking-wide">
                 <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
               </p>
-              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.16.29</p>
+              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.16.31</p>
             </div>
           )}
         </div>

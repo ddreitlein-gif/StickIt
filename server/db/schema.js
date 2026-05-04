@@ -248,6 +248,10 @@ async function initSchema() {
     `ALTER TABLE events ADD COLUMN dual_bracket_review_status TEXT`,
     // v1.16.23 -- FIS ICR 4207.3 tiebreaker: pre-DD air execution score
     `ALTER TABLE runs ADD COLUMN air_score_no_dd REAL`,
+    // v1.16.30 -- dual mogul manual score entry override
+    `ALTER TABLE events ADD COLUMN dual_manual_entry INTEGER NOT NULL DEFAULT 0`,
+    // v1.16.31 -- soft-delete for master athlete database
+    `ALTER TABLE athletes ADD COLUMN deleted_at TEXT`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

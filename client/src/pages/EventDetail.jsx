@@ -1171,8 +1171,11 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
   const [bibImportPreview, setBibImportPreview] = useState(null)
 
   // Registration completeness check
+  // v1.16.31 -- bib NOT required for run-order build; missing-bib athletes get yellow rows.
   const isRegistrationIncomplete = (r) =>
-    !r.first_name || !r.last_name || !r.ussa_num || !r.birth_year || r.bib_number == null
+    !r.first_name || !r.last_name || !r.ussa_num || !r.birth_year
+  const isMissingBibOnly = (r) =>
+    !isRegistrationIncomplete(r) && r.bib_number == null
   const incompleteCount = registrations.filter(r => r.status !== 'scratched').filter(isRegistrationIncomplete).length
   const allAthletesComplete = incompleteCount === 0
 
@@ -1719,7 +1722,7 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
             <thead><tr><th>Bib</th><th>Name</th><th>Age Class</th><th>USSA #</th><th>FIS ID</th><th>Club</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {registrations.map(r => (
-                <tr key={r.id} className={isRegistrationIncomplete(r) ? 'bg-red-900/20' : ''}>
+                <tr key={r.id} className={isRegistrationIncomplete(r) ? 'bg-red-900/20' : (isMissingBibOnly(r) ? 'bg-yellow-900/20' : '')}>
                   <td>
                     <input type="number" className="w-16 bg-slate-800 rounded px-2 py-1 text-sm text-center font-mono text-white border border-transparent focus:border-blue-500 focus:outline-none"
                       value={r.bib_number||''} placeholder="--"
@@ -1807,7 +1810,7 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
           </div>
           {!allAthletesComplete && (
             <p className="text-amber-400 text-xs mb-3">
-              {incompleteCount} athlete{incompleteCount !== 1 ? 's' : ''} missing required fields (name, USSS#, birth year, or bib). Complete all fields before building run order.
+              {incompleteCount} athlete{incompleteCount !== 1 ? 's' : ''} missing required fields (name, USSS#, or birth year). Complete all fields before building run order.
             </p>
           )}
           {orderMsg && <p className="text-sm text-blue-300 mb-3">{orderMsg}</p>}
@@ -1876,8 +1879,11 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
   const [pendingEntries, setPendingEntries] = useState(null)
 
   // Registration completeness check (same as mogul run order)
+  // v1.16.31 -- bib NOT required for seed-list build; missing-bib athletes get yellow rows.
   const isRegIncomplete = (r) =>
-    !r.first_name || !r.last_name || !r.ussa_num || !r.birth_year || r.bib_number == null
+    !r.first_name || !r.last_name || !r.ussa_num || !r.birth_year
+  const isRegMissingBibOnly = (r) =>
+    !isRegIncomplete(r) && r.bib_number == null
   const incompleteCount = registrations.filter(r => r.status !== 'scratched').filter(isRegIncomplete).length
   const allAthletesComplete = incompleteCount === 0
 
@@ -2056,7 +2062,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
         </div>
         {!allAthletesComplete && (
           <p className="text-amber-400 text-xs mb-2">
-            {incompleteCount} athlete{incompleteCount !== 1 ? 's' : ''} missing required fields (name, USSS#, birth year, or bib). Complete all fields before building seed list.
+            {incompleteCount} athlete{incompleteCount !== 1 ? 's' : ''} missing required fields (name, USSS#, or birth year). Complete all fields before building seed list.
           </p>
         )}
         <div className="flex items-center gap-2 flex-wrap">
@@ -2330,6 +2336,22 @@ function DualScoringPanel({ event, registrations }) {
     } catch (e) { setError(e.message) }
   }
 
+  const openManualEntry = async (m) => {
+    setError('')
+    try {
+      const res = await fetch(`/api/events/${event.id}/dual/manual-entry-start`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to start manual entry')
+      setPaperModal({ match: m, existingPoints: data.judgeScores || null, manualEntry: true })
+    } catch (e) { setError(e.message) }
+  }
+
+  const cancelManualEntry = async () => {
+    try {
+      await fetch(`/api/events/${event.id}/dual/manual-entry-cancel`, { method: 'POST' })
+    } catch (_) {}
+  }
+
   const allDone = !activeRoundNum
   const roundAllComplete = pendingMatches.length === 0 && !activeMatch
 
@@ -2415,11 +2437,14 @@ function DualScoringPanel({ event, registrations }) {
         )}
 
         {!isPaper && isActive && (
-          <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between">
+          <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between gap-3">
             <span className={`text-xs animate-pulse font-semibold ${isHjPending ? 'text-amber-400' : 'text-blue-400'}`}>
               {isHjPending ? 'Awaiting Head Judge approval' : 'Scoring in progress -- judges entering scores on tablets'}
             </span>
-            <button onClick={clearActiveMatch} className="btn-ghost text-xs text-amber-400 border-amber-800">End Match</button>
+            <div className="flex items-center gap-2">
+              <button onClick={clearActiveMatch} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-semibold">End Match</button>
+              <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
+            </div>
           </div>
         )}
 
@@ -2568,7 +2593,10 @@ function DualScoringPanel({ event, registrations }) {
           event={event}
           match={paperModal.match}
           existingPoints={paperModal.existingPoints}
-          onClose={() => setPaperModal(null)}
+          onClose={() => {
+            if (paperModal.manualEntry) cancelManualEntry()
+            setPaperModal(null)
+          }}
           onSuccess={() => { setPaperModal(null); load() }}
         />
       )}

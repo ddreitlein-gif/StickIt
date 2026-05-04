@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.16.29
+**Current version:** v1.16.31
 
 ## Commands
 
@@ -157,6 +157,76 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.16.31 Feature Notes
+
+### Bib Not Required for Run-Order / Seeding Build (v1.16.31)
+
+The Run Order buttons (Random Order, By Age Groups, Lock Order, Save Order) and Dual Mogul seeding buttons are no longer gated on every athlete having a bib. This unblocks the workflow of generating a run order *first*, then assigning bibs by run order via the existing Assign Bibs modal.
+
+**New row coloring:** athletes still missing other required fields (first name, last name, USSS#, birth year) keep their **red** row background (`bg-red-900/20`). Athletes complete except for a missing bib get a softer **yellow** row background (`bg-yellow-900/20`). Red wins when both bib and another field are missing.
+
+**Warning copy:** the amber "missing required fields" warning above the run-order / seed-list section drops "or bib" from the field list — it now reads "(name, USSS#, or birth year)". The warning only appears when an athlete is incomplete on a non-bib required field.
+
+**Files modified:** `client/src/pages/EventDetail.jsx` (mogul registration `isRegistrationIncomplete` line ~1175 + DualSeedingPanel `isRegIncomplete` line ~1882; row class at line ~1725)
+
+### Admin → Athletes Database Management (v1.16.31)
+
+New admin sub-page at `/admin/athletes` for managing the master athlete roster used during event setup. The Officials → Athletes table accumulates retired athletes, manually entered names, and CSV-imported one-offs over time; this page provides four bulk-cleanup operations.
+
+**Soft-delete model.** Deletes from this page are *soft* — the athlete row is not removed from the database, only flagged via a new `athletes.deleted_at TEXT` column. Soft-deleted athletes are filtered out of the master list, search, registration pickers, and CSV reconcile/USSS-sync flows, but the row stays in place so existing registrations in past or current events continue to display the athlete name and any prior runs/scores. **Past events are never affected by a delete on this page.**
+
+**Auto-restore.** If an athlete is soft-deleted and later re-added via *Add from USSS Database* (`POST /athletes/from-usss`) or re-imported via SkiReg CSV (`processCsvRows` in `registrations.js`), the existing row is restored (`UPDATE athletes SET deleted_at=NULL`) instead of creating a duplicate.
+
+**Four bulk operations:**
+1. **Reset Athlete List** — soft-delete every active athlete in the master database.
+2. **Delete Selected Athletes** — checkbox table; bulk soft-delete the chosen rows.
+3. **Delete by Division** — dropdown of distinct divisions present (with "(No Division)" bucket for NULL/blank); soft-delete all in the picked bucket.
+4. **Delete Non-USSS Athletes** — soft-delete every athlete whose `ussa_num` is NULL/blank OR whose `ussa_num` does not appear as a `ussa_id` in `usss_people` (the imported USSS People File).
+
+All four show a confirmation modal with the count and a sample of athletes before executing.
+
+**Page layout:** status card (active total, division count, selected count) → bulk action toolbar (red Reset / red Delete Selected / dark Delete by Division / dark Delete Non-USSS) → search + division filter → checkbox table (Last, First, USSA #, FIS ID, Club, Division, YOB, Gen, USSS column showing ✓ when found in `usss_people`) → 100-per-page pagination. Built from the `AdminUSSSPeople.jsx` pattern.
+
+**New endpoints (all under `/api/admin`, requires admin auth):**
+- `GET /admin/athletes?q=&division=&page=&limit=` — paginated active-athlete list with `is_in_usss` flag.
+- `GET /admin/athletes/divisions` — distinct non-null divisions + count for "(No Division)" bucket.
+- `POST /admin/athletes/preview-delete` — body `{ mode, ids?, division? }` where mode ∈ `{reset, selected, by-division, non-usss}`. Returns `{ count, sample }` for the confirmation modal without writing.
+- `POST /admin/athletes/delete` — same body; performs the soft-delete (`UPDATE athletes SET deleted_at=datetime('now')`). Returns `{ deleted }` count. Audit-logged as `athletes_bulk_deleted`.
+
+**Existing routes filtered:** `server/routes/athletes.js` adds `WHERE deleted_at IS NULL` to the master listing/search query, the reconcile diff source list, and the USSS-sync source list. `GET /athletes/:id` is intentionally not filtered so registration JOINs still work.
+
+**Sidebar:** new "Athletes" entry in Admin sidebar between "USSS People" and "Backups".
+
+**Files modified:** `server/db/schema.js`, `server/routes/athletes.js`, `server/routes/admin.js`, `server/routes/registrations.js`, `client/src/pages/Admin.jsx`, `client/src/components/AdminLayout.jsx`
+**Files created:** `client/src/pages/admin/AdminAthletes.jsx`
+
+---
+
+## v1.16.30 Feature Notes
+
+### Dual Mogul — Manual Score Entry on Active Match (v1.16.30)
+
+Adds a **Manual Score Entry** button to the "Currently Scoring" card on the dual mogul Scoring tab, alongside a restyled **End Match** button. Lets the scoring operator override an in-progress tablet-scored match and enter all 5 judges' scores manually (e.g., when a tablet is offline or scores are coming in over the radio).
+
+**Layout:** Active match footer now renders the action buttons in a flex row on the right: red **End Match** (`bg-red-600`) on the left, blue **Manual Score Entry** (`bg-mountain-600`) on its right. Status text on the left side is unchanged.
+
+**Click flow:**
+1. Operator clicks Manual Score Entry → `POST /dual/manual-entry-start`. Server sets `events.dual_manual_entry=1` and broadcasts `dual_manual_entry_started`.
+2. Server returns the match's existing partial `judgeScores` (whatever some tablets may have already submitted) so the modal pre-populates those rows.
+3. Existing `DualPaperScoreModal` opens with the pre-populated values — operator can keep, edit, or replace.
+4. **Submit** → existing `POST /:matchId/paper-score` endpoint finalizes the match and advances the bracket. Server clears `dual_manual_entry=0` and broadcasts `dual_manual_entry_cleared` at the end of paper-score success (both Path A status and Path B scored).
+5. **Close (X)** → client calls `POST /dual/manual-entry-cancel`. Server clears flag and broadcasts cleared. Judges' tablets resume normal score entry.
+
+**Judge tablet lockout:** New full-screen overlay on `JudgeTablet.jsx` `DualJudgeView` showing **"Manual Score Entry for This Round"** in amber when `manual_entry=1` and there's an active match. Render is gated identically to `eventCompleted` — replaces the score entry UI entirely so judges cannot submit. State is populated both via the existing 3s `/dual/active-match` poll (now returns `manual_entry: 0|1`) and via two new WS messages: `dual_manual_entry_started` / `dual_manual_entry_cleared`.
+
+**Auto-cleanup:** `DELETE /active-match` (End Match) also clears `dual_manual_entry` and broadcasts cleared, so clicking End Match while the modal happens to be open doesn't strand the lock state. The `paper-score` success path clears the flag whether the match finalized through scored-path or DNS/DNF/DSQ-path.
+
+**Database:** New `events.dual_manual_entry INTEGER NOT NULL DEFAULT 0` column. Standard mogul, aerials, and bracket-keeper PDF flow are unchanged — dual-mogul-only.
+
+**Files modified:** `server/db/schema.js`, `server/routes/dual.js`, `client/src/pages/EventDetail.jsx`, `client/src/pages/JudgeTablet.jsx`
 
 ---
 

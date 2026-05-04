@@ -1304,7 +1304,7 @@ router.delete('/reset', async (req, res) => {
 // GET /active-match -- get the currently active dual match for this event
 router.get('/active-match', async (req, res) => {
   try {
-    const event = await queryOne('SELECT active_dual_match_id FROM events WHERE id=?', [req.params.eventId]);
+    const event = await queryOne('SELECT active_dual_match_id, dual_manual_entry FROM events WHERE id=?', [req.params.eventId]);
     if (!event || !event.active_dual_match_id) return res.json(null);
 
     const match = await queryOne(
@@ -1340,7 +1340,7 @@ router.get('/active-match', async (req, res) => {
     const pNum = pairingNums.get(match.id);
     const pairing_label = pNum != null ? formatPairingLabel(genderPrefix, pNum) : null;
 
-    res.json({ ...match, judgePoints: rows, pointResult: result, pairing_label });
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1385,9 +1385,52 @@ router.put('/active-match', async (req, res) => {
 // DELETE /active-match -- clear the active dual match
 router.delete('/active-match', async (req, res) => {
   try {
-    await execute('UPDATE events SET active_dual_match_id=NULL WHERE id=?', [req.params.eventId]);
+    await execute('UPDATE events SET active_dual_match_id=NULL, dual_manual_entry=0 WHERE id=?', [req.params.eventId]);
     if (req.app.broadcast) {
       req.app.broadcast(req.params.eventId, 'dual_match_cleared', {});
+      req.app.broadcast(req.params.eventId, 'dual_manual_entry_cleared', {});
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// v1.16.30 -- manual score entry override for active dual match
+// POST /manual-entry-start -- lock judges' tablets and return existing partial scores
+router.post('/manual-entry-start', async (req, res) => {
+  try {
+    const event = await queryOne(
+      'SELECT active_dual_match_id FROM events WHERE id=?',
+      [req.params.eventId]
+    );
+    if (!event || !event.active_dual_match_id) {
+      return res.status(400).json({ error: 'No active match' });
+    }
+    await execute('UPDATE events SET dual_manual_entry=1 WHERE id=?', [req.params.eventId]);
+
+    const rows = await queryAll(
+      `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
+      [event.active_dual_match_id]
+    );
+    const judgeScores = rows.map(r => ({
+      judgeNumber: r.judge_number,
+      bluePoints:  r.blue_points,
+      redPoints:   r.red_points,
+      timeTied:    !!r.time_tied,
+    }));
+
+    if (req.app.broadcast) {
+      req.app.broadcast(req.params.eventId, 'dual_manual_entry_started', { matchId: event.active_dual_match_id });
+    }
+    res.json({ ok: true, matchId: event.active_dual_match_id, judgeScores });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /manual-entry-cancel -- release the lock without submitting scores
+router.post('/manual-entry-cancel', async (req, res) => {
+  try {
+    await execute('UPDATE events SET dual_manual_entry=0 WHERE id=?', [req.params.eventId]);
+    if (req.app.broadcast) {
+      req.app.broadcast(req.params.eventId, 'dual_manual_entry_cleared', {});
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1750,6 +1793,14 @@ router.post('/:matchId/paper-score', async (req, res) => {
       // v1.16.17 -- detect bracket completion and trigger HJ final review
       await maybeMarkBracketReviewPending(req.params.eventId, req.app);
 
+      // v1.16.30 -- clear manual-entry lock if it was set for this match
+      try {
+        await execute('UPDATE events SET dual_manual_entry=0 WHERE id=? AND dual_manual_entry=1', [req.params.eventId]);
+        if (req.app.broadcast) {
+          req.app.broadcast(req.params.eventId, 'dual_manual_entry_cleared', {});
+        }
+      } catch (_) {}
+
       return res.json({ ok: true });
     }
 
@@ -1850,6 +1901,14 @@ router.post('/:matchId/paper-score', async (req, res) => {
 
     // v1.16.17 -- detect bracket completion and trigger HJ final review
     await maybeMarkBracketReviewPending(req.params.eventId, req.app);
+
+    // v1.16.30 -- clear manual-entry lock if it was set for this match
+    try {
+      await execute('UPDATE events SET dual_manual_entry=0 WHERE id=? AND dual_manual_entry=1', [req.params.eventId]);
+      if (req.app.broadcast) {
+        req.app.broadcast(req.params.eventId, 'dual_manual_entry_cleared', {});
+      }
+    } catch (_) {}
 
     res.json({ ok: true, result });
   } catch (e) { res.status(500).json({ error: e.message }); }

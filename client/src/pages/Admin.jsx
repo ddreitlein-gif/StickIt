@@ -5,6 +5,7 @@ import AdminUsers from './admin/AdminUsers'
 import AdminEvents from './admin/AdminEvents'
 import AdminSystem from './admin/AdminSystem'
 import AdminUSSSPeople from './admin/AdminUSSSPeople'
+import AdminAthletes from './admin/AdminAthletes'
 import AdminBackups from './admin/AdminBackups'
 import AuditLog from './AuditLog'
 
@@ -17,6 +18,7 @@ export default function Admin() {
         <Route path="users" element={<AdminUsers />} />
         <Route path="events" element={<AdminEvents />} />
         <Route path="usss-people" element={<AdminUSSSPeople />} />
+        <Route path="athletes" element={<AdminAthletes />} />
         <Route path="backups" element={<AdminBackups />} />
         <Route path="audit" element={<AuditLog />} />
         <Route path="system" element={<Navigate to="/admin/dashboard" replace />} />
