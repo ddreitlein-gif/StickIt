@@ -688,11 +688,15 @@ function DualScoreboard({
   placements, reviewStatus, dualTab, setDualTab,
   expandedMatchId, setExpandedMatchId, downloading, downloadPdf
 }) {
-  // Find the most recently completed match for fallback
+  // Find the most recently completed match for fallback (by updated_at DESC, not bracket order)
   const recentCompleted = useMemo(() => {
     const done = bracketMatches.filter(m => !m.is_bye && m.status === 'complete');
     if (done.length === 0) return null;
     const sorted = [...done].sort((a, b) => {
+      const aT = a.updated_at || '';
+      const bT = b.updated_at || '';
+      if (aT !== bT) return bT.localeCompare(aT);
+      // tie-break by deepest round (closer to finals) then position
       if (a.bracket_round !== b.bracket_round) return a.bracket_round - b.bracket_round;
       return (a.bracket_position || 0) - (b.bracket_position || 0);
     });
@@ -824,7 +828,10 @@ function DualScoreboard({
           />
         )}
         {dualTab === 'place' && (
-          <DualPlaceTab placements={placements} />
+          <DualPlaceTab
+            placements={placements}
+            isComplete={(event && event.status === 'complete') || reviewStatus === 'approved'}
+          />
         )}
       </div>
     </div>
@@ -853,6 +860,11 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
     const points = judgePointsByMatch[m.id] || [];
     const bluePoints = points.map(p => p.time_tied ? 0 : (p.blue_points || 0));
     const redPoints = points.map(p => p.time_tied ? 0 : (p.red_points || 0));
+    const winnerSide =
+      m.winner_registration_id && m.winner_registration_id === m.registration_id_blue ? 'blue' :
+      m.winner_registration_id && m.winner_registration_id === m.registration_id_red  ? 'red'  : null;
+    const blueStatus = m.loser_status && winnerSide === 'red' ? m.loser_status : null;
+    const redStatus  = m.loser_status && winnerSide === 'blue' ? m.loser_status : null;
     return (
       <div>
         <DualMatchCard
@@ -863,6 +875,9 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
           redPoints={redPoints}
           isLive={false}
           isFinal={true}
+          winnerSide={winnerSide}
+          blueStatus={blueStatus}
+          redStatus={redStatus}
         />
         <div className="sk-display" style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-dim)', letterSpacing: '0.15em', marginTop: 16 }}>
           MOST RECENT COMPLETED MATCH
@@ -1122,7 +1137,24 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
   );
 }
 
-function DualPlaceTab({ placements }) {
+function DualPlaceTab({ placements, isComplete }) {
+  if (!isComplete) {
+    return (
+      <div style={{
+        padding: 60,
+        textAlign: 'center',
+        background: 'var(--bg-panel)',
+        borderRadius: 14,
+        border: '1px solid var(--border)',
+        color: 'var(--fg-dim)'
+      }}>
+        <div className="sk-display" style={{ fontSize: 14, letterSpacing: '0.15em', marginBottom: 8, color: 'var(--fg-muted)' }}>
+          PENDING EVENT RESULTS
+        </div>
+        <div style={{ fontSize: 12 }}>Final placements will appear once the event is finalized.</div>
+      </div>
+    );
+  }
   if (!placements || placements.length === 0) return <EmptyState />;
   const showFfsp = placements.some(p => p.ffsp != null);
   return (

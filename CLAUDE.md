@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.17.00
+**Current version:** v1.17.01
 
 ## Commands
 
@@ -159,6 +159,26 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.17.01 Feature Notes
+
+### Dual Mogul Public Surface Polish (v1.17.01)
+
+Three follow-up fixes to the v1.17.00 dual mogul surfaces (broadcast Overlay + live Scoreboard).
+
+**Broadcast Overlay (`OverlayDualVS`) — bib chip, club line, score-on-outer-edge, DNF status.** Pre-result the central chip on each side now shows `#bib_number` (replacing the prior `–` score-placeholder dash). Club name moved to its own line below the athlete last name (no longer combined into a `#bib · club` line). When a result lands, the side panel layout flips so the score chip sits on the **outer** edge of each side panel (away from the VS button) and the text moves toward the VS center; small `#bib` text appears under the name to keep athlete identification visible. Scores render as whole numbers via `Math.round` (no `.0` decimal). When the loser's status is set (DNF/DNS/DSQ from Path A of paper-score), that side's chip displays the status text instead of the bib/score.
+
+**Server (`server/routes/dual.js`) — full payload on every dual `score_update`.** The Path A (DNS/DNF/DSQ) broadcast previously sent only `{ winner }` — no blue/red blocks, no totals, no winner side. It now mirrors the scored-path payload: full blue+red blocks (with `name`, `bib`, `club`, `registrationId`, and per-side `status` for the loser) plus `blueTotal: null`, `redTotal: null`, `winnerSide`, `bracketRound`, `isSmallFinal`. All four dual `score_update` broadcast sites also gained an explicit `winnerSide: 'blue'|'red'` field, fixing a latent bug where `(d.blueTotal > d.redTotal) ? 'blue' : 'red'` returned `'red'` for any DNF (since `null > null` is false) and would incorrectly label red as winner when red DNF'd. The `GET /active-match` query and all 4 `score_update` JOINs now include `a.club` so club data flows end-to-end.
+
+**Overlay client — winnerSide preference + per-side status threading.** `Overlay.jsx`'s `score_update` handler now prefers `d.winnerSide` from the server, with fallbacks via `d.winner.registrationId` match against blue/red, then total comparison. Captures `status` per side and threads `blueStatus` / `redStatus` props into `OverlayDualVS`.
+
+**Live Scoreboard Match tab — most-recent-completed sort, DNF status, no decimals.** `recentCompleted` in `Scoreboard.jsx` now sorts by `updated_at` DESC (then bracket round/position as tie-break), so the Match tab actually shows the most recently scored match instead of the first one in bracket order. `DualMatchTab` derives `winnerSide` from `winner_registration_id` and computes `blueStatus`/`redStatus` from `loser_status`, then passes all three into `DualMatchCard`. `DualMatchCard` now: (a) prefers `winnerSide` over total comparison so DNF wins land the WINNER label on the right side; (b) renders judge cells and Total via a new `fmt0` (whole numbers); (c) when a side has `status` set, replaces the judge boxes + Total with a centered large `DNF`/`DNS`/`DSQ` block.
+
+**Live Scoreboard Place tab — gated until event finalized.** `DualPlaceTab` now accepts an `isComplete` prop (`event.status === 'complete' || reviewStatus === 'approved'`) and renders a centered `PENDING EVENT RESULTS` placeholder card until the Head Judge finalizes the event. Existing rendering (with FFSP points, DSQ/DNS/SCR markers, and DNF tags) is unchanged once the event is final.
+
+**Files modified:** `server/routes/dual.js`, `client/src/pages/Overlay.jsx`, `client/src/components/public/OverlayDualVS.jsx`, `client/src/components/public/DualMatchCard.jsx`, `client/src/pages/Scoreboard.jsx`, `server/index.js`, `client/src/components/Layout.jsx`, `CLAUDE.md`
 
 ---
 

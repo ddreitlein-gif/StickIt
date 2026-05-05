@@ -2,16 +2,17 @@ import React from 'react';
 import LiveDot from './LiveDot';
 import BibChip from './BibChip';
 
-function fmt1(n) {
+function fmt0(n) {
   if (n == null || n === '' || isNaN(Number(n))) return '–';
-  return Number(n).toFixed(1);
+  return String(Math.round(Number(n)));
 }
 
-function SidePanel({ side, athlete, points, isWinner }) {
+function SidePanel({ side, athlete, points, isWinner, status }) {
   const isBlue = side === 'blue';
   const grad = isBlue ? 'var(--gradient-blue)' : 'var(--gradient-red)';
   const total = points ? points.reduce((a, b) => a + (Number(b) || 0), 0) : 0;
   const display = [athlete?.last_name, athlete?.first_name].filter(Boolean).join(', ') || '—';
+  const hasStatus = !!status;
 
   return (
     <div style={{
@@ -57,39 +58,65 @@ function SidePanel({ side, athlete, points, isWinner }) {
         <div style={{ fontSize: 11, opacity: 0.8 }}>{athlete.club_name}</div>
       )}
       <div style={{ flex: 1 }} />
-      <div>
-        <div className="sk-display" style={{ fontSize: 9, letterSpacing: '0.15em', opacity: 0.75, marginBottom: 4 }}>JUDGES</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="sk-mono" style={{
-              flex: 1,
-              padding: '6px 0',
-              borderRadius: 6,
-              background: 'rgba(0,0,0,0.25)',
-              textAlign: 'center',
-              fontSize: 13,
-              fontWeight: 700
-            }}>
-              {fmt1(points?.[i])}
+      {hasStatus ? (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '18px 0',
+          background: 'rgba(0,0,0,0.25)',
+          borderRadius: 10
+        }}>
+          <div className="sk-display" style={{ fontSize: 32, fontWeight: 800, letterSpacing: '0.15em' }}>
+            {status}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div>
+            <div className="sk-display" style={{ fontSize: 9, letterSpacing: '0.15em', opacity: 0.75, marginBottom: 4 }}>JUDGES</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="sk-mono" style={{
+                  flex: 1,
+                  padding: '6px 0',
+                  borderRadius: 6,
+                  background: 'rgba(0,0,0,0.25)',
+                  textAlign: 'center',
+                  fontSize: 13,
+                  fontWeight: 700
+                }}>
+                  {fmt0(points?.[i])}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <div className="sk-display" style={{ fontSize: 10, letterSpacing: '0.15em', opacity: 0.75 }}>TOTAL</div>
-        <div className="sk-mono" style={{ fontSize: 30, fontWeight: 800 }}>
-          {fmt1(total)}
-        </div>
-      </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <div className="sk-display" style={{ fontSize: 10, letterSpacing: '0.15em', opacity: 0.75 }}>TOTAL</div>
+            <div className="sk-mono" style={{ fontSize: 30, fontWeight: 800 }}>
+              {fmt0(total)}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoints, redPoints, isLive, isFinal }) {
+export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoints, redPoints, isLive, isFinal, winnerSide, blueStatus, redStatus }) {
   const blueTotal = (bluePoints || []).reduce((a, b) => a + (Number(b) || 0), 0);
   const redTotal = (redPoints || []).reduce((a, b) => a + (Number(b) || 0), 0);
-  const blueWinner = isFinal && blueTotal > redTotal;
-  const redWinner = isFinal && redTotal > blueTotal;
+  // Prefer explicit winnerSide (handles DNF where both totals are 0); fall back to total comparison.
+  let blueWinner = false;
+  let redWinner = false;
+  if (isFinal) {
+    if (winnerSide === 'blue') blueWinner = true;
+    else if (winnerSide === 'red') redWinner = true;
+    else {
+      blueWinner = blueTotal > redTotal;
+      redWinner = redTotal > blueTotal;
+    }
+  }
 
   return (
     <div>
@@ -110,7 +137,7 @@ export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoin
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', position: 'relative' }}>
-        <SidePanel side="blue" athlete={blueAthlete} points={bluePoints} isWinner={blueWinner} />
+        <SidePanel side="blue" athlete={blueAthlete} points={bluePoints} isWinner={blueWinner} status={blueStatus} />
         <div className="sk-display" style={{
           position: 'absolute',
           top: '50%',
@@ -131,7 +158,7 @@ export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoin
         }}>
           VS
         </div>
-        <SidePanel side="red" athlete={redAthlete} points={redPoints} isWinner={redWinner} />
+        <SidePanel side="red" athlete={redAthlete} points={redPoints} isWinner={redWinner} status={redStatus} />
       </div>
     </div>
   );

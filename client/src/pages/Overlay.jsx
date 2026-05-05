@@ -363,6 +363,7 @@ export default function Overlay() {
                     first_name: d.blue.first_name ?? base.blue?.first_name ?? '',
                     last_name: d.blue.last_name ?? base.blue?.last_name ?? '',
                     club_name: d.blue.club_name ?? d.blue.club ?? base.blue?.club_name ?? '',
+                    status: d.blue.status ?? null,
                   }
                 : base.blue;
               const red = d.red
@@ -371,8 +372,15 @@ export default function Overlay() {
                     first_name: d.red.first_name ?? base.red?.first_name ?? '',
                     last_name: d.red.last_name ?? base.red?.last_name ?? '',
                     club_name: d.red.club_name ?? d.red.club ?? base.red?.club_name ?? '',
+                    status: d.red.status ?? null,
                   }
                 : base.red;
+              const winnerSide = d.winnerSide
+                || (d.winner && d.winner.registrationId === blue?.registrationId ? 'blue' : null)
+                || (d.winner && d.winner.registrationId === red?.registrationId ? 'red' : null)
+                || (d.blueTotal != null && d.redTotal != null
+                      ? (d.blueTotal > d.redTotal ? 'blue' : 'red')
+                      : null);
               return {
                 ...base,
                 matchId: d.matchId || base.matchId,
@@ -381,7 +389,7 @@ export default function Overlay() {
                 blueTotal: d.blueTotal,
                 redTotal: d.redTotal,
                 scored: true,
-                winnerSide: (d.blueTotal > d.redTotal) ? 'blue' : 'red',
+                winnerSide,
                 bracketRound: d.bracketRound ?? base.bracketRound,
                 isSmallFinal: d.isSmallFinal != null ? !!d.isSmallFinal : !!base.isSmallFinal,
               };
@@ -484,6 +492,8 @@ export default function Overlay() {
             redAthlete={dualState.red}
             blueTotal={dualState.scored ? dualState.blueTotal : null}
             redTotal={dualState.scored ? dualState.redTotal : null}
+            blueStatus={dualState.scored ? dualState.blue?.status : null}
+            redStatus={dualState.scored ? dualState.red?.status : null}
             blueLabel={dualBlueLabel || 'BLUE'}
             redLabel={dualRedLabel || 'RED'}
           />

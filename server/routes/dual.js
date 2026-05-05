@@ -1243,9 +1243,9 @@ router.put('/:matchId/winner', async (req, res) => {
       }
 
       const [winReg, blueReg, redReg] = await Promise.all([
-        queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winner_registration_id]),
-        match.registration_id_blue ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]) : null,
-        match.registration_id_red  ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red])  : null,
+        queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winner_registration_id]),
+        match.registration_id_blue ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]) : null,
+        match.registration_id_red  ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red])  : null,
       ]);
 
       if (req.app.broadcast) {
@@ -1255,8 +1255,10 @@ router.put('/:matchId/winner', async (req, res) => {
           winner: winReg ? {
             name: `${winReg.first_name} ${winReg.last_name}`,
             bib:  winReg.bib_number,
+            club: winReg.club,
             registrationId: winner_registration_id,
           } : null,
+          winnerSide: winner_registration_id === match.registration_id_blue ? 'blue' : 'red',
           blueTotal,
           redTotal,
           bracketRound: match.bracket_round,
@@ -1264,11 +1266,13 @@ router.put('/:matchId/winner', async (req, res) => {
           blue: blueReg ? {
             name: `${blueReg.first_name} ${blueReg.last_name}`,
             bib:  blueReg.bib_number,
+            club: blueReg.club,
             registrationId: match.registration_id_blue,
           } : null,
           red: redReg ? {
             name: `${redReg.first_name} ${redReg.last_name}`,
             bib:  redReg.bib_number,
+            club: redReg.club,
             registrationId: match.registration_id_red,
           } : null,
         });
@@ -1309,8 +1313,8 @@ router.get('/active-match', async (req, res) => {
 
     const match = await queryOne(
       `SELECT db.*,
-        ab.first_name as blue_first, ab.last_name as blue_last, rb.bib_number as blue_bib,
-        ar.first_name as red_first,  ar.last_name as red_last,  rr.bib_number as red_bib,
+        ab.first_name as blue_first, ab.last_name as blue_last, ab.club as blue_club, rb.bib_number as blue_bib,
+        ar.first_name as red_first,  ar.last_name as red_last,  ar.club as red_club,  rr.bib_number as red_bib,
         rb.dual_seed as blue_dual_seed, rr.dual_seed as red_dual_seed
        FROM dual_bracket db
        LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
@@ -1695,9 +1699,9 @@ router.post('/:matchId/approve', async (req, res) => {
       const split = calcDualMogulPointSplit(judgeScoresForCalc);
 
       const [winReg, blueReg, redReg] = await Promise.all([
-        queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winnerId]),
-        match.registration_id_blue ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]) : null,
-        match.registration_id_red  ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red])  : null,
+        queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winnerId]),
+        match.registration_id_blue ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]) : null,
+        match.registration_id_red  ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red])  : null,
       ]);
 
       if (req.app.broadcast) {
@@ -1707,8 +1711,10 @@ router.post('/:matchId/approve', async (req, res) => {
           winner: winReg ? {
             name: `${winReg.first_name} ${winReg.last_name}`,
             bib:  winReg.bib_number,
+            club: winReg.club,
             registrationId: winnerId,
           } : null,
+          winnerSide: winnerId === match.registration_id_blue ? 'blue' : 'red',
           blueTotal: split.blueTotal,
           redTotal:  split.redTotal,
           bracketRound: match.bracket_round,
@@ -1716,11 +1722,13 @@ router.post('/:matchId/approve', async (req, res) => {
           blue: blueReg ? {
             name: `${blueReg.first_name} ${blueReg.last_name}`,
             bib:  blueReg.bib_number,
+            club: blueReg.club,
             registrationId: match.registration_id_blue,
           } : null,
           red: redReg ? {
             name: `${redReg.first_name} ${redReg.last_name}`,
             bib:  redReg.bib_number,
+            club: redReg.club,
             registrationId: match.registration_id_red,
           } : null,
         });
@@ -1776,15 +1784,38 @@ router.post('/:matchId/paper-score', async (req, res) => {
 
       // Broadcast
       try {
-        const winReg = await queryOne(
-          `SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`,
-          [winner_registration_id]
-        );
+        const [winReg, blueReg, redReg] = await Promise.all([
+          queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winner_registration_id]),
+          match.registration_id_blue ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]) : null,
+          match.registration_id_red  ? queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red])  : null,
+        ]);
+        const blueIsLoser = winner_registration_id !== match.registration_id_blue;
+        const redIsLoser  = winner_registration_id !== match.registration_id_red;
+        const winnerSide  = winner_registration_id === match.registration_id_blue ? 'blue' : 'red';
         if (winReg && req.app.broadcast) {
           req.app.broadcast(req.params.eventId, 'score_update', {
             isDual: true,
             matchId: req.params.matchId,
-            winner: { name: `${winReg.first_name} ${winReg.last_name}`, bib: winReg.bib_number, registrationId: winner_registration_id },
+            winner: { name: `${winReg.first_name} ${winReg.last_name}`, bib: winReg.bib_number, club: winReg.club, registrationId: winner_registration_id },
+            winnerSide,
+            blueTotal: null,
+            redTotal: null,
+            bracketRound: match.bracket_round,
+            isSmallFinal: !!match.is_small_final,
+            blue: blueReg ? {
+              name: `${blueReg.first_name} ${blueReg.last_name}`,
+              bib:  blueReg.bib_number,
+              club: blueReg.club,
+              registrationId: match.registration_id_blue,
+              status: blueIsLoser ? loser_status : null,
+            } : null,
+            red: redReg ? {
+              name: `${redReg.first_name} ${redReg.last_name}`,
+              bib:  redReg.bib_number,
+              club: redReg.club,
+              registrationId: match.registration_id_red,
+              status: redIsLoser ? loser_status : null,
+            } : null,
           });
           req.app.broadcast(req.params.eventId, 'run_updated', { matchId: req.params.matchId, dualComplete: true });
         }
@@ -1879,21 +1910,22 @@ router.post('/:matchId/paper-score', async (req, res) => {
     // Broadcast
     try {
       const [winReg, blueReg, redReg] = await Promise.all([
-        queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winnerId]),
-        queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]),
-        queryOne(`SELECT r.bib_number, a.first_name, a.last_name FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red]),
+        queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winnerId]),
+        queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_blue]),
+        queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [match.registration_id_red]),
       ]);
       if (req.app.broadcast) {
         req.app.broadcast(req.params.eventId, 'score_update', {
           isDual: true,
           matchId: req.params.matchId,
-          winner: winReg ? { name: `${winReg.first_name} ${winReg.last_name}`, bib: winReg.bib_number, registrationId: winnerId } : null,
+          winner: winReg ? { name: `${winReg.first_name} ${winReg.last_name}`, bib: winReg.bib_number, club: winReg.club, registrationId: winnerId } : null,
+          winnerSide: winnerId === match.registration_id_blue ? 'blue' : 'red',
           blueTotal: result.blueTotal,
           redTotal: result.redTotal,
           bracketRound: match.bracket_round,
           isSmallFinal: !!match.is_small_final,
-          blue: blueReg ? { name: `${blueReg.first_name} ${blueReg.last_name}`, bib: blueReg.bib_number, registrationId: match.registration_id_blue } : null,
-          red: redReg ? { name: `${redReg.first_name} ${redReg.last_name}`, bib: redReg.bib_number, registrationId: match.registration_id_red } : null,
+          blue: blueReg ? { name: `${blueReg.first_name} ${blueReg.last_name}`, bib: blueReg.bib_number, club: blueReg.club, registrationId: match.registration_id_blue } : null,
+          red: redReg ? { name: `${redReg.first_name} ${redReg.last_name}`, bib: redReg.bib_number, club: redReg.club, registrationId: match.registration_id_red } : null,
         });
         req.app.broadcast(req.params.eventId, 'run_updated', { matchId: req.params.matchId, dualComplete: true });
       }
