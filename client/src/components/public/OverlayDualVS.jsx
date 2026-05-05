@@ -1,42 +1,62 @@
 import React from 'react';
 
-function Side({ side, athlete, total, status, label }) {
+function Side({ side, athlete, total, status, label, winner, matchHasResult }) {
   const isBlue = side === 'blue';
   const hasScore  = total != null;
   const hasStatus = !!status;
-  const showResult = hasScore || hasStatus;
 
   // Pre-result: text on OUTER edge, bib chip on INNER edge (next to VS).
   // After result: text on INNER edge, score (or status) on OUTER edge.
-  const flexDirection = showResult
+  // Use the match-level `matchHasResult` so BOTH sides flip together --
+  // otherwise a DNF loser flips while the no-score winner stays pre-result.
+  const flexDirection = matchHasResult
     ? (isBlue ? 'row-reverse' : 'row')
     : (isBlue ? 'row' : 'row-reverse');
 
-  const textAlign = showResult
+  const textAlign = matchHasResult
     ? (isBlue ? 'right' : 'left')   // text now near VS center
     : (isBlue ? 'left' : 'right');  // text near outer edge
+
+  // Pull the inner edge inward so the name/club text doesn't crowd the VS circle.
+  const padding = matchHasResult
+    ? (isBlue ? '16px 60px 16px 24px' : '16px 24px 16px 60px')
+    : '16px 24px';
 
   const bibNum = athlete?.bib_number;
   const bibText = (bibNum != null && bibNum !== '') ? `#${bibNum}` : '';
 
   let chipContent;
   let chipFontSize;
+  let chipHidden = false;
   if (hasScore) {
     chipContent  = Math.round(Number(total));
     chipFontSize = 44;
   } else if (hasStatus) {
     chipContent  = status;
-    chipFontSize = 24;
+    chipFontSize = 38;
+  } else if (matchHasResult) {
+    // Match has a result but this side has neither score nor status
+    // (e.g., winner advancing on opponent's DNF). Render invisible chip
+    // to preserve layout symmetry without showing the bib.
+    chipContent  = '';
+    chipFontSize = 28;
+    chipHidden = true;
   } else {
     chipContent  = bibText || '–';
     chipFontSize = 28;
   }
 
+  const winnerShadow = winner
+    ? 'inset 0 0 0 6px #f5c518, 0 0 40px rgba(245, 197, 24, 0.7)'
+    : 'none';
+
+  const sideRadius = isBlue ? '14px 0 0 14px' : '0 14px 14px 0';
+
   return (
     <div style={{
       flex: 1,
       background: isBlue ? 'var(--gradient-blue)' : 'var(--gradient-red)',
-      padding: '16px 24px',
+      padding,
       color: '#fff',
       display: 'flex',
       alignItems: 'center',
@@ -44,6 +64,9 @@ function Side({ side, athlete, total, status, label }) {
       gap: 16,
       minWidth: 360,
       flexDirection,
+      borderRadius: sideRadius,
+      boxShadow: winnerShadow,
+      position: 'relative',
     }}>
       <div style={{ textAlign, minWidth: 0, flex: 1 }}>
         <div className="sk-display" style={{ fontSize: 11, letterSpacing: '0.15em', opacity: 0.85 }}>
@@ -52,7 +75,7 @@ function Side({ side, athlete, total, status, label }) {
         <div className="sk-display" style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {(athlete?.last_name || '').toUpperCase() || '—'}
         </div>
-        {showResult && bibText && (
+        {matchHasResult && bibText && (
           <div style={{ fontSize: 13, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {bibText}
           </div>
@@ -71,7 +94,8 @@ function Side({ side, athlete, total, status, label }) {
         padding: '6px 16px',
         borderRadius: 10,
         minWidth: 90,
-        textAlign: 'center'
+        textAlign: 'center',
+        visibility: chipHidden ? 'hidden' : 'visible',
       }}>
         {chipContent}
       </div>
@@ -79,16 +103,29 @@ function Side({ side, athlete, total, status, label }) {
   );
 }
 
-export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redTotal, blueStatus, redStatus, blueLabel, redLabel }) {
+export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redTotal, blueStatus, redStatus, blueLabel, redLabel, winnerSide }) {
+  const matchHasResult = (
+    blueTotal != null || redTotal != null ||
+    !!blueStatus || !!redStatus ||
+    !!winnerSide
+  );
+
   return (
     <div className="sk-fade-in" style={{
       display: 'inline-flex',
       borderRadius: 14,
-      overflow: 'hidden',
       position: 'relative',
       boxShadow: '0 8px 32px rgba(0,0,0,0.6)'
     }}>
-      <Side side="blue" athlete={blueAthlete} total={blueTotal} status={blueStatus} label={blueLabel} />
+      <Side
+        side="blue"
+        athlete={blueAthlete}
+        total={blueTotal}
+        status={blueStatus}
+        label={blueLabel}
+        winner={winnerSide === 'blue'}
+        matchHasResult={matchHasResult}
+      />
       <div className="sk-display" style={{
         position: 'absolute',
         left: '50%',
@@ -109,7 +146,15 @@ export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redT
       }}>
         VS
       </div>
-      <Side side="red" athlete={redAthlete} total={redTotal} status={redStatus} label={redLabel} />
+      <Side
+        side="red"
+        athlete={redAthlete}
+        total={redTotal}
+        status={redStatus}
+        label={redLabel}
+        winner={winnerSide === 'red'}
+        matchHasResult={matchHasResult}
+      />
     </div>
   );
 }

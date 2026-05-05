@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.17.01
+**Current version:** v1.17.02
 
 ## Commands
 
@@ -159,6 +159,24 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.17.02 Feature Notes
+
+### Dual Mogul Overlay — Symmetric Result Layout + Winner Highlight (v1.17.02)
+
+Three follow-ups to the v1.17.01 dual mogul broadcast Overlay (`OverlayDualVS`), plus a HJ tablet button-order swap and a server broadcast addition.
+
+**Symmetric layout flip on `matchHasResult`.** Previously each `<Side>` decided its own `showResult` from `total != null || !!status`. When a match ended via DNF — the loser had a `status` set, the winner had neither score nor status — the loser's side flipped its layout (text inward, chip on outer edge) but the winner's side stayed in pre-result layout (text outward, chip near VS). Both sides now share a match-level `matchHasResult` derived from `(blueTotal != null || redTotal != null || !!blueStatus || !!redStatus || !!winnerSide)` and flip together. The winner side (which has neither score nor status) renders an invisible chip (`visibility: hidden`) so the gold-glow border and the inner-edge padding stay symmetric across both panels.
+
+**Winner highlight + status chip resize.** The winning side now gets a gold inset border + glow shadow (`inset 0 0 0 6px #f5c518, 0 0 40px rgba(245, 197, 24, 0.7)`) when `winnerSide` matches. To make this visible, the wrapper's `overflow: hidden` was removed; per-side rounded corners (`14px 0 0 14px` on blue, `0 14px 14px 0` on red) replace the wrapper's mask. Status chip font size bumped from 24 → 38 to match the visual weight of the score chip on the opposite side. Inner-edge padding increases to 60px on result rows so the athlete name no longer crowds the VS circle.
+
+**`/winner` broadcast carries per-side status.** The `PUT /:matchId/winner` endpoint in `server/routes/dual.js` now sets `blue.status` / `red.status` on the loser's side of the broadcast payload (winner side stays null). This mirrors the v1.17.01 paper-score path so the Overlay's `score_update` handler sees the loser's DNF/DNS/DSQ regardless of which path the match was finalized through. `Overlay.jsx` threads `dualState.winnerSide` into `OverlayDualVS` only when `scored`, so pre-score frames never falsely highlight a winner.
+
+**HJ tablet — DNS/DNF button order swapped to Blue first.** `DualHeadJudgeView`'s 2×2 grid of status buttons reorders from `[Red DNS, Blue DNS, Red DNF, Blue DNF]` to `[Blue DNS, Red DNS, Blue DNF, Red DNF]`. Each button's `winnerId`, color theme, status message, and label move together so the underlying logic stays coherent — only the visual ordering changes (blue-side actions are now the left column, matching the bracket convention of blue on top/left).
+
+**Files modified:** `client/src/components/public/OverlayDualVS.jsx`, `client/src/pages/Overlay.jsx`, `client/src/pages/HeadJudgeTablet.jsx`, `server/routes/dual.js`, `server/index.js`, `client/src/components/Layout.jsx`, `CLAUDE.md`
 
 ---
 

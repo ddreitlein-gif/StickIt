@@ -1249,6 +1249,8 @@ router.put('/:matchId/winner', async (req, res) => {
       ]);
 
       if (req.app.broadcast) {
+        const blueIsLoser = winner_registration_id !== match.registration_id_blue;
+        const redIsLoser  = winner_registration_id !== match.registration_id_red;
         req.app.broadcast(req.params.eventId, 'score_update', {
           isDual: true,
           matchId: req.params.matchId,
@@ -1268,12 +1270,14 @@ router.put('/:matchId/winner', async (req, res) => {
             bib:  blueReg.bib_number,
             club: blueReg.club,
             registrationId: match.registration_id_blue,
+            status: blueIsLoser ? (loser_status || null) : null,
           } : null,
           red: redReg ? {
             name: `${redReg.first_name} ${redReg.last_name}`,
             bib:  redReg.bib_number,
             club: redReg.club,
             registrationId: match.registration_id_red,
+            status: redIsLoser ? (loser_status || null) : null,
           } : null,
         });
         req.app.broadcast(req.params.eventId, 'run_updated', { matchId: req.params.matchId, dualComplete: true });

@@ -658,27 +658,6 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                         onClick={async () => {
                           setSettingStatus(true); setError(''); setStatusMsg('')
                           try {
-                            const winnerId = activeMatch.registration_id_blue
-                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNS' }),
-                            })
-                            if (!res.ok) throw new Error('Failed')
-                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Red DNS recorded.  Blue advances.')
-                            await loadMatch()
-                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
-                        }}
-                        disabled={settingStatus}
-                        className="py-3 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors text-sm"
-                      >
-                        Red DNS
-                      </button>
-                      <button
-                        onClick={async () => {
-                          setSettingStatus(true); setError(''); setStatusMsg('')
-                          try {
                             const winnerId = activeMatch.registration_id_red
                             const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
                               method: 'PUT',
@@ -704,18 +683,18 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                             const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNF' }),
+                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNS' }),
                             })
                             if (!res.ok) throw new Error('Failed')
                             await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Red DNF recorded.  Blue advances.')
+                            setStatusMsg('Red DNS recorded.  Blue advances.')
                             await loadMatch()
                           } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
                         }}
                         disabled={settingStatus}
                         className="py-3 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors text-sm"
                       >
-                        Red DNF
+                        Red DNS
                       </button>
                       <button
                         onClick={async () => {
@@ -737,6 +716,27 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                         className="py-3 rounded-xl font-bold text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/60 border border-blue-800 disabled:opacity-50 transition-colors text-sm"
                       >
                         Blue DNF
+                      </button>
+                      <button
+                        onClick={async () => {
+                          setSettingStatus(true); setError(''); setStatusMsg('')
+                          try {
+                            const winnerId = activeMatch.registration_id_blue
+                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNF' }),
+                            })
+                            if (!res.ok) throw new Error('Failed')
+                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
+                            setStatusMsg('Red DNF recorded.  Blue advances.')
+                            await loadMatch()
+                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
+                        }}
+                        disabled={settingStatus}
+                        className="py-3 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors text-sm"
+                      >
+                        Red DNF
                       </button>
                     </div>
                     <p className="text-xs text-slate-600 mt-2 text-center">

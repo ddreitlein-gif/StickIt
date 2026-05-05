@@ -496,6 +496,7 @@ export default function Overlay() {
             redStatus={dualState.scored ? dualState.red?.status : null}
             blueLabel={dualBlueLabel || 'BLUE'}
             redLabel={dualRedLabel || 'RED'}
+            winnerSide={dualState.scored ? dualState.winnerSide : null}
           />
         </div>
       )}
