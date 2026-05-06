@@ -130,7 +130,7 @@ router.get('/:id', async (req, res) => {
     if (!meet) return res.status(404).json({ error: 'Meet not found' });
     const excludeLocked = req.query.excludeLocked === '1';
     const lockedFilter = excludeLocked ? ' AND e.locked = 0' : '';
-    const events = await queryAll(`SELECT e.*, (SELECT COUNT(*) FROM registrations WHERE event_id = e.id AND status != 'scratched') as athlete_count, (SELECT COUNT(*) FROM judges WHERE event_id = e.id) as judge_count FROM events e WHERE e.meet_id = ?${lockedFilter} ORDER BY e.discipline, e.division, e.gender`, [req.params.id]);
+    const events = await queryAll(`SELECT e.*, (SELECT COUNT(*) FROM registrations WHERE event_id = e.id AND status != 'scratched') as athlete_count, (SELECT COUNT(*) FROM judges WHERE event_id = e.id) as judge_count, (CASE WHEN EXISTS (SELECT 1 FROM runs WHERE event_id = e.id) THEN 1 ELSE 0 END) as has_runs FROM events e WHERE e.meet_id = ?${lockedFilter} ORDER BY e.discipline, e.division, e.gender`, [req.params.id]);
     res.json({ ...meet, events });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

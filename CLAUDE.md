@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.18.02
+**Current version:** v1.18.03
 
 ## Commands
 
@@ -175,6 +175,35 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.18.03 Feature Notes
+
+### Add Event Modal Redesign + Edit Event Button (v1.18.03)
+
+Two coupled changes to event configuration UX on the meet detail page (`/dashboard/meets/:id`).
+
+**Add Event modal cleanup.** The standalone top "Event Type" sanction selector that appeared for every discipline (mogul, dual mogul, aerials) is removed. Event Type is conceptually aerials-specific — it drives panel size, HJ-may-score, and reduction-method rules per FIS/USSS sanction tiers — so showing it for mogul/dual mogul events was misleading. The middle dropdown (label still "Category") is now discipline-aware:
+
+- **Mogul / Dual Mogul:** existing options — Comp Series / Devo / RQS-EQS / FIS — bound to `form.division`. Devo and RQS-EQS still disabled when discipline is dual mogul.
+- **Aerials:** USA Regional / USA National / FIS Other / FIS NAC/NorAm / FIS OWG/WSC/WC, bound to `form.event_type`. The label intentionally stays "Category" for visual consistency with mogul (per design choice, not a rule).
+
+The verbose aerials info box ("Standard aerials: each scoring judge enters Air (0.0–2.0), Form (0.0–5.0), Landing (0.0–3.0)…") is removed — officials know the rule. Auto-name for aerials events now uses Event Type label (`"USA Regional Male Aerials"`) instead of the previous Category-based pattern; mogul/dual mogul events keep `"Comp Series Male Mogul"`.
+
+Behind the scenes both `events.event_type` and `events.division` columns continue to be persisted: mogul/dual mogul events silently default `event_type='usa_regional'` (no scoring effect per v1.18.00 rules); aerials events silently default `division='comp_series'` (form's default — harmless for aerials, which doesn't read it).
+
+**Edit Event button (new).** Each `EventCard` on the meet detail page now shows a mountain-blue **Edit** button next to the existing red Delete button. Clicking opens the same modal in edit mode, seeded from the event's current values, with title "Edit Event" and submit button "Save Changes". Submit calls the existing `PUT /api/meets/:meetId/events/:id` endpoint via `api.updateEvent(meetId, id, data)`.
+
+The button is **disabled once the first run starts** — defined as any row existing in the `runs` table for that event (`EXISTS(SELECT 1 FROM runs WHERE event_id=?)`). In StickIt, run rows are created when scoring begins or via manual entry, so this is the natural cutoff. When disabled the button shows tooltip "Cannot edit after scoring has started" with reduced opacity. Existing server-side guards in `PUT /:id` (post-complete-run blocks on `component_scoring`, `score_entry_mode`, `event_type`, `aerials_panel_size`) remain as defense-in-depth.
+
+**`has_runs` flag added to `GET /api/meets/:id`.** The events SQL gains a `has_runs` integer column via `CASE WHEN EXISTS (SELECT 1 FROM runs WHERE event_id = e.id) THEN 1 ELSE 0 END`. Used client-side to disable the Edit button.
+
+**Modal refactor.** The previous `CreateEventModal` is renamed `EventFormModal` and accepts `mode='create'|'edit'`, `initialEvent`, and a single `onSave` callback (replacing the old `onCreate`). Edit mode skips the auto-name `useEffect` on first render via a `didMount` ref so a user-customized event name (e.g. `"Day 1 — Mens Comp"`) isn't clobbered when the edit modal opens. Subsequent discipline/category/gender/event_type changes inside the open modal do still re-trigger the auto-name (intentional — same as create mode). Edit mode also skips the division → judge-config defaults `useEffect` so editing an event whose judge counts diverge from category defaults doesn't reset them on mount.
+
+**Card layout.** EventCard's right-side button cluster moved from a single absolute Delete button to a `flex gap-2` group containing Edit + Delete; reservation padding bumped from `pr-16` to `pr-28`. The aerials event_type label that previously appeared on the bottom row is removed (now reflected in the top badge row via the discipline-aware Category badge).
+
+**Files modified:** `server/routes/meets.js`, `client/src/pages/MeetDetail.jsx`, `client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `server/index.js`, `CLAUDE.md`
 
 ---
 

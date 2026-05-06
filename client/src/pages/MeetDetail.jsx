@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import api from '../utils/api'
 
@@ -44,7 +44,8 @@ const OFFICIAL_ROLES = [
   'Competition Secretary',
 ]
 
-function EventCard({ event, meetId, onDelete }) {
+function EventCard({ event, meetId, onDelete, onEdit }) {
+  const canEdit = !event.has_runs
   return (
     <div className="card-sm hover:border-slate-600 hover:bg-slate-800/50 transition-all group relative">
       <Link
@@ -60,12 +61,14 @@ function EventCard({ event, meetId, onDelete }) {
               <span className="bg-slate-800 px-2 py-0.5 rounded">
                 {DISCIPLINE_LABEL[event.discipline]}
               </span>
-              <span>{DIVISION_LABEL[event.division]}</span>
+              <span>{event.discipline === 'aerials'
+                ? (EVENT_TYPE_LABEL[event.event_type] || DIVISION_LABEL[event.division])
+                : DIVISION_LABEL[event.division]}</span>
               <span>{GENDER_LABEL[event.gender]}</span>
               <span className={STATUS_COLOR[event.status]}>● {event.status}</span>
             </div>
           </div>
-          <div className="text-right text-xs text-slate-500 pr-16">
+          <div className="text-right text-xs text-slate-500 pr-28">
             <p>{event.athlete_count || 0} athletes</p>
             <p>{event.judge_count || 0} judges</p>
           </div>
@@ -75,7 +78,6 @@ function EventCard({ event, meetId, onDelete }) {
             <>
               <span>Judges: {event.aerials_panel_size || event.num_air_judges || '?'}</span>
               <span>Jumps: {event.num_jumps || 2}</span>
-              {event.event_type && <span>{EVENT_TYPE_LABEL[event.event_type] || event.event_type}</span>}
             </>
           ) : (
             <>
@@ -87,62 +89,111 @@ function EventCard({ event, meetId, onDelete }) {
           )}
         </div>
       </Link>
-      <button
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          if (confirm('WARNING: All data for this event will be permanently deleted. This action cannot be undone. Continue?')) {
-            onDelete(event.id)
-          }
-        }}
-        className="absolute top-3 right-3 text-xs px-2 py-1 rounded border border-red-800 text-red-500 active:bg-red-900/30 active:text-red-400 transition-colors"
-      >
-        Delete
-      </button>
+      <div className="absolute top-3 right-3 flex gap-2">
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (canEdit) onEdit(event)
+          }}
+          disabled={!canEdit}
+          title={canEdit ? '' : 'Cannot edit after scoring has started'}
+          className={`text-xs px-2 py-1 rounded border transition-colors ${
+            canEdit
+              ? 'border-mountain-800 text-mountain-400 active:bg-mountain-900/30'
+              : 'border-slate-800 text-slate-600 cursor-not-allowed opacity-40'
+          }`}
+        >
+          Edit
+        </button>
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (confirm('WARNING: All data for this event will be permanently deleted. This action cannot be undone. Continue?')) {
+              onDelete(event.id)
+            }
+          }}
+          className="text-xs px-2 py-1 rounded border border-red-800 text-red-500 active:bg-red-900/30 active:text-red-400 transition-colors"
+        >
+          Delete
+        </button>
+      </div>
     </div>
   )
 }
 
-function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
+function EventFormModal({ mode = 'create', meetId, events = [], initialEvent = null, onClose, onSave }) {
+  const isEdit = mode === 'edit'
   const anyDivisional = events.some(e => e.is_divisional)
-  const [form, setForm] = useState({
-    discipline: 'mogul',
-    division: 'comp_series',
-    gender: 'M',
-    name: '',
-    num_tl_judges: 3,
-    num_air_judges: 2,
-    num_jumps: 2,
-    has_speed: 1,
-    turns_weight: 0.60,
-    air_weight: 0.20,
-    speed_weight: 0.20,
-    has_small_final: 1,
-    runoff_option: 'runoff_to_8th',
-    component_scoring: 1,
-    score_entry_mode: 'tablet',
-    is_divisional: anyDivisional ? 1 : 0,
-    // v1.18.00 — sanction + aerials config
-    event_type: 'usa_regional',
-    aerials_panel_size: 5,
-    aerials_hj_scores: 0,
-    aerials_reduction_method: 'sum_all',
+  const [form, setForm] = useState(() => {
+    const base = {
+      discipline: 'mogul',
+      division: 'comp_series',
+      gender: 'M',
+      name: '',
+      num_tl_judges: 3,
+      num_air_judges: 2,
+      num_jumps: 2,
+      has_speed: 1,
+      turns_weight: 0.60,
+      air_weight: 0.20,
+      speed_weight: 0.20,
+      has_small_final: 1,
+      runoff_option: 'runoff_to_8th',
+      component_scoring: 1,
+      score_entry_mode: 'tablet',
+      is_divisional: anyDivisional ? 1 : 0,
+      // v1.18.00 — sanction + aerials config
+      event_type: 'usa_regional',
+      aerials_panel_size: 5,
+      aerials_hj_scores: 0,
+      aerials_reduction_method: 'sum_all',
+    }
+    if (!isEdit || !initialEvent) return base
+    const pick = (k, fallback) => (initialEvent[k] !== null && initialEvent[k] !== undefined ? initialEvent[k] : fallback)
+    return {
+      ...base,
+      discipline: pick('discipline', base.discipline),
+      division: pick('division', base.division),
+      gender: pick('gender', base.gender),
+      name: pick('name', ''),
+      num_tl_judges: pick('num_tl_judges', base.num_tl_judges),
+      num_air_judges: pick('num_air_judges', base.num_air_judges),
+      num_jumps: pick('num_jumps', base.num_jumps),
+      has_speed: pick('has_speed', base.has_speed),
+      has_small_final: pick('has_small_final', base.has_small_final),
+      runoff_option: pick('runoff_option', base.runoff_option),
+      component_scoring: pick('component_scoring', base.component_scoring),
+      score_entry_mode: pick('score_entry_mode', base.score_entry_mode),
+      is_divisional: pick('is_divisional', base.is_divisional),
+      event_type: pick('event_type', base.event_type),
+      aerials_panel_size: pick('aerials_panel_size', base.aerials_panel_size),
+      aerials_hj_scores: pick('aerials_hj_scores', base.aerials_hj_scores),
+      aerials_reduction_method: pick('aerials_reduction_method', base.aerials_reduction_method),
+    }
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // Auto-generate event name
-  useEffect(() => {
-    const parts = [
-      DIVISION_LABEL[form.division],
-      GENDER_LABEL[form.gender],
-      DISCIPLINE_LABEL[form.discipline],
-    ]
-    setForm(f => ({ ...f, name: parts.join(' ') }))
-  }, [form.discipline, form.division, form.gender])
+  // Skip auto-name on first render in edit mode so a user-customized name isn't clobbered.
+  const didMount = useRef(false)
 
-  // Auto-set category defaults based on division
+  // Auto-generate event name. Aerials use Event Type label; mogul/dual use Category label.
   useEffect(() => {
+    if (isEdit && !didMount.current) {
+      didMount.current = true
+      return
+    }
+    const parts = form.discipline === 'aerials'
+      ? [EVENT_TYPE_LABEL[form.event_type], GENDER_LABEL[form.gender], 'Aerials']
+      : [DIVISION_LABEL[form.division], GENDER_LABEL[form.gender], DISCIPLINE_LABEL[form.discipline]]
+    setForm(f => ({ ...f, name: parts.filter(Boolean).join(' ') }))
+  }, [form.discipline, form.division, form.gender, form.event_type])
+
+  // Auto-set category defaults based on division (create mode only — don't reset edited events)
+  useEffect(() => {
+    if (isEdit) return
     if (form.division === 'devo') {
       setForm(f => ({ ...f, num_tl_judges: 2, num_air_judges: 1, num_jumps: 1, has_speed: 0, component_scoring: 0 }))
     } else if (form.division === 'rqs_eqs') {
@@ -188,13 +239,16 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
     if (!form.name.trim()) { setError('Name is required'); return }
     setLoading(true)
     try {
-      const event = await api.createEvent(meetId, {
+      const payload = {
         ...form,
         num_tl_judges: parseInt(form.num_tl_judges),
         num_air_judges: parseInt(form.num_air_judges),
         num_jumps: parseInt(form.num_jumps),
-      })
-      onCreate(event)
+      }
+      const result = isEdit
+        ? await api.updateEvent(meetId, initialEvent.id, payload)
+        : await api.createEvent(meetId, payload)
+      onSave(result)
       onClose()
     } catch (err) {
       setError(err.message)
@@ -205,25 +259,16 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }))
 
+  // Aerials uses Event Type as the middle dropdown; mogul/dual use the existing Category options.
+  const isAerials = form.discipline === 'aerials'
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg my-4">
-        <h2 className="font-display text-2xl text-white mb-6">Add Event</h2>
+        <h2 className="font-display text-2xl text-white mb-6">{isEdit ? 'Edit Event' : 'Add Event'}</h2>
         <form onSubmit={submit} className="space-y-4">
 
-          {/* v1.18.00 — Event Type (sanction). Top-level classifier; drives aerials rules. */}
-          <div>
-            <label className="label">Event Type</label>
-            <select className="input" value={form.event_type} onChange={e => set('event_type', e.target.value)}>
-              <option value="usa_regional">USA Regional</option>
-              <option value="usa_national">USA National</option>
-              <option value="fis_other">FIS Other</option>
-              <option value="fis_nac">FIS NAC/NorAm</option>
-              <option value="fis_major">FIS OWG/WSC/WC</option>
-            </select>
-          </div>
-
-          {/* Discipline / Division / Gender */}
+          {/* Discipline / Category (or Event Type for aerials) / Gender */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label">Discipline</label>
@@ -235,12 +280,22 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
             </div>
             <div>
               <label className="label">Category</label>
-              <select className="input" value={form.division} onChange={e => set('division', e.target.value)}>
-                <option value="comp_series">Comp Series</option>
-                <option value="devo" disabled={form.discipline === 'dual_mogul'}>Devo</option>
-                <option value="rqs_eqs" disabled={form.discipline === 'dual_mogul'}>RQS/EQS</option>
-                <option value="fis" disabled>FIS (coming soon)</option>
-              </select>
+              {isAerials ? (
+                <select className="input" value={form.event_type} onChange={e => set('event_type', e.target.value)}>
+                  <option value="usa_regional">USA Regional</option>
+                  <option value="usa_national">USA National</option>
+                  <option value="fis_other">FIS Other</option>
+                  <option value="fis_nac">FIS NAC/NorAm</option>
+                  <option value="fis_major">FIS OWG/WSC/WC</option>
+                </select>
+              ) : (
+                <select className="input" value={form.division} onChange={e => set('division', e.target.value)}>
+                  <option value="comp_series">Comp Series</option>
+                  <option value="devo" disabled={form.discipline === 'dual_mogul'}>Devo</option>
+                  <option value="rqs_eqs" disabled={form.discipline === 'dual_mogul'}>RQS/EQS</option>
+                  <option value="fis" disabled>FIS (coming soon)</option>
+                </select>
+              )}
             </div>
             <div>
               <label className="label">Gender</label>
@@ -261,7 +316,7 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
           </div>
 
           {/* Judge config (mogul/dual mogul only) */}
-          {form.discipline !== 'aerials' && (
+          {!isAerials && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <label className="label">{'T&L Judges'}</label>
@@ -293,7 +348,7 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
           )}
 
           {/* v1.18.00 — Aerials judge config replaces per-component pickers */}
-          {form.discipline === 'aerials' && (() => {
+          {isAerials && (() => {
             const rules = aerialsRulesFor(form.event_type)
             const sizes = []
             for (let n = rules.panelMin; n <= rules.panelMax; n++) sizes.push(n)
@@ -354,13 +409,6 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
             </div>
           )}
 
-          {form.discipline === 'aerials' && (
-            <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-400">
-              Standard aerials: each scoring judge enters Air (0.0&ndash;2.0), Form (0.0&ndash;5.0), and Landing (0.0&ndash;3.0) for each jump.
-              Per jump, total = (sum of kept Air + Form + Landing) &times; DD, truncated to two decimals.
-            </div>
-          )}
-
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="label">Score Entry</label>
@@ -397,7 +445,9 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" disabled={loading} className="btn-primary flex-1">
-              {loading ? 'Adding...' : 'Add Event'}
+              {isEdit
+                ? (loading ? 'Saving...' : 'Save Changes')
+                : (loading ? 'Adding...' : 'Add Event')}
             </button>
           </div>
         </form>
@@ -1006,6 +1056,7 @@ export default function MeetDetail() {
   const [meet, setMeet] = useState(null)
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [editingEvent, setEditingEvent] = useState(null)
   const [editingStatus, setEditingStatus] = useState(false)
   const [showClone, setShowClone] = useState(false)
   const [showCloseExport, setShowCloseExport] = useState(false)
@@ -1056,6 +1107,13 @@ export default function MeetDetail() {
 
   const handleEventCreate = (event) => {
     setMeet(m => ({ ...m, events: [...(m.events || []), event] }))
+  }
+
+  const handleEventEdit = (updated) => {
+    setMeet(m => ({
+      ...m,
+      events: (m.events || []).map(e => (e.id === updated.id ? { ...e, ...updated } : e)),
+    }))
   }
 
   const handleCloned = (newMeet) => {
@@ -1185,7 +1243,7 @@ export default function MeetDetail() {
               <h2 className="font-display text-xl text-slate-400 tracking-wide mb-3">MOGUL EVENTS</h2>
               <div className="grid gap-3">
                 {mogulEvents.map(e => (
-                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} />
+                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} onEdit={setEditingEvent} />
                 ))}
               </div>
             </div>
@@ -1195,7 +1253,7 @@ export default function MeetDetail() {
               <h2 className="font-display text-xl text-slate-400 tracking-wide mb-3">DUAL MOGUL EVENTS</h2>
               <div className="grid gap-3">
                 {dualEvents.map(e => (
-                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} />
+                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} onEdit={setEditingEvent} />
                 ))}
               </div>
             </div>
@@ -1205,7 +1263,7 @@ export default function MeetDetail() {
               <h2 className="font-display text-xl text-slate-400 tracking-wide mb-3">AERIALS EVENTS</h2>
               <div className="grid gap-3">
                 {aerialsEvents.map(e => (
-                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} />
+                  <EventCard key={e.id} event={e} meetId={meetId} onDelete={handleEventDelete} onEdit={setEditingEvent} />
                 ))}
               </div>
             </div>
@@ -1214,11 +1272,23 @@ export default function MeetDetail() {
       )}
 
       {showCreate && (
-        <CreateEventModal
+        <EventFormModal
+          mode="create"
           meetId={meetId}
           events={meet.events || []}
           onClose={() => setShowCreate(false)}
-          onCreate={handleEventCreate}
+          onSave={handleEventCreate}
+        />
+      )}
+
+      {editingEvent && (
+        <EventFormModal
+          mode="edit"
+          meetId={meetId}
+          events={meet.events || []}
+          initialEvent={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onSave={handleEventEdit}
         />
       )}
 
