@@ -337,8 +337,9 @@ router.post('/:id/clone', async (req, res) => {
             num_tl_judges, num_air_judges, has_speed,
             turns_weight, air_weight, speed_weight,
             pace_time, course_length, bracket_size, has_small_final,
-            usss_code, runoff_option, dual_seed_method)
-         VALUES (?,?,?,?,?,?,  'setup', ?,?,?, ?,?,?, ?,?, ?,?, ?, ?,?)`,
+            usss_code, runoff_option, dual_seed_method,
+            event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method)
+         VALUES (?,?,?,?,?,?,  'setup', ?,?,?, ?,?,?, ?,?, ?,?, ?, ?,?, ?,?,?,?)`,
         [
           newEventId, newMeetId,
           ev.discipline, ev.division, ev.gender, ev.name,
@@ -348,6 +349,10 @@ router.post('/:id/clone', async (req, res) => {
           ev.bracket_size || null, ev.has_small_final,
           ev.usss_code || null,
           ev.runoff_option || 'runoff_to_4th', ev.dual_seed_method || 'random',
+          ev.event_type || 'usa_regional',
+          ev.aerials_panel_size || null,
+          ev.aerials_hj_scores || 0,
+          ev.aerials_reduction_method || null,
         ]
       );
       // recordWrite() is intentionally omitted here -- the middleware handles
@@ -829,8 +834,10 @@ async function executeImport(data, zipPath, opts = {}) {
         pace_time, bracket_size, has_small_final, usss_code, runoff_option, dual_seed_method,
         score_spread_threshold, component_scoring, score_entry_mode, course_length,
         qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
-        short_code, pace_time_override, dual_random_seed, order_locked, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        short_code, pace_time_override, dual_random_seed, order_locked,
+        event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [eventMap[e.id], newMeetId, e.discipline ?? null, e.division ?? null, e.gender ?? null, e.name ?? 'Unnamed Event', e.status ?? 'setup',
        e.num_tl_judges ?? 3, e.num_air_judges ?? 2, e.has_speed ?? 1,
        e.turns_weight ?? 0.6, e.air_weight ?? 0.2, e.speed_weight ?? 0.2,
@@ -841,7 +848,8 @@ async function executeImport(data, zipPath, opts = {}) {
        e.qualifier_event_id ? (eventMap[e.qualifier_event_id] ?? null) : null,
        e.finals_event_id ? (eventMap[e.finals_event_id] ?? null) : null,
        e.event_date ?? null, e.num_jumps ?? 2, e.is_divisional ?? 0, e.locked ?? 0,
-       shortCode(), e.pace_time_override ?? null, e.dual_random_seed ?? null, e.order_locked ?? 0]
+       shortCode(), e.pace_time_override ?? null, e.dual_random_seed ?? null, e.order_locked ?? 0,
+       e.event_type ?? 'usa_regional', e.aerials_panel_size ?? null, e.aerials_hj_scores ?? 0, e.aerials_reduction_method ?? null]
     );
   }
 
@@ -861,9 +869,9 @@ async function executeImport(data, zipPath, opts = {}) {
   // Insert judges
   for (const j of (data.judges || [])) {
     await execute(
-      `INSERT INTO judges (id, event_id, name, role, pin, ussa_id, short_code, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      [judgeMap[j.id], eventMap[j.event_id] ?? null, j.name ?? '', j.role ?? '', j.pin ?? null, j.ussa_id ?? null, shortCode()]
+      `INSERT INTO judges (id, event_id, name, role, pin, ussa_id, short_code, judge_number, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [judgeMap[j.id], eventMap[j.event_id] ?? null, j.name ?? '', j.role ?? '', j.pin ?? null, j.ussa_id ?? null, shortCode(), j.judge_number ?? null]
     );
   }
 
@@ -938,19 +946,19 @@ async function executeImport(data, zipPath, opts = {}) {
       `INSERT INTO runs (id, event_id, registration_id, run_number, round,
         bracket_round, bracket_position, course,
         jump1_code, jump1_dd, jump2_code, jump2_dd,
-        turns_score, air_score, speed_score, total_score, run_time,
+        turns_score, air_score, air_score_no_dd, speed_score, total_score, run_time,
         status, run_status, hj_pending,
         tl_carving, tl_abext, tl_upper_body, tl_deduction,
-        manually_entered, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        manually_entered, aerials_model, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [runMap[r.id], eventMap[r.event_id] ?? null, mappedReg,
        r.run_number ?? 1, r.round ?? 'qualification',
        r.bracket_round ?? null, r.bracket_position ?? null, r.course ?? null,
        r.jump1_code ?? null, r.jump1_dd ?? null, r.jump2_code ?? null, r.jump2_dd ?? null,
-       r.turns_score ?? null, r.air_score ?? null, r.speed_score ?? null, r.total_score ?? null,
+       r.turns_score ?? null, r.air_score ?? null, r.air_score_no_dd ?? null, r.speed_score ?? null, r.total_score ?? null,
        r.run_time ?? null, r.status ?? 'pending', r.run_status ?? null, r.hj_pending ?? 0,
        r.tl_carving ?? null, r.tl_abext ?? null, r.tl_upper_body ?? null, r.tl_deduction ?? null,
-       r.manually_entered ?? 0]
+       r.manually_entered ?? 0, r.aerials_model ?? null]
     );
   }
 
@@ -1092,8 +1100,10 @@ async function executeMerge(existingMeetId, data, zipPath) {
           pace_time, bracket_size, has_small_final, usss_code, runoff_option, dual_seed_method,
           score_spread_threshold, component_scoring, score_entry_mode, course_length,
           qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
-          short_code, pace_time_override, dual_random_seed, order_locked, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          short_code, pace_time_override, dual_random_seed, order_locked,
+          event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, existingMeetId, ie.discipline ?? null, ie.division ?? null, ie.gender ?? null, ie.name ?? 'Unnamed Event', ie.status ?? 'setup',
          ie.num_tl_judges ?? 3, ie.num_air_judges ?? 2, ie.has_speed ?? 1,
          ie.turns_weight ?? 0.6, ie.air_weight ?? 0.2, ie.speed_weight ?? 0.2,
@@ -1102,7 +1112,8 @@ async function executeMerge(existingMeetId, data, zipPath) {
          ie.score_spread_threshold ?? 2.0, ie.component_scoring ?? 1, ie.score_entry_mode ?? 'tablet',
          ie.course_length ?? null, null, null,
          ie.event_date ?? null, ie.num_jumps ?? 2, ie.is_divisional ?? 0, ie.locked ?? 0,
-         shortCode(), ie.pace_time_override ?? null, ie.dual_random_seed ?? null, ie.order_locked ?? 0]
+         shortCode(), ie.pace_time_override ?? null, ie.dual_random_seed ?? null, ie.order_locked ?? 0,
+         ie.event_type ?? 'usa_regional', ie.aerials_panel_size ?? null, ie.aerials_hj_scores ?? 0, ie.aerials_reduction_method ?? null]
       );
       summary.events_added++;
     }
@@ -1159,9 +1170,9 @@ async function executeMerge(existingMeetId, data, zipPath) {
       const newId = uuidv4();
       judgeMap[j.id] = newId;
       await execute(
-        `INSERT INTO judges (id, event_id, name, role, pin, ussa_id, short_code, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-        [newId, mappedEvent, j.name ?? '', j.role ?? '', j.pin ?? null, j.ussa_id ?? null, shortCode()]
+        `INSERT INTO judges (id, event_id, name, role, pin, ussa_id, short_code, judge_number, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [newId, mappedEvent, j.name ?? '', j.role ?? '', j.pin ?? null, j.ussa_id ?? null, shortCode(), j.judge_number ?? null]
       );
       summary.judges_added++;
     }
@@ -1326,19 +1337,19 @@ async function executeMerge(existingMeetId, data, zipPath) {
         `INSERT INTO runs (id, event_id, registration_id, run_number, round,
           bracket_round, bracket_position, course,
           jump1_code, jump1_dd, jump2_code, jump2_dd,
-          turns_score, air_score, speed_score, total_score, run_time,
+          turns_score, air_score, air_score_no_dd, speed_score, total_score, run_time,
           status, run_status, hj_pending,
           tl_carving, tl_abext, tl_upper_body, tl_deduction,
-          manually_entered, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          manually_entered, aerials_model, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, mappedReg,
          r.run_number ?? 1, r.round ?? 'qualification',
          r.bracket_round ?? null, r.bracket_position ?? null, r.course ?? null,
          r.jump1_code ?? null, r.jump1_dd ?? null, r.jump2_code ?? null, r.jump2_dd ?? null,
-         r.turns_score ?? null, r.air_score ?? null, r.speed_score ?? null, r.total_score ?? null,
+         r.turns_score ?? null, r.air_score ?? null, r.air_score_no_dd ?? null, r.speed_score ?? null, r.total_score ?? null,
          r.run_time ?? null, r.status ?? 'pending', r.run_status ?? null, r.hj_pending ?? 0,
          r.tl_carving ?? null, r.tl_abext ?? null, r.tl_upper_body ?? null, r.tl_deduction ?? null,
-         r.manually_entered ?? 0]
+         r.manually_entered ?? 0, r.aerials_model ?? null]
       );
       summary.runs_added++;
     }

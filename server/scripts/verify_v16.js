@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // server/scripts/verify_v16.js
 //
-// StickIt v1.6 -- verification script.
+// StickIt verification script (originally v1.6, extended through v1.18.00).
 //
 // No-dependency Node script that exercises server/dual/placement.js
 // and prints PASS/FAIL for each check from the v1.6 spec.  Exits with
@@ -48,8 +48,8 @@ function setEq(a, b) {
 }
 
 console.log('');
-console.log('StickIt v1.6 verification');
-console.log('=========================');
+console.log('StickIt verification (v1.6 + v1.16.x + v1.18.00)');
+console.log('================================================');
 console.log('');
 
 // ---------------------------------------------------------------------------
@@ -348,6 +348,162 @@ try {
     ).length === 18);
 } catch (e) {
   fail('takeUpToRank tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
+// v1.18.00 -- aerials per-judge-per-jump scoring engine + USSS 4110.4.3
+// tie-break + USSS Appendix C 2026 DD chart sentinel
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('Aerials v2 scoring (v1.18.00):');
+
+try {
+  const engine = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+  const { calcAerialsScoreV2, tieBreakAerials, rankResults } = engine;
+
+  // 5-judge panel: drop high + low per component; sum kept; × DD per jump
+  const fiveJudge = calcAerialsScoreV2({
+    judgeScores: [
+      { judge_number: 1, jump: 1, air: 1.5, form: 4.0, landing: 2.5 },
+      { judge_number: 2, jump: 1, air: 1.7, form: 4.2, landing: 2.6 },
+      { judge_number: 3, jump: 1, air: 1.8, form: 4.5, landing: 2.7 },
+      { judge_number: 4, jump: 1, air: 1.4, form: 3.8, landing: 2.4 },
+      { judge_number: 5, jump: 1, air: 1.6, form: 4.1, landing: 2.55 },
+      { judge_number: 1, jump: 2, air: 1.6, form: 4.1, landing: 2.5 },
+      { judge_number: 2, jump: 2, air: 1.8, form: 4.3, landing: 2.7 },
+      { judge_number: 3, jump: 2, air: 1.9, form: 4.6, landing: 2.8 },
+      { judge_number: 4, jump: 2, air: 1.5, form: 3.9, landing: 2.5 },
+      { judge_number: 5, jump: 2, air: 1.7, form: 4.2, landing: 2.6 },
+    ],
+    dd1: 3.0, dd2: 3.5, panelSize: 5, numJumps: 2,
+  });
+  // Hand-computed: J1 kept = (1.5+1.6+1.7) + (4.0+4.1+4.2) + (2.5+2.55+2.6) = 4.8 + 12.3 + 7.65 = 24.75 × 3.0 = 74.25
+  // J2 kept = (1.6+1.7+1.8) + (4.1+4.2+4.3) + (2.5+2.6+2.7) = 5.1 + 12.6 + 7.8 = 25.5 × 3.5 = 89.25
+  check(
+    'calcAerialsScoreV2 5-judge: drop H/L per component, jump1 = 74.25',
+    Math.abs(fiveJudge.jump1Score - 74.25) < 0.001,
+    'got ' + fiveJudge.jump1Score
+  );
+  check(
+    'calcAerialsScoreV2 5-judge: jump2 = 89.25, total = 163.50',
+    Math.abs(fiveJudge.jump2Score - 89.25) < 0.001 && Math.abs(fiveJudge.total - 163.50) < 0.001,
+    `j2=${fiveJudge.jump2Score} total=${fiveJudge.total}`
+  );
+
+  // 3-judge panel with sum_all reduction (USA reduced)
+  const sumAll = calcAerialsScoreV2({
+    judgeScores: [
+      { judge_number: 1, jump: 1, air: 1.5, form: 4.0, landing: 2.5 },
+      { judge_number: 2, jump: 1, air: 1.7, form: 4.2, landing: 2.6 },
+      { judge_number: 3, jump: 1, air: 1.8, form: 4.5, landing: 2.7 },
+    ],
+    dd1: 3.0, dd2: 0, panelSize: 3, reductionMethod: 'sum_all', numJumps: 1,
+  });
+  // sum_all: 5.0 + 12.7 + 7.8 = 25.5 × 3.0 = 76.50
+  check(
+    'calcAerialsScoreV2 3-judge sum_all: jump1 = 76.50',
+    Math.abs(sumAll.jump1Score - 76.50) < 0.001,
+    'got ' + sumAll.jump1Score
+  );
+
+  // 3-judge with drop_high
+  const dropHigh = calcAerialsScoreV2({
+    judgeScores: [
+      { judge_number: 1, jump: 1, air: 1.0, form: 3.0, landing: 2.0 },
+      { judge_number: 2, jump: 1, air: 2.0, form: 5.0, landing: 3.0 },
+      { judge_number: 3, jump: 1, air: 1.5, form: 4.0, landing: 2.5 },
+    ],
+    dd1: 2.0, dd2: 0, panelSize: 3, reductionMethod: 'drop_high', numJumps: 1,
+  });
+  // drop_high per component: air kept (1.0,1.5)=2.5; form kept (3.0,4.0)=7.0; land kept (2.0,2.5)=4.5
+  // sum = 14.0 × 2.0 = 28.00
+  check(
+    'calcAerialsScoreV2 3-judge drop_high: jump1 = 28.00',
+    Math.abs(dropHigh.jump1Score - 28.00) < 0.001,
+    'got ' + dropHigh.jump1Score
+  );
+
+  // airNoDd field (Fix 1) — simple mean per jump, no drop H/L, no DD
+  // For fiveJudge above: meanAir1 = (1.5+1.7+1.8+1.4+1.6)/5 = 1.6, meanAir2 = (1.6+1.8+1.9+1.5+1.7)/5 = 1.7
+  // airNoDd = 1.6 + 1.7 = 3.30 (floored)
+  check(
+    'calcAerialsScoreV2 airNoDd: 5-judge example = 3.30',
+    Math.abs(fiveJudge.airNoDd - 3.30) < 0.001,
+    'got ' + fiveJudge.airNoDd
+  );
+
+  console.log('');
+  console.log('Aerials tie-break (USSS 4110.4.3):');
+
+  // Order: Total -> air_score_no_dd -> Form (turns_score) -> Landing (speed_score)
+  // Case A: same Total, B has higher airNoDd (post-DD favors A) -> B wins
+  const tA = { total_score: 200.0, air_score: 80.0, air_score_no_dd: 10.0, turns_score: 70.0, speed_score: 50.0 };
+  const tB = { total_score: 200.0, air_score: 75.0, air_score_no_dd: 11.0, turns_score: 70.0, speed_score: 50.0 };
+  const r1 = rankResults([tA, tB], 'aerials');
+  check(
+    'aerials tie-break: same Total, higher airNoDd wins (B before A)',
+    r1[0].air_score_no_dd === 11.0 && r1[1].air_score_no_dd === 10.0
+  );
+
+  // Case B: same Total + airNoDd, D higher Form
+  const tC = { total_score: 200.0, air_score: 80.0, air_score_no_dd: 10.0, turns_score: 65.0, speed_score: 55.0 };
+  const tD = { total_score: 200.0, air_score: 80.0, air_score_no_dd: 10.0, turns_score: 70.0, speed_score: 50.0 };
+  const r2 = rankResults([tC, tD], 'aerials');
+  check(
+    'aerials tie-break: same Total + airNoDd, higher Form wins (D before C)',
+    r2[0].turns_score === 70.0 && r2[1].turns_score === 65.0
+  );
+
+  // Case C: legacy fallback (no air_score_no_dd) -> falls back to air_score
+  const tE = { total_score: 100.0, air_score: 50.0, turns_score: 30.0, speed_score: 20.0 };
+  const tF = { total_score: 100.0, air_score: 55.0, turns_score: 30.0, speed_score: 20.0 };
+  const r3 = rankResults([tE, tF], 'aerials');
+  check(
+    'aerials tie-break: legacy fallback to air_score when air_score_no_dd missing',
+    r3[0].air_score === 55.0 && r3[1].air_score === 50.0
+  );
+
+  // Case D: all equal -> tied
+  const tG = { total_score: 100.0, air_score_no_dd: 10.0, turns_score: 30.0, speed_score: 20.0 };
+  const tH = { total_score: 100.0, air_score_no_dd: 10.0, turns_score: 30.0, speed_score: 20.0 };
+  const r4 = rankResults([tG, tH], 'aerials');
+  check(
+    'aerials tie-break: all equal -> both rank 1, second.tied = true',
+    r4[0].rank === 1 && r4[1].rank === 1 && r4[1].tied === true
+  );
+} catch (e) {
+  fail('aerials v2 / tie-break tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
+// USSS Appendix C 2026 aerials DD chart sentinel
+// (loads schema.js's buildAerialsDDChart helper if exported; otherwise
+// just verifies a few well-known DDs are present in the seed function source)
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('USSS Appendix C aerials DD chart:');
+
+try {
+  const fs = require('fs');
+  const schemaSrc = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.js'), 'utf8');
+  const expect = (line) => {
+    if (!schemaSrc.includes(line)) return false;
+    return true;
+  };
+  check("Appendix C: 'S' (Spread Eagle) seeded with DD 1.48",  expect("'S',   dd: 1.48"));
+  check("Appendix C: 'Tk' (Tuck Jump) seeded with DD 1.48",    expect("'Tk',  dd: 1.48"));
+  check("Appendix C: 'bL' (Back Layout) seeded with DD 2.05",  expect("'bL',   dd: 2.05"));
+  check("Appendix C: 'bF' (Back Full) seeded with DD 2.30",    expect("'bF',   dd: 2.30"));
+  check("Appendix C: 'bFF' (Back Full Full) seeded with DD 3.15", expect("'bFF',  dd: 3.15"));
+  check("Appendix C: 'bdFF' (Back Double Full Full) seeded with DD 3.525", expect("'bdFF', dd: 3.525"));
+  check("Appendix C: spin family expansion uses Spin DD + 0.02 for upright bonus",
+    /spinDd \+ 0\.02/.test(schemaSrc));
+  check("Appendix C: spin+upright+grab uses Spin DD + 0.02 + 0.10",
+    /spinDd \+ 0\.02 \+ 0\.10/.test(schemaSrc));
+  check("Appendix C: migration sentinel detects stale S=1.700 placeholder",
+    /Math\.abs\(parseFloat\(checkS\.dd_value\) - 1\.48\)/.test(schemaSrc));
+} catch (e) {
+  fail('Appendix C DD chart tests: ' + e.message);
 }
 
 // ---------------------------------------------------------------------------

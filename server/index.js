@@ -108,7 +108,7 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.17.02' }));
+app.get('/api/version', (req, res) => res.json({ version: 'v1.18.02' }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -191,7 +191,7 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 initSchema().then(() => {
-  server.listen(PORT, () => console.log(`StickIt v1.17.02 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt v1.18.02 ready on port ${PORT}`));
   startScheduledSync();
 }).catch(err => { console.error('Schema init failed:', err); process.exit(1); });
 

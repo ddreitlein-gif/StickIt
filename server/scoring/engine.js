@@ -621,10 +621,19 @@ function calcAerialsScore(params) {
 
   const total = floorToHundredth(airTotal + formScore + landingScore);
 
+  // v1.18.01 — Pre-DD raw air execution score for USSS 4110.4.3 tie-break.
+  // Simple mean per jump (no drop H/L, no DD, no cap). 1-jump events double the
+  // single jump's average so the value remains comparable to 2-jump runs.
+  const meanRaw1 = airJump1Scores.length > 0 ? airJump1Scores.reduce((a, b) => a + b, 0) / airJump1Scores.length : 0;
+  const meanRaw2 = airJump2Scores.length > 0 ? airJump2Scores.reduce((a, b) => a + b, 0) / airJump2Scores.length : 0;
+  const airNoDdRaw = airJump2Scores.length === 0 ? meanRaw1 * 2 : meanRaw1 + meanRaw2;
+  const airNoDd = floorToHundredth(airNoDdRaw);
+
   return {
     jump1Air,
     jump2Air,
     airTotal,
+    airNoDd,
     formScore,
     landingScore,
     total,
@@ -632,6 +641,126 @@ function calcAerialsScore(params) {
     turnsContrib:  formScore,       // stored in turns_score column
     airContrib:    airTotal,        // stored in air_score column
     speedContrib:  landingScore,    // stored in speed_score column
+  };
+}
+
+/**
+ * Calculate aerials score (v2 — per-judge-per-jump model, v1.18.00).
+ *
+ * Each scoring judge submits Air, Form, and Landing for each jump.
+ * Per FIS Judging Handbook 6002/6003.1:
+ *   - Air ranges 0.0-2.0
+ *   - Form ranges 0.0-5.0
+ *   - Landing ranges 0.0-3.0
+ *
+ * Reduction:
+ *   panelSize >= 5: drop 1 high + 1 low per component, sum the rest
+ *   panelSize 2..4: apply operator-selected reductionMethod:
+ *     'sum_all' (default) — sum all judges
+ *     'drop_high'         — drop one highest, sum rest
+ *     'drop_low'          — drop one lowest, sum rest
+ *     'average'           — mean of all judges
+ *
+ * Per jump: total = (sumKeptAir + sumKeptForm + sumKeptLand) * DD, floored to 2dp.
+ * Event total = sum across jumps.
+ *
+ * @param {Object} params
+ * @param {Array<{judge_number:number, jump:number, air:number, form:number, landing:number}>} params.judgeScores
+ * @param {number} params.dd1
+ * @param {number} params.dd2
+ * @param {number} params.panelSize  number of scoring judges
+ * @param {string} [params.reductionMethod]  required only when panelSize <= 4
+ * @param {number} [params.numJumps]  defaults to 2
+ * @returns {Object} { jump1Score, jump2Score, total, perComponent, kept, dropped }
+ */
+function calcAerialsScoreV2(params) {
+  const {
+    judgeScores = [],
+    dd1 = 0,
+    dd2 = 0,
+    panelSize = 0,
+    reductionMethod = 'sum_all',
+    numJumps = 2,
+  } = params;
+
+  function reduce(values) {
+    if (!values || values.length === 0) return { kept: [], dropped: [], sum: 0 };
+    if (panelSize >= 5 && values.length >= 3) {
+      const sorted = [...values].sort((a, b) => a - b);
+      const dropped = [sorted[0], sorted[sorted.length - 1]];
+      const kept = sorted.slice(1, -1);
+      return { kept, dropped, sum: kept.reduce((a, b) => a + b, 0) };
+    }
+    // Reduced panel (2-4) — apply selected method
+    const sorted = [...values].sort((a, b) => a - b);
+    if (reductionMethod === 'drop_low' && values.length >= 2) {
+      const kept = sorted.slice(1);
+      return { kept, dropped: [sorted[0]], sum: kept.reduce((a, b) => a + b, 0) };
+    }
+    if (reductionMethod === 'drop_high' && values.length >= 2) {
+      const kept = sorted.slice(0, -1);
+      return { kept, dropped: [sorted[sorted.length - 1]], sum: kept.reduce((a, b) => a + b, 0) };
+    }
+    if (reductionMethod === 'average') {
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      return { kept: [...values], dropped: [], sum: mean };
+    }
+    // sum_all (default)
+    return { kept: [...values], dropped: [], sum: values.reduce((a, b) => a + b, 0) };
+  }
+
+  function scoreJump(jumpNum, dd) {
+    const rows = judgeScores.filter(r => r.jump === jumpNum);
+    const air  = rows.map(r => Number(r.air)  || 0);
+    const form = rows.map(r => Number(r.form) || 0);
+    const land = rows.map(r => Number(r.landing) || 0);
+
+    const ra = reduce(air);
+    const rf = reduce(form);
+    const rl = reduce(land);
+
+    const totalJudgesScore = ra.sum + rf.sum + rl.sum;
+    const jumpScore = floorToHundredth(totalJudgesScore * (dd || 0));
+
+    return {
+      jumpScore,
+      airSum: floorToHundredth(ra.sum),
+      formSum: floorToHundredth(rf.sum),
+      landSum: floorToHundredth(rl.sum),
+      kept:    { air: ra.kept,    form: rf.kept,    landing: rl.kept },
+      dropped: { air: ra.dropped, form: rf.dropped, landing: rl.dropped },
+    };
+  }
+
+  const j1 = scoreJump(1, dd1);
+  const j2 = numJumps >= 2 ? scoreJump(2, dd2) : null;
+
+  const total = floorToHundredth(j1.jumpScore + (j2 ? j2.jumpScore : 0));
+
+  // v1.18.01 — Pre-DD raw air execution score for USSS 4110.4.3 tie-break.
+  // Simple mean of per-judge air per jump (no drop H/L, no DD, no cap). 1-jump
+  // events double the single jump's average to remain comparable to 2-jump runs.
+  const air1Vals = judgeScores.filter(r => r.jump === 1).map(r => Number(r.air) || 0);
+  const air2Vals = judgeScores.filter(r => r.jump === 2).map(r => Number(r.air) || 0);
+  const meanAir1 = air1Vals.length > 0 ? air1Vals.reduce((a, b) => a + b, 0) / air1Vals.length : 0;
+  const meanAir2 = air2Vals.length > 0 ? air2Vals.reduce((a, b) => a + b, 0) / air2Vals.length : 0;
+  const airNoDdRaw = (numJumps >= 2 && air2Vals.length > 0) ? meanAir1 + meanAir2 : meanAir1 * 2;
+  const airNoDd = floorToHundredth(airNoDdRaw);
+
+  return {
+    jump1Score: j1.jumpScore,
+    jump2Score: j2 ? j2.jumpScore : 0,
+    total,
+    airNoDd,
+    // Aggregates that map to the existing runs columns:
+    airTotal:     floorToHundredth(j1.airSum  + (j2 ? j2.airSum  : 0)),
+    formScore:    floorToHundredth(j1.formSum + (j2 ? j2.formSum : 0)),
+    landingScore: floorToHundredth(j1.landSum + (j2 ? j2.landSum : 0)),
+    perJump: { jump1: j1, jump2: j2 },
+    // Map to standard column names (back-compat with results/scoreboard/overlay):
+    turnsContrib: floorToHundredth(j1.formSum + (j2 ? j2.formSum : 0)),
+    airContrib:   floorToHundredth(j1.airSum  + (j2 ? j2.airSum  : 0)),
+    speedContrib: floorToHundredth(j1.landSum + (j2 ? j2.landSum : 0)),
   };
 }
 
@@ -663,22 +792,29 @@ function tieBreakMogul(a, b) {
 }
 
 /**
- * Aerials tiebreaker -- legacy order retained for now.
- *   1. Total  2. Air (post-DD)  3. Turns  4. Speed
+ * Aerials tiebreaker per USSS 4110.4.3:
+ *   1. Higher total score
+ *   2. Higher air score WITHOUT Degree of Difficulty (raw execution)
+ *   3. Higher Form score   (stored in turns_score column for aerials)
+ *   4. Higher Landing score (stored in speed_score column for aerials)
+ *   else tied -- ranking falls to standings (handled outside the engine)
+ *
+ * Manually-entered or pre-v1.18.01 runs may not have a recorded pre-DD air
+ * value; they fall back to the post-DD air_score for this comparison only.
  */
 function tieBreakAerials(a, b) {
   const aTotal = a.total_score ?? a.total ?? 0;
   const bTotal = b.total_score ?? b.total ?? 0;
-  const aAir = a.air_score ?? a.airRaw ?? 0;
-  const bAir = b.air_score ?? b.airRaw ?? 0;
-  const aTurns = a.turns_score ?? a.turnsRaw ?? 0;
-  const bTurns = b.turns_score ?? b.turnsRaw ?? 0;
-  const aSpeed = a.speed_score ?? a.speedRaw ?? 0;
-  const bSpeed = b.speed_score ?? b.speedRaw ?? 0;
   if (Math.abs(aTotal - bTotal) > 0.001) return bTotal - aTotal;
-  if (Math.abs(aAir - bAir) > 0.001) return bAir - aAir;
-  if (Math.abs(aTurns - bTurns) > 0.001) return bTurns - aTurns;
-  if (Math.abs(aSpeed - bSpeed) > 0.001) return bSpeed - aSpeed;
+  const aAirNoDd = a.air_score_no_dd ?? a.airNoDd ?? a.air_score ?? a.airRaw ?? 0;
+  const bAirNoDd = b.air_score_no_dd ?? b.airNoDd ?? b.air_score ?? b.airRaw ?? 0;
+  if (Math.abs(aAirNoDd - bAirNoDd) > 0.001) return bAirNoDd - aAirNoDd;
+  const aForm = a.turns_score ?? a.turnsRaw ?? a.formScore ?? 0;
+  const bForm = b.turns_score ?? b.turnsRaw ?? b.formScore ?? 0;
+  if (Math.abs(aForm - bForm) > 0.001) return bForm - aForm;
+  const aLanding = a.speed_score ?? a.speedRaw ?? a.landingScore ?? 0;
+  const bLanding = b.speed_score ?? b.speedRaw ?? b.landingScore ?? 0;
+  if (Math.abs(aLanding - bLanding) > 0.001) return bLanding - aLanding;
   return 0;
 }
 
@@ -765,6 +901,7 @@ function applyTierRanks(athletes, discipline, startRank) {
 module.exports = {
   calcMogulScore,
   calcAerialsScore,
+  calcAerialsScoreV2,
   calcDualMogulResult,
   calcDualMogulPointSplit,
   validateDualPointSplit,

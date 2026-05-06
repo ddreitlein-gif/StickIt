@@ -1,6 +1,6 @@
 # StickIt — Freestyle Scoring System
 
-**v1.7.01** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
+**v1.18.02** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
 
 ---
 

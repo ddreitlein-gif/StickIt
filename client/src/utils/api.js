@@ -55,7 +55,10 @@ export const api = {
   // Judges
   getJudges: (eventId) => apiFetch(`/events/${eventId}/judges`),
   addJudge: (eventId, data) => apiFetch(`/events/${eventId}/judges`, { method: 'POST', body: data }),
+  updateJudge: (eventId, id, data) => apiFetch(`/events/${eventId}/judges/${id}`, { method: 'PUT', body: data }),
   removeJudge: (eventId, id) => apiFetch(`/events/${eventId}/judges/${id}`, { method: 'DELETE' }),
+  // v1.18.00 — Aerials v2 panel seeding
+  seedAerialsJudges: (eventId, data = {}) => apiFetch(`/events/${eventId}/judges/seed-aerials`, { method: 'POST', body: data }),
 
   // Runs
   getRuns: (eventId, params = {}) => {

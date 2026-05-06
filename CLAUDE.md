@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.17.02
+**Current version:** v1.18.02
 
 ## Commands
 
@@ -61,11 +61,15 @@ Zip destination: `/Users/daviddreitlein/Desktop/Scoring Server/Scoring Zip Files
 
 ### Version String
 
-The version string lives in `server/index.js` (~line 97):
+The version string lives in **two** places in `server/index.js` (~line 111 and ~line 194):
 ```js
-console.log(`StickIt v1.7.01 ready on port ${PORT}`)
+app.get('/api/version', (req, res) => res.json({ version: 'v1.18.00' }));
+// ...
+server.listen(PORT, () => console.log(`StickIt v1.18.00 ready on port ${PORT}`));
 ```
-Also displayed in `client/src/components/Layout.jsx` sidebar. Bump both on every release.
+Also displayed in `client/src/components/Layout.jsx` sidebar (~line 185). The About modal reads from `/api/version` automatically. Bump all three on every release.
+
+`package.json` versions in `client/` and `server/` are kept in sync with the app version too (set to `1.18.00` as of v1.18.00).
 
 ### Verification
 
@@ -107,14 +111,26 @@ WebSocket endpoint `/ws` handles live scoring. Clients subscribe to a specific `
 
 ### Scoring Engine (`server/scoring/engine.js`)
 
-Total = Turns + Air + Speed (max 100.0):
+**Mogul** — Total = Turns + Air + Speed (max 100.0):
 - **Turns (max 60):** Sum the 3 counting T&L judge scores (5-judge format) or drop-high/drop-low and sum the 3 counting scores (7-judge format), per FIS JH 6203
 - **Air (max 20):** Per-jump average of `(judge_score × DD)` summed across jumps, capped at 20 pts (FIS JH 6204). Single-jump-in-2-jump-event capped at 10 per USSS 4210.2.2
 - **Speed (max 20):** `max(0, 48 − 32 × (run_time / pace_time))` capped at 20, per USSS / FIS ICR 4206.3. `pace_time` derives from course length and pace standard (USSS 9.70 / 8.20 m/s; FIS 10.30 / 9.00 m/s)
 
-All published values are truncated (floor) to 2 decimals per FIS rules; DDs preserved at full precision.
+Mogul tie-break per FIS ICR 4207.3: Total → Turns → Air-no-DD (raw execution, stored in `runs.air_score_no_dd`) → Speed.
 
-Aerials use a separate scoring path. Dual mogul uses numbered judge 5-point split scoring (defined in `dual/placement.js`).
+**Aerials v2 (default for events created at or after v1.18.00)** — Per FIS Judging Handbook 6004 / USSS 4110, every scoring judge submits Air (0.0–2.0), Form (0.0–5.0), Landing (0.0–3.0) for each jump. Per jump:
+```
+total_judges_score  =  sumKept(Air) + sumKept(Form) + sumKept(Landing)
+jump_score          =  floor(total_judges_score × DD, 2dp)
+event_total         =  sum across jumps
+```
+Reduction rule: panels of 5+ drop high+low per component automatically; panels of 2–4 use an operator-selected `aerials_reduction_method` (`sum_all` default, `drop_high`, `drop_low`, `average`). v2 events are detected by `events.aerials_panel_size IS NOT NULL`; runs carry `aerials_model='v2'`. Engine entry point: `calcAerialsScoreV2`. Tie-break per USSS 4110.4.3: Total → Air-no-DD → Form → Landing.
+
+**Aerials legacy (pre-v1.18.00 events)** — `events.aerials_panel_size IS NULL`; runs carry `aerials_model=NULL`. Component-specific judge roles (`AirJudgeN`/`FormJudgeN`/`LandingJudgeN`), single Form/Landing per run, Air-only DD multiplication. Engine entry point: `calcAerialsScore`. Read-only for historical results — new aerials events all use v2.
+
+**Dual mogul** uses numbered judge 5-point split scoring (defined in `server/scoring/engine.js` `calcDualMogulPointSplit` and `dual/placement.js` for bracket seeding).
+
+All published values are truncated (floor) to 2 decimals per FIS rules; DDs preserved at full precision.
 
 ### Key Server Route Files
 
@@ -159,6 +175,106 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.18.00 Feature Notes
+
+### Aerials Judging Redesign — Per-Judge-Per-Jump Scoring + Event Type Sanction (v1.18.00)
+
+Major rewrite of the aerials scoring path. **Mogul and dual mogul are completely unchanged** — every modification is gated on `events.discipline === 'aerials'` or fires only on new aerials columns. Sourced from FIS ICR Book VI (Sept 2025), FIS Freestyle Judging Handbook (Oct 2025), FIS Solution Manual v1.5, and the 2026 USSS Freestyle Competition Guide.
+
+**Core change: judging model.** Aerials previously had separate per-component judge roles (`AirJudge1-3`, `FormJudge1-3`, `LandingJudge1-3`) where each judge entered only one component. The reviewed rule books are explicit that in standard aerials, **every scoring judge independently evaluates Air, Form, and Landing for each jump.** Component-specific roles were inconsistent with the rules. v1.18.00 introduces a single role `AeJudgeN` (numbered 1..N where N = panel size). Each judge submits Air (0.0–2.0), Form (0.0–5.0), Landing (0.0–3.0) for each jump.
+
+**Event Type sanction field.** New `events.event_type` column (default `usa_regional`) classifies the event by sanction. Each value drives the allowed aerials panel sizes and HJ-scoring rule:
+
+| Event Type            | Panel Size | HJ may score? |
+|-----------------------|-----------:|:--------------|
+| FIS OWG/WSC/WC        | 5–7        | No            |
+| FIS NAC/NorAm         | 5–7        | No            |
+| FIS Other             | 5 (locked) | No            |
+| USA National          | 2–5        | No            |
+| USA Regional (default)| 2–5        | Yes           |
+
+Mogul and dual mogul events also get an event_type field but it does not affect their scoring logic in this release. Default for all new events is `usa_regional`.
+
+**Reduction rule.** Per FIS Judging Handbook 6003.1 for the standard 5-judge format, drop the highest and lowest score per component independently, then sum the kept three. v1.18.00 extends this naturally for 6– and 7–judge FIS panels (drop 1 high + 1 low, keep the middle 4 or 5 — selected automatically by panel size, no operator config). For USA reduced panels (2/3/4 scoring judges), the operator must pick a `aerials_reduction_method` — default `sum_all` (no drops), with `drop_high`, `drop_low`, and `average` available. The selection prints on the calculation report.
+
+**Scoring formula.** Per jump:
+```
+total_judges_score  =  sumKept(Air) + sumKept(Form) + sumKept(Landing)
+jump_score          =  floor(total_judges_score × DD, 2dp)
+event_total         =  sum across jumps
+```
+
+**Compliance — USSS 4110 / FIS JH 6004 (Form & Landing per-jump, DD-multiplied).** The v2 formula above multiplies the per-jump sum of Air + Form + Landing by per-jump DD, exactly as the rule books specify. This satisfies Fix 5 of the rules-compliance audit (`Claude Output/StickIt_Rules_Compliance_Fixes.md`) for every aerials event created at or after v1.18.00. Pre-v1.18.00 ("legacy") aerials events with `aerials_model IS NULL` still read through `calcAerialsScore`, which computes a single Form/Landing per run and does not DD-multiply them — those events render historical results unchanged but cannot be retroactively recomputed (per-jump Form/Landing was never collected). New aerials events all use the rule-correct v2 path.
+
+**Database (additive migrations only):**
+- `events.event_type TEXT NOT NULL DEFAULT 'usa_regional'`
+- `events.aerials_panel_size INTEGER` — # of scoring judges (set on aerials only)
+- `events.aerials_hj_scores INTEGER NOT NULL DEFAULT 0` — USA Regional flag
+- `events.aerials_reduction_method TEXT` — `'sum_all' | 'drop_high' | 'drop_low' | 'average'`
+- `judges.judge_number INTEGER` — 1..N matching the `AeJudgeN` slot
+- `runs.aerials_model TEXT` — `'v2'` for new model, `NULL` for legacy. Tells the engine which path to use.
+
+**Engine.** New `calcAerialsScoreV2(params)` in `server/scoring/engine.js` accepts a `judgeScores: [{ judge_number, jump, air, form, landing }]` array, applies the reduction rule, multiplies by per-jump DD, sums jumps, and floors to 2dp. The legacy `calcAerialsScore` is left untouched — runs with `aerials_model IS NULL` continue to use it, so historical events read identically.
+
+**Score types.** New `judge_scores.score_type` values: `ae_air_j1`, `ae_air_j2`, `ae_form_j1`, `ae_form_j2`, `ae_land_j1`, `ae_land_j2`. Score-submit endpoint validates ranges per the FIS handbook. Legacy `air_jump1` / `air_jump2` / `form` / `landing` types continue to work for legacy events.
+
+**Per-judge tablet URLs.** The aerials tablet now mirrors moguls: each judge gets their own short-code URL `/aerials-judge/<eventCode>/<judgeShortCode>`. The legacy shared URL `/aerials-judge/<eventCode>` still works as a fallback for legacy events (and renders the legacy single-component-per-judge UI). The new tablet shows two jump panels (Air/Form/Landing per jump) with quick-tap buttons, and a separate Submit Jump 1 / Submit Jump 2 button.
+
+**Seeding.** New `POST /events/:id/judges/seed-aerials` endpoint wipes existing aerials judges and creates `aerials_panel_size` rows with role `AeJudge1..N`, fresh `short_code`s, and `judge_number = 1..N`. The Event Setup tab gets a "Seed N-Judge Aerials Panel" button.
+
+**HJ tablet.** A new aerials grid panel renders above the existing 3-column layout when `event.aerials_panel_size IS NOT NULL`. Rows = scoring judges, columns = (J1 Air/Form/Land, J2 Air/Form/Land). Computed Form/Air/Landing totals appear at the bottom once `hj_pending` or `complete`. Approve/Send-back buttons unchanged.
+
+**Public scoreboard.** Click-to-expand judge breakdown reads from a new `aeRows` field on the `/results/judge-scores` response and renders a per-judge-per-jump table for v2 events. Falls through to the legacy TL/A1/A2 columns for older events.
+
+**PDF.** `event-results` PDF now prints a v2 calculation header for aerials events: event type, panel size, reduction method, and "truncated to 2dp" notation.
+
+**Out of scope (deferred):** PDF/CSV exports do NOT yet include per-judge-per-jump columns for v2 aerials — only the aggregate Air/Form/Landing totals appear, mapped to existing `runs.air_score / turns_score / speed_score` columns. The Calculation Report can still be reconstructed from the live HJ grid + the new aerials header block. Aerials team events are out of scope for this release.
+
+**Files modified:** `server/db/schema.js`, `server/scoring/engine.js`, `server/routes/events.js`, `server/routes/meets.js`, `server/routes/judges.js`, `server/routes/runs.js`, `server/routes/results.js`, `server/routes/pdf.js`, `server/index.js`, `client/src/pages/MeetDetail.jsx`, `client/src/pages/EventDetail.jsx`, `client/src/pages/AerialsJudgeTablet.jsx`, `client/src/pages/HeadJudgeTablet.jsx`, `client/src/components/public/AthleteCard.jsx`, `client/src/utils/api.js`, `client/src/App.jsx`, `client/src/components/Layout.jsx`, `CLAUDE.md`
+
+### Aerials Tie-Break — USSS 4110.4.3 Compliance (v1.18.01)
+
+Brought aerials tie-breaking into compliance with USSS 4110.4.3. Previous order was Total → Air **post-DD** → Turns → Speed; the rule requires Total → Air **without DD** → Form → Landing. The post-DD comparison can produce a different winner from the rule-correct order, so tied finishes were being decided incorrectly.
+
+**Engine — `tieBreakAerials` rewrite (`server/scoring/engine.js`):** Now compares Total → `air_score_no_dd` → Form (`turns_score` column for aerials) → Landing (`speed_score` column for aerials), each with 0.001 epsilon. Manually-entered or pre-v1.18.01 runs missing `air_score_no_dd` fall back to `air_score` (post-DD) for the comparison only.
+
+**Engine — `airNoDd` added to aerials returns:** Both `calcAerialsScore` (legacy) and `calcAerialsScoreV2` now return an `airNoDd` field — simple mean per jump (no drop H/L, no DD, no cap), 1-jump events double the single jump's mean. Mirrors the v1.16.23 mogul backfill formula. For v2 events, this is `avg(per-judge air per jump 1) + avg(per-judge air per jump 2)`.
+
+**Schema backfill — `backfillAirScoreNoDd` extended (`server/db/schema.js`):** The existing v1.16.23 backfill already populated `air_score_no_dd` for legacy `air_jump1`/`air_jump2` score types (moguls + legacy aerials). v1.18.01 extends it to also try v2 score types (`ae_air_j1`/`ae_air_j2`) for any aerials v2 run with NULL `air_score_no_dd`.
+
+**Routes — `air_score_no_dd` persisted on every aerials write path (`server/routes/runs.js`):** `tryFinalizeAerials` (legacy), `tryFinalizeAerialsV2`, manual-entry POST, and edit-score POST all now write `air_score_no_dd` for aerials runs (previously forced to NULL for aerials).
+
+**Files modified:** `server/scoring/engine.js`, `server/db/schema.js`, `server/routes/runs.js`
+
+### USSS Appendix C 2026 Aerials DD Chart (v1.18.02)
+
+Replaced the placeholder aerials DD chart in `seedAerialsDDs` with the full USSS Appendix C chart from page 99 of the 2026 USSS Freestyle Competition Guide. Pre-v1.18.02 the seed had a "representative" set with several wrong values (`S=1.700` should be `1.48`, `bL=2.090` should be `2.05`, `bF=2.090` should be `2.30`, `bFF=2.360` should be `3.15`) and was missing many codes (`Tk`, `Pk`, `D`, `T`, `X`, `G`, `dG`, `bP`, `bX`, `bTT`, `bLT`, `bLL`, `bFT`, `bLF`, `bdFF`, plus the spin family).
+
+**`buildAerialsDDChart` helper (`server/db/schema.js`):** Transcribes the chart's 29 base entries verbatim. The spin family is expanded programmatically: `Spin DD + 0.02` for each `Spin × Upright` combination (3/7/10 × {S, D, T, X, G, Tk, Pk}), `Spin DD + 0.02 + 0.10` for each `Spin × Upright × Grab` combination. 71 rows total (29 base + 42 spin-family). `bdFF` and its alias `bFdF` both seeded at 3.525.
+
+**Startup migration (mirrors v1.16.08 mogul DD pattern):** Sentinel detects stale (`S` row not at 1.48) or incomplete (`Tk` row absent) charts; on either, deletes all `discipline='aerials'` rows and re-seeds. Idempotent: subsequent boots are no-ops.
+
+**Files modified:** `server/db/schema.js`
+
+### Aerials Form & Landing Per-Jump (Fix 5 satisfied by v1.18.00) (v1.18.02)
+
+USSS 4110 / FIS JH 6004 require Form and Landing to be per-jump and DD-multiplied (same as Air). The v1.18.00 v2 redesign already implements this — `calcAerialsScoreV2` collects per-jump Form/Landing and applies per-jump DD via `(sumKept(Air) + sumKept(Form) + sumKept(Landing)) × DD` per jump. Therefore Fix 5 is satisfied for every aerials event created at or after v1.18.00. Pre-v1.18.00 ("legacy") aerials events with `aerials_model IS NULL` continue to use `calcAerialsScore`, which computes a single Form/Landing per run without DD multiplication. They render historical results unchanged but cannot be retroactively recomputed (per-jump Form/Landing was never collected on those runs). New aerials events all use the rule-correct v2 path. **No code changes** for this fix — documentation only.
+
+### Cleanup Pass (v1.18.02)
+
+Comprehensive code review surfaced 14 distinct findings across server, client, and docs. Net result of the approved cleanup pass:
+
+- **Meet import/merge** (`server/routes/meets.js`): added the v1.18.00 columns (`event_type`, `aerials_panel_size`, `aerials_hj_scores`, `aerials_reduction_method`) to event INSERTs, `judge_number` to judge INSERTs, and `aerials_model` + `air_score_no_dd` to run INSERTs. Round-tripping a v1.18.00 meet through export → import now preserves all v2 aerials configuration. (Same bug pattern as v1.16.05.)
+- **Manual / edit / reject paths** (`server/routes/runs.js`): the legacy-shape POST `/runs/manual` and POST `/:runId/manual-score` now refuse v2 aerials events with a clear error directing the operator to the per-judge tablets — the flat `form_scores`/`landing_scores` payload can't carry per-judge-per-jump data. The reject-score path (POST `/:runId/scores/:judgeScoreId/reject`) now correctly recomputes partial scores via `calcAerialsScoreV2` on v2 events.
+- **About modal version** (`client/src/components/Layout.jsx`): the About panel now fetches version dynamically from `/api/version` instead of hardcoding the wrong value.
+- **README.md, package.json**: bumped to v1.18.00 to match the app.
+- **MeetDetail event-create modal** (`client/src/pages/MeetDetail.jsx`): switching discipline away from aerials now resets `aerials_panel_size`/`aerials_hj_scores`/`aerials_reduction_method` to defaults so a later switch back doesn't carry stale state.
+- **`verify_v16.js`**: header updated to reflect coverage through v1.18.00; added 18 new checks (5 for `calcAerialsScoreV2` correctness with various panel sizes and reduction methods, 4 for the new `tieBreakAerials` USSS 4110.4.3 order including legacy fallback, 9 for the USSS Appendix C chart sentinel values + spin-family formula). Total now 50/50 passing.
+
+**Files modified:** `server/routes/meets.js`, `server/routes/runs.js`, `client/src/components/Layout.jsx`, `client/src/pages/MeetDetail.jsx`, `README.md`, `client/package.json`, `server/package.json`, `server/scripts/verify_v16.js`, `CLAUDE.md`
 
 ---
 
@@ -1318,96 +1434,7 @@ To enable authentication in a future build:
 
 ---
 
-## v1.15.02 Feature Notes
-
-### TD Report Improvements (v1.15.02)
-
-**Officials from first event:** TD Report now pulls officials from the first event's per-event officials (ordered by `event_date, created_at`) instead of meet-level officials. If other events have different officials for the same role, both are shown with discipline suffixes: `"Smith, John 12345 [M] / Jones, Bob 67890 [DM]"`. Falls back to meet-level officials for legacy meets.
-
-**Judges field:** Pre-populated multiline field (5 lines) listing all judges from the first event with role, name, and USSS ID. Differences from other events appended automatically.
-
-**Type of Competition auto-fill:** Now lists disciplines present in the meet (e.g., `"Moguls, Dual Moguls"`). Appends `DIC` if any event is a divisional championship. Field remains editable.
-
-**Event codes with discipline suffix:** WOMEN and MEN event code boxes now display codes with discipline labels (`U12345 M`, `U67890 DM`, `U11111 A`). Codes split across two lines within the box to prevent overflow.
-
-### Copy Officials from Other Event (v1.15.02)
-
-New button on the Event Officials panel header: "Copy Officials from Other Event". Shows a dropdown of other events in the same meet. Copies all officials from the selected event, skipping roles already filled in the target event. Auto-propagates Head Judge to judges table.
-
-**New endpoint:** `POST /meets/:meetId/officials/copy-from-event` with `{ sourceEventId, targetEventId }`
-
-**Files modified:** `server/routes/pdf.js`, `server/routes/officials.js`, `client/src/pages/EventDetail.jsx`, `client/src/utils/api.js`, `client/src/components/Layout.jsx`, `server/index.js`
-
----
-
-## v1.15.01 Feature Notes
-
-### Bib Assignment Improvements (v1.15.01)
-
-**Assign Bibs button restyled:** The "Assign Bibs" button in the Run Order header bar now uses a solid `bg-mountain-600` blue background with bold text, making it visually distinct from the other ghost-styled buttons.
-
-**Exclude numbers:** When "Generate by Run Order" or "Generate Randomly" is selected in the Assign Bib Numbers modal, a new "Exclude numbers" text input appears. Enter comma-separated bib numbers (e.g. `1,11,18,25`) to skip lost or missing bibs during assignment. Excluded numbers are also respected during "Fill In Missing" operations.
-
-**Import/Export bib numbers:** Two new buttons in the Assign Bib Numbers modal footer:
-- **Import from Athlete Database** — pulls `athletes.bib` values into the current event's `registrations.bib_number`
-- **Export to Athlete Database** — pushes the event's `registrations.bib_number` values into `athletes.bib`
-
-**Auto-sync removed:** Editing an athlete's bib on the Athletes page no longer cascades to registrations in setup-status events. CSV import no longer pulls bibs from `athletes.bib` — only uses the CSV column. Bib sync between events and the athlete database is now fully manual via Import/Export.
-
-**New endpoints:** `POST /events/:eventId/registrations/import-bibs-from-athletes`, `POST /events/:eventId/registrations/export-bibs-to-athletes`
-
-**Conflict dialog fix:** "Fill In Missing" description and button now hidden when all athletes already have bibs (noBibCount = 0).
-
-**Autosave backup fix:** `VACUUM INTO` no longer fails with "output file already exists" when multiple writes occur within the same second. Backup is skipped if the destination file already exists.
-
-**Files modified:** `client/src/components/BibAssignModal.jsx`, `client/src/pages/EventDetail.jsx`, `server/routes/registrations.js`, `server/routes/athletes.js`, `client/src/utils/api.js`, `server/db/autosave.js`
-
-### Shorter Tablet URLs (v1.15.01)
-
-Tablet URLs (judge, head judge, timekeeper, scoreboard, overlay) now use 6-character alphanumeric codes instead of full UUIDs, making them much easier to type manually.
-
-**Before:** `http://192.168.1.5:3001/judge/9adfaabe-77eb-46b8-af2c-b1b6b8e3b27b?judge=c4f987ec-2967-47f9-8d67-87a2f4c1`
-**After:** `http://192.168.1.5:3001/judge/a3k9m2?judge=f8n4p1`
-
-**Database:** New `short_code TEXT` column on `meets`, `events`, and `judges` tables. Existing rows backfilled on startup. New records get codes automatically.
-
-**Resolve endpoint:** `GET /api/resolve?event=abc123&judge=def456&meet=ghi789` returns `{ eventId, judgeId, meetId }` with full UUIDs. Used by tablet components on mount.
-
-**Client hook:** `useResolveIds()` in `client/src/hooks/useResolveIds.js` — shared hook used by all 6 tablet components to resolve short codes before making API calls.
-
-**Files modified:** `server/db/schema.js`, `server/index.js`, `server/routes/meets.js`, `server/routes/events.js`, `server/routes/judges.js`, `client/src/pages/EventDetail.jsx`, `client/src/pages/JudgeTablet.jsx`, `client/src/pages/HeadJudgeTablet.jsx`, `client/src/pages/TimekeeperTablet.jsx`, `client/src/pages/Scoreboard.jsx`, `client/src/pages/Overlay.jsx`, `client/src/pages/AerialsJudgeTablet.jsx`, `client/src/hooks/useResolveIds.js` (new)
-
-### UI Cleanup (v1.15.01)
-
-**16 Down button removed:** Removed from the Run Order header bar. This functionality is now handled in the Phases menu.
-
-**Files modified:** `client/src/pages/EventDetail.jsx`
-
----
-
-## v1.15.00 Feature Notes
-
-### Component Scoring PDF Redesign (v1.15.00)
-
-Complete visual redesign of the "Detailed Results with Component Scoring" PDF report (`POST /api/pdf/event-results-component`) for improved readability.
-
-**Color-coded row families:** TL rows use a blue color family (header `#1B3A5C`, sub-header `#2a5a8a`, data `#e4edf7`/`#edf3fb`). Air rows use a warm sand color family (header `#5C4A1B`, sub-header `#7a6530`, data `#f5edda`/`#faf3e4`). Identity columns use neutral `#f5f7fa`/`#ffffff`.
-
-**Aligned column grid:** Air row columns (Jump Code, DD, Air Score) now match TL judge group widths exactly (`jumpGroupW = tlJudgeW = 126pt`). Pre-computed `tlSeps[]` array used for ALL vertical separator lines across headers, TL data rows, and Air data rows — eliminates prior misalignment.
-
-**Final Score column:** New column at the far right edge (`mL + usable - 48pt`) showing the event total score. Run Tot column preserved in its original position on the air row.
-
-**Header gap fix:** TL header background now extends from identity area to Final Score column using `finalScoreX - (mL + idW)`, eliminating the 63pt white gap that existed between T&L sum and Final Score.
-
-**Club name wrapping fix:** Identity background painted once for both TL and Air rows (height = `rowH * 2`) from Row 1. Air row background only covers the scoring area (`mL + idW` to `finalScoreX`), preventing it from painting over wrapped club name text.
-
-**Layout constants:** `colPlace=22, colBib=24, colGp=22, colName=95, colClub=60, idW=223, tlJudgeW=126, colComp=24, colTot=30, colTLSum=32, colFinalScore=48, rowH=16, headerH=30, fontSize=8`.
-
-**Files modified:** `server/routes/pdf.js`
-
----
-
-> **Older version notes (v1.7.00 – v1.14.00):** See [CHANGELOG.md](CHANGELOG.md)
+> **Older version notes (v1.7.00 – v1.15.02):** See [CHANGELOG.md](CHANGELOG.md)
 
 ---
 

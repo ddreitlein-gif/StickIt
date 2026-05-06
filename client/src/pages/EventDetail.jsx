@@ -10,7 +10,10 @@ const ROLE_LABELS = {
   TL1:'T&L 1', TL2:'T&L 2', TL3:'T&L 3',
   Air1:'Air 1', Air2:'Air 2',
   HJ:'Head Judge',
-  // Aerials roles
+  // Aerials v2 (v1.18.00) — single-role panel, numbered
+  AeJudge1:'Judge 1', AeJudge2:'Judge 2', AeJudge3:'Judge 3', AeJudge4:'Judge 4',
+  AeJudge5:'Judge 5', AeJudge6:'Judge 6', AeJudge7:'Judge 7',
+  // Aerials legacy roles
   AirJudge1:'Air Judge 1', AirJudge2:'Air Judge 2', AirJudge3:'Air Judge 3',
   FormJudge1:'Form Judge 1', FormJudge2:'Form Judge 2', FormJudge3:'Form Judge 3',
   LandingJudge1:'Landing Judge 1', LandingJudge2:'Landing Judge 2', LandingJudge3:'Landing Judge 3',
@@ -22,7 +25,10 @@ const ROLE_COLOR = {
   TL1:'text-sky-400', TL2:'text-sky-400', TL3:'text-sky-400',
   Air1:'text-amber-400', Air2:'text-amber-400',
   HJ:'text-emerald-400',
-  // Aerials roles
+  // Aerials v2 (v1.18.00)
+  AeJudge1:'text-cyan-400', AeJudge2:'text-cyan-400', AeJudge3:'text-cyan-400',
+  AeJudge4:'text-cyan-400', AeJudge5:'text-cyan-400', AeJudge6:'text-cyan-400', AeJudge7:'text-cyan-400',
+  // Aerials legacy
   AirJudge1:'text-amber-400', AirJudge2:'text-amber-400', AirJudge3:'text-amber-400',
   FormJudge1:'text-sky-400',  FormJudge2:'text-sky-400',  FormJudge3:'text-sky-400',
   LandingJudge1:'text-purple-400', LandingJudge2:'text-purple-400', LandingJudge3:'text-purple-400',
@@ -52,16 +58,24 @@ function JudgePanel({ event, judges, onRefresh }) {
     for (const r of dualRoles) { if (!usedRoles.has(r)) availableRoles.push(r) }
     if (!usedRoles.has('HJ')) availableRoles.push('HJ')
   } else if (event.discipline === 'aerials') {
-    // Aerials: Air judges (use num_air_judges), Form judges (use num_tl_judges as form count),
-    // Landing judges (use num_air_judges as landing count), and HJ
-    for (let i = 1; i <= event.num_air_judges; i++) {
-      const r = `AirJudge${i}`;     if (!usedRoles.has(r)) availableRoles.push(r)
-    }
-    for (let i = 1; i <= event.num_tl_judges; i++) {
-      const r = `FormJudge${i}`;    if (!usedRoles.has(r)) availableRoles.push(r)
-    }
-    for (let i = 1; i <= event.num_air_judges; i++) {
-      const r = `LandingJudge${i}`; if (!usedRoles.has(r)) availableRoles.push(r)
+    if (event.aerials_panel_size) {
+      // v1.18.00 — Aerials v2: AeJudgeN roles up to panel size. Use the
+      // "Seed Aerials Panel" button below to bulk-create with default names,
+      // or add them individually via the Add Judge form.
+      for (let i = 1; i <= event.aerials_panel_size; i++) {
+        const r = `AeJudge${i}`; if (!usedRoles.has(r)) availableRoles.push(r)
+      }
+    } else {
+      // Legacy aerials event: original per-component roles
+      for (let i = 1; i <= (event.num_air_judges || 3); i++) {
+        const r = `AirJudge${i}`;     if (!usedRoles.has(r)) availableRoles.push(r)
+      }
+      for (let i = 1; i <= (event.num_tl_judges || 3); i++) {
+        const r = `FormJudge${i}`;    if (!usedRoles.has(r)) availableRoles.push(r)
+      }
+      for (let i = 1; i <= (event.num_air_judges || 3); i++) {
+        const r = `LandingJudge${i}`; if (!usedRoles.has(r)) availableRoles.push(r)
+      }
     }
   } else {
     for (let i = 1; i <= event.num_tl_judges;  i++) { const r = `TL${i}`;  if (!usedRoles.has(r)) availableRoles.push(r) }
@@ -79,12 +93,30 @@ function JudgePanel({ event, judges, onRefresh }) {
   const addJudge = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) { setError('Name is required'); return }
-    try { await api.addJudge(event.id, form); setForm(f => ({ ...f, name: '', pin: '', ussa_id: '' })); setError(''); onRefresh() }
+    // v1.18.00 — derive judge_number from AeJudgeN role so per-judge tablet URLs map correctly
+    const m = /^AeJudge(\d+)$/.exec(form.role)
+    const payload = m ? { ...form, judge_number: parseInt(m[1]) } : form
+    try { await api.addJudge(event.id, payload); setForm(f => ({ ...f, name: '', pin: '', ussa_id: '' })); setError(''); onRefresh() }
     catch (err) { setError(err.message) }
   }
 
   const handleJudgeUsssSelect = (person) => {
     setForm(f => ({ ...f, name: `${person.last_name}, ${person.first_name}`, ussa_id: person.ussa_id || '' }))
+  }
+
+  // v1.18.00 — Aerials v2: Seed Panel button replaces the per-component role picker.
+  const isAerialsV2 = event.discipline === 'aerials' && event.aerials_panel_size != null
+  const [seeding, setSeeding] = useState(false)
+  const [seedError, setSeedError] = useState('')
+  const seedAerials = async () => {
+    setSeedError('')
+    if (!confirm(`Seed ${event.aerials_panel_size} scoring judges? This replaces any existing aerials judges.`)) return
+    setSeeding(true)
+    try {
+      await api.seedAerialsJudges(event.id, { panel_size: event.aerials_panel_size })
+      onRefresh()
+    } catch (e) { setSeedError(e.message) }
+    finally { setSeeding(false) }
   }
 
   return (
@@ -109,6 +141,24 @@ function JudgePanel({ event, judges, onRefresh }) {
         )}
         <p className="text-xs text-slate-500 mt-3">Tablet URLs are available on the Links tab.</p>
       </div>
+
+      {isAerialsV2 && (
+        <div className="card">
+          <h3 className="font-display text-lg text-white mb-2">Aerials Scoring Panel</h3>
+          <p className="text-sm text-slate-400 mb-3">
+            Aerials v2: every scoring judge enters Air, Form, and Landing for each jump.
+            Click below to seed {event.aerials_panel_size} numbered judge slots, each with their own tablet URL.
+          </p>
+          <button onClick={seedAerials} disabled={seeding} className="btn-primary disabled:opacity-40">
+            {seeding ? 'Seeding...' : `Seed ${event.aerials_panel_size}-Judge Aerials Panel`}
+          </button>
+          {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
+          <p className="text-xs text-slate-500 mt-3">
+            After seeding, edit each judge&apos;s name from the Assigned Judges table above (click to remove and re-add via the Add Judge form, or use the API).
+            The Head Judge is added separately below.
+          </p>
+        </div>
+      )}
 
       {availableRoles.length > 0 && (
         <div className="card">
@@ -494,6 +544,8 @@ function LinksPanel({ event, judges }) {
   const mc = event.meet_short_code || meetId
   const tabletUrl     = (j) => `http://${appHost()}/judge/${ec}?judge=${j.short_code || j.id}${j.pin ? `&pin=${j.pin}` : ''}`
   const aerialsUrl    = `http://${appHost()}/aerials-judge/${ec}`
+  // v1.18.00 — per-judge aerials tablet URL (v2 events with seeded AeJudgeN panel)
+  const aerialsJudgeUrl = (j) => `http://${appHost()}/aerials-judge/${ec}/${j.short_code || j.id}${j.pin ? `?pin=${j.pin}` : ''}`
   const timekeeperUrl = `http://${appHost()}/timekeeper/${ec}`
   const hjUrl         = `http://${appHost()}/headjudge/${mc}/${ec}`
   const scoreboardUrl = `http://${appHost()}/scoreboard/${ec}`
@@ -541,20 +593,50 @@ function LinksPanel({ event, judges }) {
               </div>
             )
         ) : isAerials ? (
-          // Aerials: single shared tablet URL for all judges
-          <div className="space-y-1">
-            <LinkRow
-              label="Aerials Tablet"
-              url={aerialsUrl}
-              path={`/aerials-judge/${event.id}`}
-              note="Shared by all aerials judges"
-            />
-            {judges.filter(j => j.role !== 'HJ').map(j => (
-              <div key={j.id} className="px-3 py-1.5 text-xs text-slate-500 border-b border-slate-800 last:border-0">
-                {ROLE_LABELS[j.role] || j.role} -- {j.name}{j.pin ? ` (PIN: ${j.pin})` : ''}
+          // v1.18.00 — Aerials: per-judge tablet URLs (mirrors moguls).
+          //   v2 panels with AeJudgeN roles → one row per judge, each with their own short-code URL.
+          //   Legacy panels (AirJudge*/FormJudge*/LandingJudge*) → fall back to the shared URL.
+          (() => {
+            const scoring = judges.filter(j => j.role !== 'HJ')
+            const isV2 = event.aerials_panel_size != null && scoring.some(j => /^AeJudge/.test(j.role))
+            if (!scoring.length) {
+              return <p className="text-slate-500 text-sm">No aerials judges seeded.  Use &quot;Seed Aerials Panel&quot; on the Event Setup tab.</p>
+            }
+            if (isV2) {
+              return (
+                <div className="space-y-1">
+                  <p className="text-slate-500 text-xs mb-2">
+                    Each scoring judge enters Air, Form, and Landing for every jump on their own tablet.
+                  </p>
+                  {scoring.sort((a,b) => (a.judge_number||0) - (b.judge_number||0)).map(j => (
+                    <LinkRow
+                      key={j.id}
+                      label={`Judge ${j.judge_number || ''} -- ${j.name}`}
+                      url={aerialsJudgeUrl(j)}
+                      path={`/aerials-judge/${ec}/${j.short_code || j.id}${j.pin ? `?pin=${j.pin}` : ''}`}
+                      note={j.pin ? `PIN: ${j.pin}` : 'No PIN'}
+                    />
+                  ))}
+                </div>
+              )
+            }
+            // Legacy aerials event — keep the shared-URL behavior
+            return (
+              <div className="space-y-1">
+                <LinkRow
+                  label="Aerials Tablet"
+                  url={aerialsUrl}
+                  path={`/aerials-judge/${event.id}`}
+                  note="Shared by all aerials judges (legacy event)"
+                />
+                {scoring.map(j => (
+                  <div key={j.id} className="px-3 py-1.5 text-xs text-slate-500 border-b border-slate-800 last:border-0">
+                    {ROLE_LABELS[j.role] || j.role} -- {j.name}{j.pin ? ` (PIN: ${j.pin})` : ''}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )
+          })()
         ) : (
           !judges.filter(j => j.role !== 'HJ').length
             ? <p className="text-slate-500 text-sm">No scoring judges assigned.  Add judges on the Event Setup tab.</p>

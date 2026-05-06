@@ -252,6 +252,13 @@ async function initSchema() {
     `ALTER TABLE events ADD COLUMN dual_manual_entry INTEGER NOT NULL DEFAULT 0`,
     // v1.16.31 -- soft-delete for master athlete database
     `ALTER TABLE athletes ADD COLUMN deleted_at TEXT`,
+    // v1.18.00 -- aerials redesign: event sanction type, panel size, HJ-scoring, reduction method
+    `ALTER TABLE events ADD COLUMN event_type TEXT NOT NULL DEFAULT 'usa_regional'`,
+    `ALTER TABLE events ADD COLUMN aerials_panel_size INTEGER`,
+    `ALTER TABLE events ADD COLUMN aerials_hj_scores INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE events ADD COLUMN aerials_reduction_method TEXT`,
+    `ALTER TABLE judges ADD COLUMN judge_number INTEGER`,
+    `ALTER TABLE runs ADD COLUMN aerials_model TEXT`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }
@@ -313,10 +320,12 @@ async function initSchema() {
   await backfillAirScoreNoDd();
 }
 
-// v1.16.23 -- backfill air_score_no_dd on runs that don't have it yet.
+// v1.16.23 / v1.18.01 -- backfill air_score_no_dd on runs that don't have it yet.
 // For each completed run with NULL air_score_no_dd, compute the pre-DD raw air
-// execution score from judge_scores (avg of jump1 + avg of jump2). Falls back
-// to runs.air_score for manually-entered legacy rows with no per-judge data.
+// execution score from judge_scores (avg of jump1 + avg of jump2). Tries legacy
+// score types ('air_jump1' / 'air_jump2' — moguls + legacy aerials) first, then
+// falls back to v2 aerials types ('ae_air_j1' / 'ae_air_j2'). Falls back further
+// to runs.air_score for manually-entered rows with no per-judge data.
 async function backfillAirScoreNoDd() {
   try {
     const rows = await queryAll(
@@ -333,23 +342,40 @@ async function backfillAirScoreNoDd() {
         `SELECT AVG(raw_score) AS avg, COUNT(*) AS n FROM judge_scores WHERE run_id=? AND score_type='air_jump2'`,
         [r.id]
       );
-      const n1 = j1 ? parseInt(j1.n) : 0;
-      const n2 = j2 ? parseInt(j2.n) : 0;
+      let n1 = j1 ? parseInt(j1.n) : 0;
+      let n2 = j2 ? parseInt(j2.n) : 0;
+      let a1 = n1 > 0 ? parseFloat(j1.avg) : 0;
+      let a2 = n2 > 0 ? parseFloat(j2.avg) : 0;
+
+      // v1.18.01 — fall back to aerials v2 score types
+      if (n1 === 0 && n2 === 0) {
+        const v1 = await queryOne(
+          `SELECT AVG(raw_score) AS avg, COUNT(*) AS n FROM judge_scores WHERE run_id=? AND score_type='ae_air_j1'`,
+          [r.id]
+        );
+        const v2 = await queryOne(
+          `SELECT AVG(raw_score) AS avg, COUNT(*) AS n FROM judge_scores WHERE run_id=? AND score_type='ae_air_j2'`,
+          [r.id]
+        );
+        n1 = v1 ? parseInt(v1.n) : 0;
+        n2 = v2 ? parseInt(v2.n) : 0;
+        a1 = n1 > 0 ? parseFloat(v1.avg) : 0;
+        a2 = n2 > 0 ? parseFloat(v2.avg) : 0;
+      }
+
       let value;
       if (n1 === 0 && n2 === 0) {
         value = r.air_score; // manual entry without per-judge data
       } else {
-        const a1 = n1 > 0 ? parseFloat(j1.avg) : 0;
-        const a2 = n2 > 0 ? parseFloat(j2.avg) : 0;
         const sum = n2 === 0 ? a1 * 2 : a1 + a2;
         value = Math.floor(sum * 100) / 100;
       }
       await execute(`UPDATE runs SET air_score_no_dd=? WHERE id=?`, [value, r.id]);
       updated++;
     }
-    if (updated > 0) console.log(`[v1.16.23 migration] air_score_no_dd backfilled for ${updated} runs`);
+    if (updated > 0) console.log(`[air_score_no_dd backfill] backfilled for ${updated} runs`);
   } catch (e) {
-    console.log('[v1.16.23 migration] air_score_no_dd backfill skipped:', e.message);
+    console.log('[air_score_no_dd backfill] skipped:', e.message);
   }
 }
 
@@ -506,38 +532,96 @@ async function seedJumpDDs() {
   await getClient().batch(stmts, 'write');
 }
 
-async function seedAerialsDDs() {
-  const existing = await queryOne("SELECT COUNT(*) as cnt FROM jump_dd_table WHERE discipline='aerials'");
-  if (existing && parseInt(existing.cnt) > 0) return;
+// USSS Appendix C 2026 Aerials Degree of Difficulty chart.
+// Source: 2026 U.S. Ski & Snowboard Freestyle/Freeski Competition Guide,
+// Appendix C, page 99 ("U.S. Ski & Snowboard Aerials Degree of Difficulty Chart").
+//
+// Spin family DD formula (per chart):
+//   Spin alone: 3=1.68, 7=1.85, 10=2.20
+//   Spin + Upright:        Spin DD + 0.02
+//   Spin + Upright + Grab: Spin DD + 0.02 + 0.10
+function buildAerialsDDChart() {
+  const SPIN = { '3': 1.68, '7': 1.85, '10': 2.20 };
+  const UPRIGHT_LETTERS = ['S','D','T','X','G','Tk','Pk'];
 
-  // FIS 2023 Aerials DD values (representative set; exact figures per FIS ICR Appendix)
-  const aerialJumps = [
-    // Single-jump entries
-    { code: 'S',    dd: 1.700, notes: 'Straight' },
-    { code: 'B',    dd: 1.800, notes: 'Back layout (single)' },
-    { code: 'bF',   dd: 2.090, notes: 'Back full (single)' },
-    { code: 'bFF',  dd: 2.360, notes: 'Back double full' },
-    { code: 'bFFF', dd: 2.780, notes: 'Back triple full' },
-    { code: 'bD',   dd: 2.360, notes: 'Back double' },
-    { code: 'bT',   dd: 2.690, notes: 'Back triple' },
-    { code: 'fF',   dd: 2.090, notes: 'Front full (single)' },
-    { code: 'fFF',  dd: 2.360, notes: 'Front double full' },
-    { code: 'fT',   dd: 2.690, notes: 'Front triple' },
-    { code: 'fD',   dd: 2.360, notes: 'Front double' },
-    // Common combination / quad entries
-    { code: 'bLF',  dd: 2.580, notes: 'Back layout full' },
-    { code: 'bLFF', dd: 2.940, notes: 'Back layout double full' },
-    { code: 'bLFFF',dd: 3.350, notes: 'Back layout triple full' },
-    { code: 'bL',   dd: 2.090, notes: 'Back layout' },
-    { code: 'fL',   dd: 1.850, notes: 'Front layout' },
-    { code: 'fLF',  dd: 2.310, notes: 'Front layout full' },
-    { code: 'bX',   dd: 2.780, notes: 'Back cross' },
-    { code: 'fTFF', dd: 2.940, notes: 'Front triple full-full' },
-    { code: 'bDFF', dd: 2.940, notes: 'Back double full-full' },
-    { code: 'bTFF', dd: 3.480, notes: 'Back triple full-full' },
-    { code: 'bQD',  dd: 3.700, notes: 'Back quad double' },
-    { code: 'bQF',  dd: 4.000, notes: 'Back quad full' },
+  const rows = [
+    // Base maneuvers from the chart
+    { code: 'N',   dd: 1.40, notes: 'Neutral (Straight Air)' },
+    { code: 'Tk',  dd: 1.48, notes: 'Tuck Jump' },
+    { code: 'Pk',  dd: 1.48, notes: 'Pike Jump' },
+    { code: 'S',   dd: 1.48, notes: 'Spread Eagle' },
+    { code: 'D',   dd: 1.48, notes: 'Daffy' },
+    { code: 'T',   dd: 1.48, notes: 'Twister' },
+    { code: 'X',   dd: 1.48, notes: 'Iron Cross' },
+    { code: 'G',   dd: 1.48, notes: 'Grab' },
+    { code: 'dG',  dd: 1.55, notes: 'Double Grab' },
+    // Double Upright examples (combination of two uprights)
+    { code: 'TS',  dd: 1.55, notes: 'Double Upright (Twister-Spread)' },
+    { code: 'DT',  dd: 1.55, notes: 'Double Upright (Daffy-Twister)' },
+    // Triple Upright example
+    { code: 'DTS', dd: 1.60, notes: 'Triple Upright (Daffy-Twister-Spread)' },
+    // Spins
+    { code: '3',   dd: 1.68, notes: '360' },
+    { code: '7',   dd: 1.85, notes: '720' },
+    { code: '10',  dd: 2.20, notes: '1080' },
+    // Back family (single flips with various positions / twists)
+    { code: 'bT',   dd: 2.00,  notes: 'Back Tuck' },
+    { code: 'bP',   dd: 2.00,  notes: 'Back Pike' },
+    { code: 'bX',   dd: 1.85,  notes: 'Back + Upright/Free pos.' },
+    { code: 'bL',   dd: 2.05,  notes: 'Back Layout' },
+    { code: 'bF',   dd: 2.30,  notes: 'Back Full' },
+    { code: 'bdF',  dd: 2.40,  notes: 'Back Double Full' },
+    { code: 'bTT',  dd: 2.40,  notes: 'Back Tuck Tuck' },
+    { code: 'bLT',  dd: 2.60,  notes: 'Back Lay Tuck' },
+    { code: 'bLL',  dd: 2.65,  notes: 'Back Lay Lay' },
+    { code: 'bFT',  dd: 2.85,  notes: 'Back Full Tuck' },
+    { code: 'bLF',  dd: 2.90,  notes: 'Back Lay Full' },
+    { code: 'bFF',  dd: 3.15,  notes: 'Back Full Full' },
+    { code: 'bdFF', dd: 3.525, notes: 'Back Double Full Full (in/out)' },
+    { code: 'bFdF', dd: 3.525, notes: 'Back Full Double Full (in/out, alias of bdFF)' },
   ];
+
+  // Spin + Upright family (DD = spin + 0.02), one row per upright letter.
+  for (const [spinCode, spinDd] of Object.entries(SPIN)) {
+    for (const u of UPRIGHT_LETTERS) {
+      rows.push({
+        code: `${spinCode}${u}`,
+        dd: Math.round((spinDd + 0.02) * 1000) / 1000,
+        notes: `Spin + Upright (${spinCode} + ${u})`,
+      });
+    }
+    // Spin + Upright + Grab family (DD = spin + 0.02 + 0.10).
+    for (const u of UPRIGHT_LETTERS) {
+      rows.push({
+        code: `${spinCode}${u}G`,
+        dd: Math.round((spinDd + 0.02 + 0.10) * 1000) / 1000,
+        notes: `Spin + Upright + Grab (${spinCode} + ${u} + G)`,
+      });
+    }
+  }
+
+  return rows;
+}
+
+async function seedAerialsDDs() {
+  const aerialJumps = buildAerialsDDChart();
+
+  // v1.18.02 -- Detect placeholder chart from earlier seeds (S=1.700 was the
+  // pre-Appendix-C placeholder) OR any partial set missing the new codes
+  // (e.g., Tk, Pk, bdFF). When detected, wipe and re-seed from the canonical
+  // Appendix C chart. Mirrors the v1.16.08 mogul DD migration pattern.
+  const checkS  = await queryOne("SELECT dd_value FROM jump_dd_table WHERE jump_code='S'   AND discipline='aerials'");
+  const checkTk = await queryOne("SELECT id        FROM jump_dd_table WHERE jump_code='Tk'  AND discipline='aerials'");
+  const stale = checkS && Math.abs(parseFloat(checkS.dd_value) - 1.48) > 0.001;
+  const incomplete = !checkTk;
+
+  if (checkS && !stale && !incomplete) return; // Already on Appendix C
+
+  if (checkS) {
+    // Existing aerials rows present but stale/incomplete — wipe & reseed.
+    await execute("DELETE FROM jump_dd_table WHERE discipline='aerials'");
+    console.log(`[v1.18.02 migration] aerials DD chart: replacing ${stale ? 'stale' : 'incomplete'} rows with USSS Appendix C 2026`);
+  }
 
   const stmts = [];
   for (const j of aerialJumps) {

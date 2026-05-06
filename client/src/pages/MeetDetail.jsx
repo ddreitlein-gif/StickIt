@@ -5,6 +5,30 @@ import api from '../utils/api'
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
 const DIVISION_LABEL = { comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }
 const GENDER_LABEL = { M: 'Male', F: 'Female' }
+
+// v1.18.00 — Event Type sanction categories. Drives aerials panel-size and HJ-scoring rules.
+const EVENT_TYPE_LABEL = {
+  fis_major:    'FIS OWG/WSC/WC',
+  fis_nac:      'FIS NAC/NorAm',
+  fis_other:    'FIS Other',
+  usa_national: 'USA National',
+  usa_regional: 'USA Regional',
+}
+const REDUCTION_LABEL = {
+  sum_all:   'Sum all (no drops)',
+  drop_high: 'Drop highest, sum rest',
+  drop_low:  'Drop lowest, sum rest',
+  average:   'Average all judges',
+}
+function aerialsRulesFor(et) {
+  switch (et) {
+    case 'fis_major':
+    case 'fis_nac':      return { panelMin: 5, panelMax: 7, hjMayScore: false }
+    case 'fis_other':    return { panelMin: 5, panelMax: 5, hjMayScore: false }
+    case 'usa_national': return { panelMin: 2, panelMax: 5, hjMayScore: false }
+    default:             return { panelMin: 2, panelMax: 5, hjMayScore: true }  // usa_regional
+  }
+}
 const STATUS_COLOR = {
   setup: 'text-slate-400',
   active: 'text-green-400',
@@ -47,10 +71,20 @@ function EventCard({ event, meetId, onDelete }) {
           </div>
         </div>
         <div className="mt-3 flex gap-4 text-xs text-slate-600">
-          <span>T&amp;L: {event.num_tl_judges}</span>
-          <span>Air: {event.num_air_judges}</span>
-          <span>Jumps: {event.num_jumps || 2}</span>
-          {event.pace_time && <span>Pace: {event.pace_time}s</span>}
+          {event.discipline === 'aerials' ? (
+            <>
+              <span>Judges: {event.aerials_panel_size || event.num_air_judges || '?'}</span>
+              <span>Jumps: {event.num_jumps || 2}</span>
+              {event.event_type && <span>{EVENT_TYPE_LABEL[event.event_type] || event.event_type}</span>}
+            </>
+          ) : (
+            <>
+              <span>T&amp;L: {event.num_tl_judges}</span>
+              <span>Air: {event.num_air_judges}</span>
+              <span>Jumps: {event.num_jumps || 2}</span>
+              {event.pace_time && <span>Pace: {event.pace_time}s</span>}
+            </>
+          )}
         </div>
       </Link>
       <button
@@ -88,6 +122,11 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
     component_scoring: 1,
     score_entry_mode: 'tablet',
     is_divisional: anyDivisional ? 1 : 0,
+    // v1.18.00 — sanction + aerials config
+    event_type: 'usa_regional',
+    aerials_panel_size: 5,
+    aerials_hj_scores: 0,
+    aerials_reduction_method: 'sum_all',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -120,6 +159,30 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
     }
   }, [form.discipline])
 
+  // v1.18.00 — clamp aerials_panel_size to event-type bounds + clear hj_scores when not allowed.
+  // When the discipline switches AWAY from aerials, reset aerials fields to defaults so a
+  // later switch back doesn't carry stale values from the previous selection.
+  useEffect(() => {
+    if (form.discipline !== 'aerials') {
+      setForm(f => (
+        f.aerials_panel_size === 5 && f.aerials_hj_scores === 0 && f.aerials_reduction_method === 'sum_all'
+          ? f  // already at defaults — no update (avoid render loop)
+          : { ...f, aerials_panel_size: 5, aerials_hj_scores: 0, aerials_reduction_method: 'sum_all' }
+      ))
+      return
+    }
+    const rules = aerialsRulesFor(form.event_type)
+    let n = parseInt(form.aerials_panel_size) || rules.panelMin
+    if (n < rules.panelMin) n = rules.panelMin
+    if (n > rules.panelMax) n = rules.panelMax
+    setForm(f => ({
+      ...f,
+      aerials_panel_size: n,
+      aerials_hj_scores: rules.hjMayScore ? f.aerials_hj_scores : 0,
+      aerials_reduction_method: n <= 4 ? (f.aerials_reduction_method || 'sum_all') : null,
+    }))
+  }, [form.discipline, form.event_type])
+
   const submit = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) { setError('Name is required'); return }
@@ -147,6 +210,18 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg my-4">
         <h2 className="font-display text-2xl text-white mb-6">Add Event</h2>
         <form onSubmit={submit} className="space-y-4">
+
+          {/* v1.18.00 — Event Type (sanction). Top-level classifier; drives aerials rules. */}
+          <div>
+            <label className="label">Event Type</label>
+            <select className="input" value={form.event_type} onChange={e => set('event_type', e.target.value)}>
+              <option value="usa_regional">USA Regional</option>
+              <option value="usa_national">USA National</option>
+              <option value="fis_other">FIS Other</option>
+              <option value="fis_nac">FIS NAC/NorAm</option>
+              <option value="fis_major">FIS OWG/WSC/WC</option>
+            </select>
+          </div>
 
           {/* Discipline / Division / Gender */}
           <div className="grid grid-cols-3 gap-3">
@@ -185,25 +260,21 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
             />
           </div>
 
-          {/* Judge config */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <label className="label">
-                {form.discipline === 'aerials' ? 'Form Judges' : 'T\u0026L Judges'}
-              </label>
-              <select className="input" value={form.num_tl_judges} onChange={e => set('num_tl_judges', e.target.value)}>
-                {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">
-                {form.discipline === 'aerials' ? 'Air / Landing Judges' : 'Air Judges'}
-              </label>
-              <select className="input" value={form.num_air_judges} onChange={e => set('num_air_judges', e.target.value)}>
-                {[1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            {form.discipline !== 'aerials' && (
+          {/* Judge config (mogul/dual mogul only) */}
+          {form.discipline !== 'aerials' && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="label">{'T&L Judges'}</label>
+                <select className="input" value={form.num_tl_judges} onChange={e => set('num_tl_judges', e.target.value)}>
+                  {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Air Judges</label>
+                <select className="input" value={form.num_air_judges} onChange={e => set('num_air_judges', e.target.value)}>
+                  {[1,2,3].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
               <div>
                 <label className="label">Jumps</label>
                 <select className="input" value={form.num_jumps} onChange={e => set('num_jumps', parseInt(e.target.value))}>
@@ -211,8 +282,6 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
                   <option value={2}>2</option>
                 </select>
               </div>
-            )}
-            {form.discipline !== 'aerials' && (
               <div>
                 <label className="label">Speed Scored?</label>
                 <select className="input" value={form.has_speed} onChange={e => set('has_speed', parseInt(e.target.value))}>
@@ -220,8 +289,58 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
                   <option value={0}>No</option>
                 </select>
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* v1.18.00 — Aerials judge config replaces per-component pickers */}
+          {form.discipline === 'aerials' && (() => {
+            const rules = aerialsRulesFor(form.event_type)
+            const sizes = []
+            for (let n = rules.panelMin; n <= rules.panelMax; n++) sizes.push(n)
+            const showReduction = form.aerials_panel_size <= 4
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Scoring Judges</label>
+                    <select className="input" value={form.aerials_panel_size} onChange={e => set('aerials_panel_size', parseInt(e.target.value))}>
+                      {sizes.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Jumps</label>
+                    <select className="input" value={form.num_jumps} onChange={e => set('num_jumps', parseInt(e.target.value))}>
+                      <option value={1}>1</option>
+                      <option value={2}>2</option>
+                    </select>
+                  </div>
+                </div>
+                {showReduction && (
+                  <div>
+                    <label className="label">Reduction Method</label>
+                    <select className="input" value={form.aerials_reduction_method || 'sum_all'} onChange={e => set('aerials_reduction_method', e.target.value)}>
+                      <option value="sum_all">Sum all (no drops)</option>
+                      <option value="drop_high">Drop highest, sum rest</option>
+                      <option value="drop_low">Drop lowest, sum rest</option>
+                      <option value="average">Average all judges</option>
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">Required for panels of 4 or fewer scoring judges. Choice prints on the calculation report.</p>
+                  </div>
+                )}
+                {rules.hjMayScore && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-ice-500 focus:ring-ice-500"
+                      checked={!!form.aerials_hj_scores}
+                      onChange={e => set('aerials_hj_scores', e.target.checked ? 1 : 0)}
+                    />
+                    <span className="text-sm text-slate-400">Head Judge also scores (assign HJ to a numbered slot — USA Regional only)</span>
+                  </label>
+                )}
+              </div>
+            )
+          })()}
 
           {form.discipline === 'mogul' && (
             <div className="grid grid-cols-3 gap-3">
@@ -237,8 +356,8 @@ function CreateEventModal({ meetId, events = [], onClose, onCreate }) {
 
           {form.discipline === 'aerials' && (
             <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-400">
-              Aerials scoring: Air score (judge avg &times; DD) + Form score + Landing score per jump.
-              No speed component.  Weights field does not apply.
+              Standard aerials: each scoring judge enters Air (0.0&ndash;2.0), Form (0.0&ndash;5.0), and Landing (0.0&ndash;3.0) for each jump.
+              Per jump, total = (sum of kept Air + Form + Landing) &times; DD, truncated to two decimals.
             </div>
           )}
 

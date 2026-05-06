@@ -42,6 +42,51 @@ function JudgeBreakdown({ run, judgeScoresMap }) {
   const tl = Array.isArray(js.tl) ? js.tl : [];
   const a1 = Array.isArray(js.air1) ? js.air1 : [];
   const a2 = Array.isArray(js.air2) ? js.air2 : [];
+  const aeRows = Array.isArray(js.aeRows) ? js.aeRows : [];
+
+  // v1.18.00 — Aerials v2 per-judge-per-jump grid
+  if (aeRows.length > 0) {
+    const byJudge = new Map();
+    for (const r of aeRows) {
+      if (!byJudge.has(r.judge_number)) byJudge.set(r.judge_number, { name: r.name });
+      byJudge.get(r.judge_number)[r.score_type] = r.raw_score;
+    }
+    const judges = [...byJudge.entries()].sort((a, b) => a[0] - b[0]);
+    return (
+      <div style={{ marginTop: 10, padding: 10, background: 'var(--bg)', borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div className="sk-display" style={{ fontSize: 9, color: 'var(--fg-dim)', letterSpacing: '0.1em', marginBottom: 6 }}>
+          AERIALS PANEL
+        </div>
+        <table style={{ width: '100%', fontSize: 11 }} className="sk-mono">
+          <thead>
+            <tr style={{ color: 'var(--fg-dim)' }}>
+              <th style={{ textAlign: 'left', fontWeight: 600 }}>J#</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J1 A</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J1 F</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J1 L</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J2 A</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J2 F</th>
+              <th style={{ textAlign: 'right', padding: '0 4px' }}>J2 L</th>
+            </tr>
+          </thead>
+          <tbody>
+            {judges.map(([num, j]) => (
+              <tr key={num}>
+                <td style={{ color: 'var(--fg-dim)' }}>{num}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_air_j1)}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_form_j1)}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_land_j1)}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_air_j2)}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_form_j2)}</td>
+                <td style={{ textAlign: 'right', padding: '0 4px', color: 'var(--fg)' }}>{fmt1(j.ae_land_j2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   if (tl.length === 0 && a1.length === 0 && a2.length === 0) return null;
 
   return (

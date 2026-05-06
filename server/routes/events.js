@@ -3,6 +3,43 @@ const router = express.Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
 const { calcPaceTime } = require('../scoring/engine');
 
+// v1.18.00 — Event Type rules. Centralized so POST/PUT and meets.js share the logic.
+const EVENT_TYPES = ['fis_major', 'fis_nac', 'fis_other', 'usa_national', 'usa_regional'];
+const REDUCTION_METHODS = ['sum_all', 'drop_high', 'drop_low', 'average'];
+
+function aerialsRulesFor(eventType) {
+  switch (eventType) {
+    case 'fis_major':
+    case 'fis_nac':
+      return { panelMin: 5, panelMax: 7, hjMayScore: false };
+    case 'fis_other':
+      return { panelMin: 5, panelMax: 5, hjMayScore: false };
+    case 'usa_national':
+      return { panelMin: 2, panelMax: 5, hjMayScore: false };
+    case 'usa_regional':
+    default:
+      return { panelMin: 2, panelMax: 5, hjMayScore: true };
+  }
+}
+
+function validateAerialsConfig({ event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method }) {
+  if (!EVENT_TYPES.includes(event_type)) return 'Invalid event_type';
+  const rules = aerialsRulesFor(event_type);
+  const n = parseInt(aerials_panel_size);
+  if (!Number.isFinite(n) || n < rules.panelMin || n > rules.panelMax) {
+    return `Scoring judges must be ${rules.panelMin}-${rules.panelMax} for this event type`;
+  }
+  if (aerials_hj_scores && !rules.hjMayScore) {
+    return 'Head Judge scoring is only allowed for USA Regional events';
+  }
+  if (n <= 4) {
+    const m = aerials_reduction_method || 'sum_all';
+    if (!REDUCTION_METHODS.includes(m)) return 'Invalid reduction method';
+  }
+  return null;
+}
+
+
 // After creating an event, inherit course_length and pace_time from the meet's course spec
 async function inheritCourseSpec(meetId, eventId, gender) {
   const spec = await queryOne('SELECT * FROM course_specs WHERE meet_id = ? ORDER BY rowid LIMIT 1', [meetId]);
@@ -57,10 +94,28 @@ router.post('/', async (req, res) => {
       ? parseInt(component_scoring)
       : (discipline === 'mogul' && (division === 'devo' || division === 'rqs_eqs') ? 0 : 1);
 
+    // v1.18.00 — event_type & aerials config
+    const event_type = EVENT_TYPES.includes(req.body.event_type) ? req.body.event_type : 'usa_regional';
+    let aerials_panel_size = null;
+    let aerials_hj_scores = 0;
+    let aerials_reduction_method = null;
+    if (discipline === 'aerials') {
+      const rules = aerialsRulesFor(event_type);
+      aerials_panel_size = parseInt(req.body.aerials_panel_size) || rules.panelMin;
+      aerials_hj_scores = (rules.hjMayScore && req.body.aerials_hj_scores) ? 1 : 0;
+      if (aerials_panel_size <= 4) {
+        aerials_reduction_method = REDUCTION_METHODS.includes(req.body.aerials_reduction_method)
+          ? req.body.aerials_reduction_method
+          : 'sum_all';
+      }
+      const err = validateAerialsConfig({ event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method });
+      if (err) return res.status(400).json({ error: err });
+    }
+
     const id = uuidv4();
     await execute(
-      `INSERT INTO events (id,meet_id,discipline,division,gender,name,num_tl_judges,num_air_judges,num_jumps,has_speed,turns_weight,air_weight,speed_weight,bracket_size,has_small_final,runoff_option,component_scoring,score_entry_mode,is_divisional,short_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, req.params.meetId, discipline, division, gender, name, num_tl_judges, num_air_judges, num_jumps, has_speed, turns_weight, air_weight, speed_weight, 128, has_small_final, runoff_option || 'runoff_to_4th', effectiveComponentScoring, score_entry_mode, is_divisional ? 1 : 0, shortCode()]
+      `INSERT INTO events (id,meet_id,discipline,division,gender,name,num_tl_judges,num_air_judges,num_jumps,has_speed,turns_weight,air_weight,speed_weight,bracket_size,has_small_final,runoff_option,component_scoring,score_entry_mode,is_divisional,short_code,event_type,aerials_panel_size,aerials_hj_scores,aerials_reduction_method) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, req.params.meetId, discipline, division, gender, name, num_tl_judges, num_air_judges, num_jumps, has_speed, turns_weight, air_weight, speed_weight, 128, has_small_final, runoff_option || 'runoff_to_4th', effectiveComponentScoring, score_entry_mode, is_divisional ? 1 : 0, shortCode(), event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method]
     );
 
     // Inherit course_length and pace_time from meet's course spec
@@ -95,8 +150,36 @@ router.put('/:id', async (req, res) => {
       }
     }
 
+    // v1.18.00 — Guard: cannot change event_type or aerials_panel_size after any aerials run is complete
+    if (req.body.event_type !== undefined || req.body.aerials_panel_size !== undefined) {
+      const completed = await queryOne(
+        "SELECT COUNT(*) AS cnt FROM runs WHERE event_id = ? AND status = 'complete'",
+        [req.params.id]
+      );
+      if (completed && parseInt(completed.cnt) > 0) {
+        return res.status(400).json({ error: 'Cannot change event type or panel size after scoring has started' });
+      }
+    }
+
+    // v1.18.00 — Validate aerials config when any aerials field is changing
+    if (event.discipline === 'aerials' && (
+      req.body.event_type !== undefined ||
+      req.body.aerials_panel_size !== undefined ||
+      req.body.aerials_hj_scores !== undefined ||
+      req.body.aerials_reduction_method !== undefined
+    )) {
+      const merged = {
+        event_type:               req.body.event_type               !== undefined ? req.body.event_type               : event.event_type,
+        aerials_panel_size:       req.body.aerials_panel_size       !== undefined ? req.body.aerials_panel_size       : event.aerials_panel_size,
+        aerials_hj_scores:        req.body.aerials_hj_scores        !== undefined ? req.body.aerials_hj_scores        : event.aerials_hj_scores,
+        aerials_reduction_method: req.body.aerials_reduction_method !== undefined ? req.body.aerials_reduction_method : event.aerials_reduction_method,
+      };
+      const err = validateAerialsConfig(merged);
+      if (err) return res.status(400).json({ error: err });
+    }
+
     // course_length, pace_time, pace_time_override are meet-level (managed via Course Specs) -- not editable per event
-    const fields = ['name','num_tl_judges','num_air_judges','num_jumps','has_speed','turns_weight','air_weight','speed_weight','bracket_size','has_small_final','status','usss_code','qualifier_event_id','finals_event_id','runoff_option','score_spread_threshold','event_date','component_scoring','score_entry_mode','is_divisional','order_locked'];
+    const fields = ['name','num_tl_judges','num_air_judges','num_jumps','has_speed','turns_weight','air_weight','speed_weight','bracket_size','has_small_final','status','usss_code','qualifier_event_id','finals_event_id','runoff_option','score_spread_threshold','event_date','component_scoring','score_entry_mode','is_divisional','order_locked','event_type','aerials_panel_size','aerials_hj_scores','aerials_reduction_method'];
     const updates = [], values = [];
     for (const f of fields) {
       if (req.body[f] !== undefined) { updates.push(`${f}=?`); values.push(req.body[f]); }

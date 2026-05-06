@@ -14,11 +14,22 @@ const SCORE_LABELS = {
   air_jump2: 'Air J2',
   form:      'Form',
   landing:   'Landing',
+  // v1.18.00 — Aerials v2 per-judge-per-jump
+  ae_air_j1:  'Air J1',
+  ae_air_j2:  'Air J2',
+  ae_form_j1: 'Form J1',
+  ae_form_j2: 'Form J2',
+  ae_land_j1: 'Land J1',
+  ae_land_j2: 'Land J2',
 }
 
 const ROLE_LABELS = {
   TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3',
   Air1: 'Air 1', Air2: 'Air 2', HJ: 'Head Judge',
+  // v1.18.00 — Aerials v2
+  AeJudge1: 'Judge 1', AeJudge2: 'Judge 2', AeJudge3: 'Judge 3', AeJudge4: 'Judge 4',
+  AeJudge5: 'Judge 5', AeJudge6: 'Judge 6', AeJudge7: 'Judge 7',
+  // Aerials legacy
   AirJudge1: 'Air Judge 1', AirJudge2: 'Air Judge 2', AirJudge3: 'Air Judge 3',
   FormJudge1: 'Form Judge 1', FormJudge2: 'Form Judge 2', FormJudge3: 'Form Judge 3',
   LandingJudge1: 'Landing 1', LandingJudge2: 'Landing 2', LandingJudge3: 'Landing 3',
@@ -1090,6 +1101,16 @@ export default function HeadJudgeTablet() {
   const tlRoles  = Object.entries(byRole).filter(([r]) => /^TL/.test(r)  || (eventCfg?.discipline === 'aerials' && /^Form/.test(r)))
   const airRoles = Object.entries(byRole).filter(([r]) => /^Air/.test(r) || (eventCfg?.discipline === 'aerials' && /^(AirJudge|Landing)/.test(r)))
 
+  // v1.18.00 — Aerials v2 detection for the grid panel.
+  const isAerialsV2 = eventCfg?.discipline === 'aerials' && eventCfg?.aerials_panel_size != null
+  const aeJudgeRoles = isAerialsV2
+    ? Object.entries(byRole).filter(([r]) => /^AeJudge/.test(r)).sort((a, b) => {
+        const an = parseInt((a[0].match(/\d+$/) || ['99'])[0])
+        const bn = parseInt((b[0].match(/\d+$/) || ['99'])[0])
+        return an - bn
+      })
+    : []
+
   const hasComputed = activeRun && (activeRun.hj_pending || activeRun.status === 'complete') && activeRun.total_score != null
   const awaitingApproval = activeRun?.hj_pending === 1
 
@@ -1494,7 +1515,98 @@ export default function HeadJudgeTablet() {
           </div>
         )}
 
-        {/* 3-column grid when active run */}
+        {/* v1.18.00 — Aerials v2 per-judge-per-jump grid */}
+        {activeRun && isAerialsV2 && (
+          <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Aerials Scoring Panel</div>
+              <div className="text-xs text-slate-500">
+                Panel: {eventCfg.aerials_panel_size} judges
+                {eventCfg.aerials_panel_size <= 4 && ` · Reduction: ${eventCfg.aerials_reduction_method || 'sum_all'}`}
+                {eventCfg.aerials_panel_size >= 5 && ' · Drop H/L per component'}
+              </div>
+            </div>
+
+            {(activeRun.jump1_code || activeRun.jump2_code) && (
+              <div className="flex flex-wrap gap-4 mb-3 text-sm text-slate-400">
+                {activeRun.jump1_code && (
+                  <span>J1: <strong className="text-white">{activeRun.jump1_code}</strong> <span className="text-slate-500">(DD {activeRun.jump1_dd})</span></span>
+                )}
+                {activeRun.jump2_code && (
+                  <span>J2: <strong className="text-white">{activeRun.jump2_code}</strong> <span className="text-slate-500">(DD {activeRun.jump2_dd})</span></span>
+                )}
+              </div>
+            )}
+
+            {aeJudgeRoles.length === 0 ? (
+              <div className="text-slate-600 text-sm">No scores submitted yet.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 uppercase">
+                    <th className="text-left py-1">Judge</th>
+                    <th className="text-right py-1 px-2">J1 Air</th>
+                    <th className="text-right py-1 px-2">J1 Form</th>
+                    <th className="text-right py-1 px-2">J1 Land</th>
+                    {(eventCfg.num_jumps || 2) >= 2 && <>
+                      <th className="text-right py-1 px-2">J2 Air</th>
+                      <th className="text-right py-1 px-2">J2 Form</th>
+                      <th className="text-right py-1 px-2">J2 Land</th>
+                    </>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {aeJudgeRoles.map(([role, scores]) => {
+                    const sByType = {}
+                    for (const s of scores) sByType[s.score_type] = s
+                    const cell = (t) => {
+                      const s = sByType[t]
+                      return s != null ? <span className="font-mono text-white">{fmt1(s.raw_score)}</span> : <span className="text-slate-700">—</span>
+                    }
+                    return (
+                      <tr key={role} className="border-t border-slate-800">
+                        <td className="py-1 text-slate-300">
+                          <span className="font-semibold">{ROLE_LABELS[role] || role}</span>
+                          {scores[0]?.name && <span className="text-slate-500 italic ml-2">— {scores[0].name}</span>}
+                        </td>
+                        <td className="text-right px-2 py-1">{cell('ae_air_j1')}</td>
+                        <td className="text-right px-2 py-1">{cell('ae_form_j1')}</td>
+                        <td className="text-right px-2 py-1">{cell('ae_land_j1')}</td>
+                        {(eventCfg.num_jumps || 2) >= 2 && <>
+                          <td className="text-right px-2 py-1">{cell('ae_air_j2')}</td>
+                          <td className="text-right px-2 py-1">{cell('ae_form_j2')}</td>
+                          <td className="text-right px-2 py-1">{cell('ae_land_j2')}</td>
+                        </>}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {hasComputed && (
+              <div className="mt-4 pt-3 border-t border-slate-700 grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <div className="text-xs text-slate-500 uppercase">Total Form</div>
+                  <div className="font-mono text-xl font-bold text-sky-400">{fmt(activeRun.turns_score)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500 uppercase">Total Air</div>
+                  <div className="font-mono text-xl font-bold text-amber-400">{fmt(activeRun.air_score)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500 uppercase">Total Landing</div>
+                  <div className="font-mono text-xl font-bold text-purple-400">{fmt(activeRun.speed_score)}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3-column grid when active run.
+            For aerials v2, the LEFT and CENTER columns will show "no scores" — the actual
+            per-judge breakdown is in the v2 grid above. The RIGHT column (running score,
+            approve buttons, etc.) still drives the v2 event finalize/approve workflow. */}
         {activeRun && (
           <div className="grid grid-cols-[1.5fr_1.5fr_1fr] gap-4 items-start">
 

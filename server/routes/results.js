@@ -208,19 +208,19 @@ router.get('/judge-scores', async (req, res) => {
 
     // All per-judge scores keyed by run_id
     const scores = await queryAll(
-      `SELECT js.run_id, js.score_type, js.raw_score, j.role
+      `SELECT js.run_id, js.score_type, js.raw_score, j.role, j.judge_number, j.name
        FROM judge_scores js
        JOIN judges j ON j.id = js.judge_id
        WHERE js.run_id IN (
          SELECT id FROM runs WHERE event_id=?
        )
-       ORDER BY js.run_id, j.role, js.score_type`,
+       ORDER BY js.run_id, j.judge_number, j.role, js.score_type`,
       [eventId]
     );
 
     const judgeScores = {};
     for (const s of scores) {
-      if (!judgeScores[s.run_id]) judgeScores[s.run_id] = { tl: [], air1: [], air2: [] };
+      if (!judgeScores[s.run_id]) judgeScores[s.run_id] = { tl: [], air1: [], air2: [], aeRows: [] };
       const entry = judgeScores[s.run_id];
       if (s.score_type === 'turns' && /^TL/i.test(s.role)) {
         entry.tl.push(s.raw_score);
@@ -228,6 +228,14 @@ router.get('/judge-scores', async (req, res) => {
         entry.air1.push(s.raw_score);
       } else if (s.score_type === 'air_jump2') {
         entry.air2.push(s.raw_score);
+      } else if (/^ae_/.test(s.score_type)) {
+        // v1.18.00 — Aerials v2 per-judge-per-jump structure
+        entry.aeRows.push({
+          judge_number: s.judge_number,
+          name: s.name,
+          score_type: s.score_type,
+          raw_score: s.raw_score,
+        });
       }
     }
 

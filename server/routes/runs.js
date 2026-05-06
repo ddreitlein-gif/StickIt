@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, getClient } = require('../db/schema');
-const { calcMogulScore, calcAerialsScore, areJumpsRepeats, applyRepeatJumpRule } = require('../scoring/engine');
+const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats, applyRepeatJumpRule } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const lockCheck = requireUnlocked();
@@ -420,6 +420,14 @@ router.post('/manual', async (req, res) => {
       return res.status(201).json({ ok: true, run: created });
     }
 
+    // v1.18.00 — block legacy-shape manual entry on v2 aerials events.
+    // The flat form_scores/landing_scores arrays can't carry per-judge-per-jump v2 data.
+    if (event.discipline === 'aerials' && event.aerials_panel_size != null) {
+      return res.status(400).json({
+        error: 'Manual score entry on aerials v2 events is not supported. Use the per-judge tablets, or score this event with the legacy aerials engine before v1.18.00.'
+      });
+    }
+
     // Scored path -- validate and resolve jump codes
     let dd1 = null, dd2 = null;
     if (jump1_code) {
@@ -463,9 +471,8 @@ router.post('/manual', async (req, res) => {
     }
 
     const id = uuidv4();
-    const airNoDdValue = event.discipline === 'aerials'
-      ? null
-      : (result.airNoDd != null ? result.airNoDd : result.airContrib);
+    // v1.18.01 — aerials now also persists pre-DD raw air execution for tie-break
+    const airNoDdValue = result.airNoDd != null ? result.airNoDd : result.airContrib;
     await execute(
       `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,hj_pending,
          jump1_code,jump1_dd,jump2_code,jump2_dd,run_time,
@@ -564,6 +571,13 @@ router.post('/:runId/manual-score', async (req, res) => {
       return res.json({ ok: true, run: updated });
     }
 
+    // v1.18.00 — block legacy-shape edit-score on v2 aerials events.
+    if (event.discipline === 'aerials' && event.aerials_panel_size != null) {
+      return res.status(400).json({
+        error: 'Edit Score on aerials v2 events is not supported via the legacy form. Have judges resubmit via their tablets, or send the run back to Scoring from the HJ tablet.'
+      });
+    }
+
     // Scored path -- use provided codes, falling back to existing codes on the run
     const numJumps = event.num_jumps || 2;
     const code1 = jump1_code || run.jump1_code;
@@ -612,9 +626,8 @@ router.post('/:runId/manual-score', async (req, res) => {
       });
     }
 
-    const airNoDdValueEdit = event.discipline === 'aerials'
-      ? null
-      : (result.airNoDd != null ? result.airNoDd : result.airContrib);
+    // v1.18.01 — aerials now also persists pre-DD raw air execution for tie-break
+    const airNoDdValueEdit = result.airNoDd != null ? result.airNoDd : result.airContrib;
     await execute(
       `UPDATE runs SET
          jump1_code=?, jump1_dd=?, jump2_code=?, jump2_dd=?,
@@ -991,10 +1004,16 @@ router.post('/:runId/scores', async (req, res) => {
     if (!judge) return res.status(403).json({ error: 'Judge not registered for this event' });
     if (judge.pin && pin !== judge.pin) return res.status(403).json({ error: 'Invalid PIN' });
 
-    const validTypes = ['turns','air_jump1','air_jump2','form','landing'];
+    const validTypes = ['turns','air_jump1','air_jump2','form','landing',
+      // v1.18.00 — aerials v2 per-judge-per-jump score types
+      'ae_air_j1','ae_air_j2','ae_form_j1','ae_form_j2','ae_land_j1','ae_land_j2'];
     if (!validTypes.includes(score_type)) return res.status(400).json({ error: 'Invalid score_type' });
     if (score_type === 'turns' && (raw_score < 0.1 || raw_score > 20.0)) return res.status(400).json({ error: 'Turns score must be 0.1-20.0' });
-    if (score_type !== 'turns' && (raw_score < 0 || raw_score > 10)) return res.status(400).json({ error: 'Air/form/landing score must be 0-10' });
+    if (['air_jump1','air_jump2','form','landing'].includes(score_type) && (raw_score < 0 || raw_score > 10)) return res.status(400).json({ error: 'Air/form/landing score must be 0-10' });
+    // v2 aerials ranges (FIS Judging Handbook 6002/6003.1)
+    if ((score_type === 'ae_air_j1'  || score_type === 'ae_air_j2')  && (raw_score < 0 || raw_score > 2.0)) return res.status(400).json({ error: 'Air must be 0.0-2.0' });
+    if ((score_type === 'ae_form_j1' || score_type === 'ae_form_j2') && (raw_score < 0 || raw_score > 5.0)) return res.status(400).json({ error: 'Form must be 0.0-5.0' });
+    if ((score_type === 'ae_land_j1' || score_type === 'ae_land_j2') && (raw_score < 0 || raw_score > 3.0)) return res.status(400).json({ error: 'Landing must be 0.0-3.0' });
 
     const ex = await queryOne('SELECT id FROM judge_scores WHERE run_id=? AND judge_id=? AND score_type=?', [run.id, judge_id, score_type]);
     const isTurns = score_type === 'turns';
@@ -1126,10 +1145,12 @@ async function tryFinalize(run, eventId) {
 }
 
 async function tryFinalizeAerials(run, event) {
-  // For aerials: need air scores for each jump from air judges,
-  // plus form and landing scores.
-  // num_tl_judges = number of form judges; num_air_judges = number of air judges.
-  // Landing judges count = num_air_judges (same pool, configured per event).
+  // v1.18.00 — Per-judge-per-jump model. Detect by event.aerials_panel_size NOT NULL.
+  if (event.aerials_panel_size) {
+    return tryFinalizeAerialsV2(run, event);
+  }
+
+  // Legacy aerials path (component-specific judges, single Form/Landing per run)
   const scores = await queryAll(
     `SELECT js.score_type, js.raw_score FROM judge_scores js WHERE js.run_id=?`,
     [run.id]
@@ -1157,15 +1178,97 @@ async function tryFinalizeAerials(run, event) {
   });
 
   const hj = await queryOne(`SELECT id FROM judges WHERE event_id=? AND role='HJ'`, [event.id]);
+  // v1.18.01 — persist pre-DD raw air execution for USSS 4110.4.3 tie-break
+  const airNoDd = result.airNoDd ?? null;
   if (hj) {
     await execute(
-      `UPDATE runs SET turns_score=?, air_score=?, speed_score=?, total_score=?, hj_pending=1, updated_at=datetime('now') WHERE id=?`,
-      [result.turnsContrib, result.airContrib, result.speedContrib, result.total, run.id]
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, hj_pending=1, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total, run.id]
     );
   } else {
     await execute(
-      `UPDATE runs SET turns_score=?, air_score=?, speed_score=?, total_score=?, status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=?`,
-      [result.turnsContrib, result.airContrib, result.speedContrib, result.total, run.id]
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total, run.id]
+    );
+  }
+  return result;
+}
+
+// v1.18.00 — Aerials v2 finalization. Each scoring judge submits Air/Form/Landing
+// per jump via score_type ∈ { ae_air_j1, ae_air_j2, ae_form_j1, ae_form_j2, ae_land_j1, ae_land_j2 }.
+async function tryFinalizeAerialsV2(run, event) {
+  const panelSize = parseInt(event.aerials_panel_size) || 5;
+  const numJumps = event.num_jumps || 2;
+
+  const rows = await queryAll(
+    `SELECT js.score_type, js.raw_score, js.judge_id, j.judge_number, j.role
+       FROM judge_scores js JOIN judges j ON j.id = js.judge_id
+       WHERE js.run_id = ?`,
+    [run.id]
+  );
+
+  // Build per-jump per-judge map
+  const byJudge = new Map();  // judge_number -> { 1: {air,form,landing}, 2: {...} }
+  for (const r of rows) {
+    if (!/^ae_/.test(r.score_type)) continue;
+    const jn = r.judge_number;
+    if (!jn) continue;
+    if (!byJudge.has(jn)) byJudge.set(jn, { 1: {}, 2: {} });
+    const isJ1 = /_j1$/.test(r.score_type);
+    const slot = isJ1 ? 1 : 2;
+    if (/^ae_air_/.test(r.score_type))  byJudge.get(jn)[slot].air     = r.raw_score;
+    if (/^ae_form_/.test(r.score_type)) byJudge.get(jn)[slot].form    = r.raw_score;
+    if (/^ae_land_/.test(r.score_type)) byJudge.get(jn)[slot].landing = r.raw_score;
+  }
+
+  // Verify every scoring judge submitted all 3 components for each required jump
+  const required = numJumps >= 2 ? [1, 2] : [1];
+  let complete = byJudge.size >= panelSize;
+  for (const [, j] of byJudge) {
+    for (const slot of required) {
+      const c = j[slot] || {};
+      if (c.air == null || c.form == null || c.landing == null) { complete = false; break; }
+    }
+    if (!complete) break;
+  }
+  if (!complete) return null;
+
+  // Build judgeScores array for engine
+  const judgeScores = [];
+  for (const [judgeNumber, j] of byJudge) {
+    for (const slot of required) {
+      const c = j[slot];
+      judgeScores.push({
+        judge_number: judgeNumber,
+        jump: slot,
+        air: c.air,
+        form: c.form,
+        landing: c.landing,
+      });
+    }
+  }
+
+  const result = calcAerialsScoreV2({
+    judgeScores,
+    dd1: run.jump1_dd || 0,
+    dd2: run.jump2_dd || 0,
+    panelSize,
+    reductionMethod: event.aerials_reduction_method || 'sum_all',
+    numJumps,
+  });
+
+  const hj = await queryOne(`SELECT id FROM judges WHERE event_id=? AND role='HJ'`, [event.id]);
+  // v1.18.01 — persist pre-DD raw air execution for USSS 4110.4.3 tie-break
+  const airNoDd = result.airNoDd ?? null;
+  if (hj) {
+    await execute(
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, aerials_model='v2', hj_pending=1, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total, run.id]
+    );
+  } else {
+    await execute(
+      `UPDATE runs SET turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?, aerials_model='v2', status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=?`,
+      [result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total, run.id]
     );
   }
   return result;
@@ -1367,10 +1470,46 @@ router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
       [run.id]
     );
 
-    const { calcMogulScore, calcAerialsScore } = require('../scoring/engine');
+    const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2 } = require('../scoring/engine');
 
     let partial = null;
-    if (event.discipline === 'aerials') {
+    if (event.discipline === 'aerials' && event.aerials_panel_size != null) {
+      // v1.18.00 — Aerials v2: gather per-judge-per-jump rows (need judge_number, fetch fresh)
+      const v2rows = await queryAll(
+        `SELECT js.score_type, js.raw_score, j.judge_number
+         FROM judge_scores js JOIN judges j ON j.id = js.judge_id
+         WHERE js.run_id = ? AND js.score_type LIKE 'ae_%'`,
+        [run.id]
+      );
+      if (v2rows.length > 0) {
+        const byJudge = new Map();
+        for (const r of v2rows) {
+          if (!r.judge_number) continue;
+          if (!byJudge.has(r.judge_number)) byJudge.set(r.judge_number, { 1: {}, 2: {} });
+          const slot = /_j1$/.test(r.score_type) ? 1 : 2;
+          if (/^ae_air_/.test(r.score_type))  byJudge.get(r.judge_number)[slot].air     = r.raw_score;
+          if (/^ae_form_/.test(r.score_type)) byJudge.get(r.judge_number)[slot].form    = r.raw_score;
+          if (/^ae_land_/.test(r.score_type)) byJudge.get(r.judge_number)[slot].landing = r.raw_score;
+        }
+        const judgeScores = [];
+        for (const [judge_number, j] of byJudge) {
+          for (const slot of [1, 2]) {
+            const c = j[slot];
+            if (c.air != null || c.form != null || c.landing != null) {
+              judgeScores.push({ judge_number, jump: slot, air: c.air ?? 0, form: c.form ?? 0, landing: c.landing ?? 0 });
+            }
+          }
+        }
+        partial = calcAerialsScoreV2({
+          judgeScores,
+          dd1: run.jump1_dd || 0,
+          dd2: run.jump2_dd || 0,
+          panelSize: parseInt(event.aerials_panel_size) || 5,
+          reductionMethod: event.aerials_reduction_method || 'sum_all',
+          numJumps: event.num_jumps || 2,
+        });
+      }
+    } else if (event.discipline === 'aerials') {
       const a1      = remaining.filter(s => s.score_type === 'air_jump1').map(s => s.raw_score);
       const a2      = remaining.filter(s => s.score_type === 'air_jump2').map(s => s.raw_score);
       const form    = remaining.filter(s => s.score_type === 'form').map(s => s.raw_score);

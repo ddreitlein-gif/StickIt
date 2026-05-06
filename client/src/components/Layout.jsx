@@ -76,6 +76,10 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
+  const [version, setVersion] = useState('v1.18.02')
+  useEffect(() => {
+    fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
+  }, [])
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm">
@@ -92,7 +96,7 @@ function AboutPanel({ onClose }) {
             <p className="text-slate-400 text-sm mt-1">Freestyle Mogul Scoring Application</p>
           </div>
           <div className="text-slate-500 text-sm space-y-1">
-            <p>Version 1.16.28</p>
+            <p>Version {version.replace(/^v/, '')}</p>
             <p>&copy; 2026 Rocky Mountain Freestyle.  All rights reserved.</p>
           </div>
         </div>
@@ -182,7 +186,7 @@ export default function Layout() {
               <p className="font-display text-3xl font-bold leading-none tracking-wide">
                 <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
               </p>
-              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.17.02</p>
+              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.18.02</p>
             </div>
           )}
         </div>

@@ -978,8 +978,22 @@ function generateResultsPdf(res, data) {
 
   pdfHeader(doc, meet, event, `${roundLabel} Results`);
 
-  // Pace time info
-  if (event.pace_time) {
+  // Pace time info / aerials panel info
+  if (isAerials && event.aerials_panel_size) {
+    // v1.18.00 — aerials v2 calculation header
+    const eventTypeLabel = ({
+      fis_major: 'FIS OWG/WSC/WC',
+      fis_nac: 'FIS NAC/NorAm',
+      fis_other: 'FIS Other',
+      usa_national: 'USA National',
+      usa_regional: 'USA Regional',
+    })[event.event_type] || event.event_type || 'USA Regional';
+    const reduction = event.aerials_panel_size <= 4
+      ? `Reduction: ${event.aerials_reduction_method || 'sum_all'}`
+      : 'Drop H/L per component';
+    doc.fontSize(8).fillColor('#666').text(`${eventTypeLabel} | ${event.aerials_panel_size} scoring judges | ${reduction} | Truncated to 2dp`, { align: 'center' });
+    doc.fillColor('#000').moveDown(0.3);
+  } else if (event.pace_time) {
     const paceGenderLabel = (event.gender || '').toUpperCase() === 'F' ? 'Female' : 'Male';
     doc.fontSize(8).fillColor('#666').text(`Pace Time (${paceGenderLabel}): ${fmtScore(event.pace_time)}s | T&L Judges: ${event.num_tl_judges} | Air Judges: ${event.num_air_judges}`, { align: 'center' });
     doc.fillColor('#000').moveDown(0.3);

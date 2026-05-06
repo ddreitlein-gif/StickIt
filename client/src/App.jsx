@@ -25,6 +25,7 @@ export default function App() {
         <Route path="/admin/*" element={<Admin />} />
         <Route path="/judge/:eventId" element={<JudgeTablet />} />
         <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />
+        <Route path="/aerials-judge/:eventId/:judgeId" element={<AerialsJudgeTablet />} />
         <Route path="/timekeeper/:eventId" element={<TimekeeperTablet />} />
         <Route path="/scoreboard/:eventId" element={<Scoreboard />} />
         <Route path="/headjudge/:meetId/:eventId" element={<HeadJudgeTablet />} />
