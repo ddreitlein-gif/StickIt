@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.18.03
+**Current version:** v1.18.04
 
 ## Commands
 
@@ -175,6 +175,16 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.18.04 Feature Notes
+
+### Live Scores LIVE NOW Card — Meet Name Promoted (v1.18.04)
+
+Swapped the two text lines on the red LIVE NOW cards at the top of `/livescores`. Previously the larger primary line (`sk-display`, fontSize 13, weight 700) showed `MEN · MOGULS` etc. and the smaller dim line (fontSize 11, opacity 0.85) showed the meet name. The meet name carries more identifying weight than the discipline/gender label, so the lines are now flipped: meet name renders as the primary heading, discipline/gender sits beneath it as the secondary line. Styling on each line is unchanged — only the content order swaps.
+
+**Files modified:** `client/src/pages/LiveScores.jsx`
 
 ---
 

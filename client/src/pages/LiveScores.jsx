@@ -68,10 +68,10 @@ function LiveStrip({ meets }) {
               <LiveDot size={6} color="#fff" />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="sk-display" style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {[gen, disc].filter(Boolean).join(' · ')}
+                  {meet.name}
                 </div>
                 <div style={{ fontSize: 11, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {meet.name}
+                  {[gen, disc].filter(Boolean).join(' · ')}
                 </div>
               </div>
               <span style={{ fontSize: 18, opacity: 0.85 }}>→</span>
