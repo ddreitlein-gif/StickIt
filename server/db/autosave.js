@@ -1,8 +1,12 @@
 /**
- * autosave.js -- lightweight write counter with periodic DB backup
+ * autosave.js -- time-based DB backup
  *
- * After every BACKUP_INTERVAL write operations, copies the SQLite database
- * file to data/backups/ with a timestamp.  Keeps the last MAX_BACKUPS only.
+ * Every BACKUP_INTERVAL_MINUTES, if at least one write has occurred since the
+ * previous backup, copies the SQLite database file to data/backups/ with a
+ * timestamp. Keeps the last MAX_BACKUPS only.
+ *
+ * Time-based (rather than write-counter-based) so that an unexpected server
+ * restart can't strand a partial counter and cause backups to be skipped.
  */
 
 const fs   = require('fs');
@@ -12,10 +16,13 @@ const { execute } = require('./schema');
 const DATA_DIR    = path.join(__dirname, '../../data');
 const DB_PATH     = path.join(DATA_DIR, 'scoring.db');
 const BACKUP_DIR  = path.join(DATA_DIR, 'backups');
-const BACKUP_INTERVAL = 5;   // writes between backups
-const MAX_BACKUPS     = 10;
+const BACKUP_INTERVAL_MINUTES = 5;
+const BACKUP_INTERVAL_MS = BACKUP_INTERVAL_MINUTES * 60 * 1000;
+const MAX_BACKUPS = 10;
 
-let writeCounter = 0;
+let writeCounter = 0;            // lifetime write count for telemetry
+let writesSinceLastBackup = 0;   // reset to 0 after each backup
+let backupTimer = null;
 
 function ensureBackupDir() {
   if (!fs.existsSync(BACKUP_DIR)) {
@@ -52,12 +59,45 @@ async function doBackup() {
 
 /**
  * Call after each write operation (score submit, athlete update, etc.).
- * Triggers a backup every BACKUP_INTERVAL calls.
+ * Records that a backup is wanted at the next interval tick.
  */
 function recordWrite() {
   writeCounter++;
-  if (writeCounter % BACKUP_INTERVAL === 0) {
-    doBackup();
+  writesSinceLastBackup++;
+}
+
+/**
+ * Start the periodic backup timer. Call once at server startup.
+ * Idempotent — repeated calls are no-ops.
+ *
+ * @param {(err: Error, context: { writes: number }) => void} [onError]
+ *   Optional callback invoked when a backup throws. Use this to push
+ *   failures into the AdminDashboard error log.
+ */
+function startAutoBackup(onError) {
+  if (backupTimer) return;
+  backupTimer = setInterval(() => {
+    if (writesSinceLastBackup > 0) {
+      const n = writesSinceLastBackup;
+      writesSinceLastBackup = 0;
+      doBackup().catch(err => {
+        console.error(`[autosave] periodic backup failed (covered ${n} writes):`, err.message);
+        if (typeof onError === 'function') {
+          try { onError(err, { writes: n }); } catch (_) {}
+        }
+      });
+    }
+  }, BACKUP_INTERVAL_MS);
+  if (typeof backupTimer.unref === 'function') backupTimer.unref();
+}
+
+/**
+ * Stop the periodic backup timer (used by tests; not called in production).
+ */
+function stopAutoBackup() {
+  if (backupTimer) {
+    clearInterval(backupTimer);
+    backupTimer = null;
   }
 }
 
@@ -82,5 +122,17 @@ function listBackups() {
 }
 
 function getWriteCount() { return writeCounter; }
+function getPendingWrites() { return writesSinceLastBackup; }
 
-module.exports = { recordWrite, listBackups, getWriteCount, doBackup, BACKUP_DIR, BACKUP_INTERVAL, MAX_BACKUPS };
+module.exports = {
+  recordWrite,
+  listBackups,
+  getWriteCount,
+  getPendingWrites,
+  doBackup,
+  startAutoBackup,
+  stopAutoBackup,
+  BACKUP_DIR,
+  BACKUP_INTERVAL_MINUTES,
+  MAX_BACKUPS,
+};

@@ -130,6 +130,11 @@ export default function Overlay() {
   const lastAthleteRef = useRef(null);
   const dualActiveRef = useRef(false);
   const containerRef = useRef(null);
+  // Timestamp of the last state-mutating WebSocket message. Polling fallbacks
+  // check this to avoid overwriting a fresh WS update with an in-flight poll
+  // response that started before the WS message arrived (which would cause a
+  // visible flicker on the broadcast overlay).
+  const lastWsAtRef = useRef(0);
   useEffect(() => { dualActiveRef.current = dualActive; }, [dualActive]);
 
   const discipline = event?.discipline || null;
@@ -260,11 +265,18 @@ export default function Overlay() {
     if (!eventId || !discipline || resolving) return;
 
     const poll = async () => {
+      const pollStartedAt = Date.now();
+      // If a WebSocket message arrived after this poll started, the poll's
+      // data is stale relative to the WS state — skip the state mutation.
+      const isStale = () => lastWsAtRef.current > pollStartedAt;
+
       if (discipline === 'dual_mogul') {
+        if (isStale()) return;
         await fetchActiveDual();
         return;
       }
       const active = await fetch(`/api/events/${eventId}/runs/active`).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (isStale()) return;
       if (active && active.id) {
         const athlete = {
           bib_number: active.is_forerunner ? '' : (active.bib_number || ''),
@@ -279,6 +291,7 @@ export default function Overlay() {
         return;
       }
       const results = await fetch(`/api/events/${eventId}/results`).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (isStale()) return;
       if (results && results.length > 0) {
         const nonManual = results.filter(r => !r.manually_entered);
         if (nonManual.length > 0) {
@@ -332,6 +345,7 @@ export default function Overlay() {
 
         if (msg.type === 'run_started') {
           if (dualActiveRef.current) return;
+          lastWsAtRef.current = Date.now();
           const athlete = {
             bib_number: d.is_forerunner ? '' : (d.bib || d.bib_number || ''),
             first_name: d.is_forerunner ? 'Forerunner' : (d.first_name || ''),
@@ -346,6 +360,7 @@ export default function Overlay() {
         }
 
         if (msg.type === 'score_update') {
+          lastWsAtRef.current = Date.now();
           if (d.is_forerunner) {
             setSingleMode('idle');
             setCurrentAthlete(null);
@@ -417,11 +432,13 @@ export default function Overlay() {
         }
 
         if (msg.type === 'dual_match_started') {
+          lastWsAtRef.current = Date.now();
           fetchActiveDual();
           return;
         }
 
         if (msg.type === 'OVERLAY_HIDE') {
+          lastWsAtRef.current = Date.now();
           setSingleMode('idle');
           setCurrentAthlete(null);
           setCurrentScore(null);

@@ -766,11 +766,14 @@ function HeatsPanel({ event, registrations, onRefresh }) {
         pass_through_count: (newPhaseType === 'qualifier_2') ? passThrough : undefined,
         final_size: (['final_1', 'final_2'].includes(newPhaseType)) ? finalSize : undefined,
       }
-      await api.createPhase(event.id, body)
+      const resp = await api.createPhase(event.id, body)
       setShowAddPhase(false)
       setNewPhaseType('')
       setRunOrderMethod('')
       await loadData()
+      if (resp && resp.undersized_notice) {
+        alert(resp.undersized_notice)
+      }
     } catch (e) { setError(e.message) }
     setAction('')
   }
@@ -2530,8 +2533,12 @@ function DualScoringPanel({ event, registrations }) {
           </div>
         )}
 
-        {/* Paper mode: Enter / Edit Scores. v1.16.17 -- Edit Scores also available for completed tablet-mode matches. */}
-        {m.registration_id_blue && m.registration_id_red && isDone && (
+        {/* Paper mode: Enter / Edit Scores. v1.16.17 -- Edit Scores also available for completed tablet-mode matches.
+            Disabled once the event is finalized (status='complete') because editing past finalization would
+            silently desync events.dual_bracket_review_status (locked at 'approved') from underlying scores.
+            TODO: Add a deliberate "edit finalized event" path in the Admin panel that re-opens the event
+            (status -> 'in_progress', review_status -> NULL) under an audit-logged admin action. */}
+        {m.registration_id_blue && m.registration_id_red && isDone && event.status !== 'complete' && (
           <div className="mt-3 pt-2 border-t border-slate-700">
             <button
               onClick={() => setPaperModal({ match: m, existingPoints: ptData?.judgeScores || null })}

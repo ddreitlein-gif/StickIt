@@ -3,12 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Prevent Sun Mode FOUC on public pages: set the page background to the
+      // user's saved theme before React mounts. Only applies to Home / LiveScores /
+      // Scoreboard — Overlay needs transparency, and officials/admin manage their
+      // own backgrounds. PublicLayout's runtime toggle remains the source of truth.
+      (function () {
+        try {
+          var p = location.pathname;
+          var isPublic = p === '/' || p === '/livescores' || p.indexOf('/scoreboard/') === 0;
+          if (!isPublic) return;
+          var sun = localStorage.getItem('stickit.sunMode') === '1';
+          document.documentElement.style.background = sun ? '#fafbfc' : '#070d1a';
+        } catch (e) {}
+      })();
+    </script>
     <title>StickIt - Score with Confidence</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&family=Oswald:wght@400;500;600;700&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎿</text></svg>" />
-    <script type="module" crossorigin src="/assets/index-CCI0CJKE.js"></script>
+    <script type="module" crossorigin src="/assets/index-C_dErtEE.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-1sHu8aX8.css">
   </head>
   <body>

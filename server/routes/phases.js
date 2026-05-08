@@ -355,11 +355,32 @@ router.post('/', async (req, res) => {
       req.app.broadcast(eventId, 'phase_created', { phase_id: newId, phase_type, label });
     }
 
+    // Detect undersized field — the cut produced fewer athletes than the
+    // configured size. Most often happens when the prior phase had many
+    // DNS/DNF/DSQ runs or fewer registrations than expected. Tied-rank
+    // expansion is the opposite case (handled by takeUpToRank itself).
+    let undersizedNotice = null;
+    if (phase_type === 'final_1' || phase_type === 'final_2') {
+      const expected = (phase_type === 'final_1') ? (final_size || 16) : (final_size || 8);
+      if (ordered.length < expected) {
+        undersizedNotice = `${label} configured for ${expected} athletes but only ${ordered.length} qualified — proceeding with ${ordered.length}.`;
+      }
+    } else if (phase_type === 'qualifier_2') {
+      // Q2 takes everyone NOT in pass-through. Undersized would mean Q1 had
+      // fewer-than-pass-through athletes; warn so admin notices.
+      const ptCount = pass_through_count || 0;
+      const q1Count = (priorRanked || []).length;
+      if (ptCount > q1Count) {
+        undersizedNotice = `${label}: pass-through configured at ${ptCount} but only ${q1Count} athletes completed Qualifier 1.`;
+      }
+    }
+
     const result = await queryOne('SELECT * FROM event_phases WHERE id=?', [newId]);
     res.status(201).json({
       phase: result,
       eligible_count: ordered.length,
       created_phases: createdPhases.length > 0 ? createdPhases : undefined,
+      undersized_notice: undersizedNotice,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

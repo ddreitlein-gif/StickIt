@@ -102,8 +102,8 @@ export default function AdminBackups() {
           </div>
           <div>
             <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Auto-backup</div>
-            <div className="text-sm text-white">Every <span className="font-mono">{stats.interval ?? 5}</span> writes</div>
-            <div className="text-xs text-slate-500 mt-0.5">Counter: <span className="font-mono">{stats.write_counter ?? 0}</span></div>
+            <div className="text-sm text-white">Every <span className="font-mono">{stats.interval_minutes ?? 5}</span> min if writes occurred</div>
+            <div className="text-xs text-slate-500 mt-0.5">Pending: <span className="font-mono">{stats.pending_writes ?? 0}</span> · Total: <span className="font-mono">{stats.write_counter ?? 0}</span></div>
           </div>
         </div>
       </div>
@@ -127,7 +127,7 @@ export default function AdminBackups() {
         <div className="text-slate-500 py-8 text-center">Loading...</div>
       ) : backups.length === 0 ? (
         <div className="text-slate-500 py-8 text-center">
-          No backups yet. Backups are created automatically every {stats.interval ?? 5} write operations.
+          No backups yet. Backups are created automatically every {stats.interval_minutes ?? 5} minutes when writes have occurred.
         </div>
       ) : (
         <div className="rounded-xl border border-slate-700/50 overflow-hidden">

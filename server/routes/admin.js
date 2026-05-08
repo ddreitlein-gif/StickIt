@@ -362,7 +362,7 @@ router.get('/usss/people/download', async (req, res) => {
 
 router.get('/backups', async (req, res) => {
   try {
-    const { listBackups, getWriteCount, BACKUP_INTERVAL, MAX_BACKUPS } = require('../db/autosave');
+    const { listBackups, getWriteCount, getPendingWrites, BACKUP_INTERVAL_MINUTES, MAX_BACKUPS } = require('../db/autosave');
     const backups = listBackups();
     const totalSize = backups.reduce((sum, b) => sum + (b.size_bytes || 0), 0);
     res.json({
@@ -373,7 +373,8 @@ router.get('/backups', async (req, res) => {
         newest: backups.length ? backups[0].created_at : null,
         total_size_bytes: totalSize,
         write_counter: getWriteCount(),
-        interval: BACKUP_INTERVAL,
+        pending_writes: getPendingWrites(),
+        interval_minutes: BACKUP_INTERVAL_MINUTES,
         max: MAX_BACKUPS,
       },
     });

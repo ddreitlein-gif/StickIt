@@ -3,6 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Prevent Sun Mode FOUC on public pages: set the page background to the
+      // user's saved theme before React mounts. Only applies to Home / LiveScores /
+      // Scoreboard — Overlay needs transparency, and officials/admin manage their
+      // own backgrounds. PublicLayout's runtime toggle remains the source of truth.
+      (function () {
+        try {
+          var p = location.pathname;
+          var isPublic = p === '/' || p === '/livescores' || p.indexOf('/scoreboard/') === 0;
+          if (!isPublic) return;
+          var sun = localStorage.getItem('stickit.sunMode') === '1';
+          document.documentElement.style.background = sun ? '#fafbfc' : '#070d1a';
+        } catch (e) {}
+      })();
+    </script>
     <title>StickIt - Score with Confidence</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

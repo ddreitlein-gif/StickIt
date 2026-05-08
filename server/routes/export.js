@@ -236,7 +236,7 @@ router.get('/results-csv/:eventId', async (req, res) => {
     if (numJumps >= 2) jumpHeaders.push('Jump 2 Code', 'Jump 2 DD');
 
     const headers = [
-      'Rank', 'Bib', 'Last Name', 'First Name', 'Nation', 'Club',
+      'Rank', 'Bib', 'Last Name', 'First Name', 'Club',
       'T Score', 'A Score',
       ...(hasSpeed ? ['S Score'] : []),
       'Total',
@@ -275,7 +275,7 @@ router.get('/results-csv/:eventId', async (req, res) => {
 
       return [
         r.rank, r.bib_number, r.last_name, r.first_name,
-        r.nation || '', r.club || '',
+        r.club || '',
         r.turns_score != null ? r.turns_score : '',
         r.air_score   != null ? r.air_score   : '',
         ...(hasSpeed ? [r.speed_score != null ? r.speed_score : ''] : []),
@@ -388,7 +388,7 @@ router.get('/results-xlsx/:eventId', async (req, res) => {
     if (numJumpsX >= 2) jumpHeadersX.push('Jump 2 Code', 'Jump 2 DD');
 
     const headers = [
-      'Rank', 'Bib', 'Last Name', 'First Name', 'Nation', 'Club',
+      'Rank', 'Bib', 'Last Name', 'First Name', 'Club',
       'T Score', 'A Score',
       ...(hasSpeedX ? ['S Score'] : []),
       'Total',
@@ -434,7 +434,7 @@ router.get('/results-xlsx/:eventId', async (req, res) => {
 
       ws.addRow([
         r.rank, r.bib_number, r.last_name, r.first_name,
-        r.nation || '', r.club || '',
+        r.club || '',
         r.turns_score ?? null,
         r.air_score   ?? null,
         ...(hasSpeedX ? [r.speed_score ?? null] : []),
@@ -521,7 +521,6 @@ router.get('/results-html/:eventId', async (req, res) => {
     <td class="bib">${r.bib_number || ''}</td>
     <td class="name">${r.last_name}, ${r.first_name}</td>
     <td class="club">${r.club || ''}</td>
-    <td class="nation">${r.nation || ''}</td>
     <td class="num">${r.run_status ? '--' : fmt(r.turns_score)}</td>
     <td class="num">${r.run_status ? '--' : fmt(r.air_score)}</td>
     <td class="num">${r.run_status ? '--' : fmt(r.speed_score)}</td>
@@ -558,7 +557,6 @@ router.get('/results-html/:eventId', async (req, res) => {
   td.bib { color: #555; font-size: 12px; width: 40px; }
   td.name { font-weight: bold; }
   td.club { color: #555; font-size: 12px; }
-  td.nation { color: #555; font-size: 12px; width: 48px; }
   td.total { font-weight: bold; font-size: 14px; color: #1a3a6b; }
   td.jumps { font-size: 12px; color: #555; }
   td.status { font-weight: bold; font-size: 11px; color: #c00; }
@@ -583,7 +581,6 @@ router.get('/results-html/:eventId', async (req, res) => {
       <th>Bib</th>
       <th>Athlete</th>
       <th>Club</th>
-      <th>Nat</th>
       <th class="num">Turns</th>
       <th class="num">Air</th>
       <th class="num">Speed</th>

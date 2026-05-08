@@ -16,7 +16,7 @@ function fmt1(n) { if (n == null || n === '' || isNaN(Number(n))) return '–'; 
 
 export default function Scoreboard() {
   const { eventId: rawEventId } = useParams();
-  const { eventId: rEvt, loading: resolving } = useResolveIds({ event: rawEventId });
+  const { eventId: rEvt, loading: resolving, resolveError } = useResolveIds({ event: rawEventId });
   const eventId = rEvt || rawEventId;
 
   const [results, setResults] = useState([]);
@@ -36,6 +36,10 @@ export default function Scoreboard() {
   const [upcoming, setUpcoming] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const wsRef = useRef(null);
+  // Timestamp of the last state-mutating WebSocket message. The 5-second poll
+  // skips one cycle if a WS message already refreshed state recently — avoids
+  // a stale poll response landing after a fresh WS-triggered load.
+  const lastWsAtRef = useRef(0);
 
   const isDual = event && event.discipline === 'dual_mogul';
 
@@ -161,7 +165,7 @@ export default function Scoreboard() {
     } catch {}
   };
 
-  useEffect(() => { if (!resolving) loadEvent(); }, [eventId, resolving]);
+  useEffect(() => { if (!resolving && !resolveError) loadEvent(); }, [eventId, resolving, resolveError]);
 
   useEffect(() => {
     if (event == null) return;
@@ -175,6 +179,10 @@ export default function Scoreboard() {
     }
 
     const iv = setInterval(() => {
+      // If a WebSocket message refreshed state within the last 4s, the WS
+      // pipeline already covered this cycle — skip to avoid a stale fetch
+      // overwriting fresher data.
+      if (Date.now() - lastWsAtRef.current < 4000) return;
       if (isDual) {
         loadActiveDual();
         loadBracket();
@@ -192,6 +200,7 @@ export default function Scoreboard() {
         const msg = JSON.parse(e.data);
         if (msg.eventId !== eventId) return;
         const d = msg.data || {};
+        lastWsAtRef.current = Date.now();
         if (isDual) {
           if (msg.type === 'dual_match_started') {
             loadActiveDual();
@@ -259,6 +268,24 @@ export default function Scoreboard() {
     .sort((a, b) => a.run_number - b.run_number);
 
   const eventLabel = event ? `${(event.gender === 'M' ? 'MEN' : event.gender === 'F' ? 'WOMEN' : '')} ${DISCIPLINE_LABEL[event.discipline] || ''}`.trim() : '';
+
+  // Short-code resolution failed — show a clear not-found state instead of a
+  // blank page. Caller probably has a bad/stale URL or scanned an outdated QR.
+  if (!resolving && resolveError) {
+    return (
+      <PublicLayout>
+        <div style={{ minHeight: '100vh', background: 'var(--gradient-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ maxWidth: 480, textAlign: 'center', background: 'var(--bg-panel)', border: '1px solid var(--border)', borderRadius: 16, padding: 32 }}>
+            <div className="sk-display" style={{ fontSize: 28, color: 'var(--fg)', marginBottom: 12 }}>Event not found</div>
+            <div style={{ color: 'var(--fg-muted)', fontSize: 14, lineHeight: 1.5 }}>
+              The link or short code <span className="sk-mono" style={{ color: 'var(--fg)' }}>{rawEventId}</span> doesn't match any event. The event may have been deleted, or the URL may be mistyped or out of date.
+            </div>
+            <a href="/livescores" style={{ display: 'inline-block', marginTop: 20, padding: '10px 18px', borderRadius: 8, background: 'var(--blue)', color: '#fff', textDecoration: 'none', fontWeight: 600 }}>View live scores</a>
+          </div>
+        </div>
+      </PublicLayout>
+    );
+  }
 
   // -----------------------------
   //  DUAL MOGUL

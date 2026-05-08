@@ -3,8 +3,8 @@ const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const path = require('path');
-const { initSchema, queryOne } = require('./db/schema');
-const { recordWrite, listBackups, getWriteCount } = require('./db/autosave');
+const { initSchema, queryOne, execute } = require('./db/schema');
+const { recordWrite, listBackups, getWriteCount, startAutoBackup } = require('./db/autosave');
 const { startScheduledSync } = require('./usss/sync');
 
 const app = express();
@@ -108,7 +108,7 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.19.00' }));
+app.get('/api/version', (req, res) => res.json({ version: 'v1.19.01' }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -190,9 +190,26 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-initSchema().then(() => {
-  server.listen(PORT, () => console.log(`StickIt v1.19.00 ready on port ${PORT}`));
+initSchema().then(async () => {
+  // Clear any stale dual mogul manual-entry locks from a prior run. If the
+  // server crashed (or the operator's browser closed) while a manual-entry
+  // session was open, judges' tablets would otherwise stay locked indefinitely.
+  try {
+    await execute(`UPDATE events SET dual_manual_entry=0 WHERE dual_manual_entry=1`);
+  } catch (e) {
+    console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
+  }
+  server.listen(PORT, () => console.log(`StickIt v1.19.01 ready on port ${PORT}`));
   startScheduledSync();
+  startAutoBackup((err, ctx) => {
+    app.errorLog.push({
+      timestamp: new Date().toISOString(),
+      method: 'BACKUP',
+      url: 'auto',
+      message: `Auto-backup failed (covered ${ctx.writes} writes): ${err.message}`,
+    });
+    if (app.errorLog.length > 100) app.errorLog.shift();
+  });
 }).catch(err => { console.error('Schema init failed:', err); process.exit(1); });
 
 module.exports = { app, wss };

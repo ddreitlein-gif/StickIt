@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.19.00
+**Current version:** v1.19.01
 
 ## Commands
 
@@ -175,6 +175,41 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.19.01 Feature Notes
+
+### Pre-USSS Demo Bug-Hunt Pass (v1.19.01)
+
+Comprehensive multi-agent code review ahead of presenting at US Ski & Snowboard. Eleven bug fixes across the live-scoring path, public surfaces, dual mogul state machine, autosave subsystem, and exports. **No scoring math changes.** All formulas, DD lookup, judge roles, server routes, and API contracts are unchanged.
+
+**Live scoring path:**
+- **Air judge code reset on per-jump rejection** — `client/src/pages/JudgeTablet.jsx:573-580`. The WebSocket reject handler cleared `airJ1`/`airJ2` but left `code1`/`code2`/`codesSubmitted` set when the HJ rejected only one of two air-judge submissions. Judge would see a blank score but a still-selected jump code chip, risking re-entry against the wrong code. Now mirrors the polling-path behavior (`code1`, `code2`, `codesSubmitted` reset). The "Clear Codes" path was already correct via v1.16.08.
+
+**Dual mogul state:**
+- **Manual-entry lock cleared on server boot** — `server/index.js`. If an operator clicked Manual Score Entry and the browser crashed (or the server restarted) before they could click Cancel, `events.dual_manual_entry=1` persisted indefinitely and judges' tablets stayed locked out. Boot now runs `UPDATE events SET dual_manual_entry=0 WHERE dual_manual_entry=1` once before listening. Live-session timeout (mid-process expiry) deferred to a future build.
+- **Edit Scores hidden on finalized dual events** — `client/src/pages/EventDetail.jsx`. v1.16.17 made Edit Scores available on completed matches regardless of paper-mode. After event finalization, editing a match silently desynced `events.dual_bracket_review_status` (locked at `'approved'`) from underlying scores because `clearDualBracketReviewStatus` early-returns on approved. Edit Scores now hidden once `event.status === 'complete'`. A future admin-panel "re-open finalized event" action is documented in the plan/notes for proper post-finalization edits.
+
+**Phase creation:**
+- **Cut-line undersized field notice** — `server/routes/phases.js` + `client/src/pages/EventDetail.jsx`. When `final_size=16` but only 8 athletes qualified (e.g., heavy DNS), the cut silently created an 8-athlete final with no operator warning. POST /phases now returns an `undersized_notice` string when the actual eligible count is less than configured for `final_1`/`final_2`/`qualifier_2`; the Phases tab surfaces it as an alert immediately after creation. Phase still creates with whatever athletes are available — non-blocking. Tied-rank cut expansion (v1.16.32) is unchanged; this only flags the opposite case.
+
+**Autosave / backups:**
+- **Time-based auto-backup** — `server/db/autosave.js`. Replaced the every-5-writes counter with a 5-minute `setInterval` that fires `doBackup()` only when at least one write has occurred since the previous backup. The old approach reset its counter on every restart, so rapid restart cycles could starve backups; time-based survives restarts naturally. AdminBackups page now shows "Every 5 min if writes occurred" with pending-write count and total-write counter side-by-side.
+- **Auto-backup failures piped into AdminDashboard error log** — `server/db/autosave.js` + `server/index.js`. `startAutoBackup(onError)` now accepts an error callback; the boot wiring pushes failures onto `app.errorLog` with a `BACKUP / auto` tag and "Auto-backup failed (covered N writes)" message so operators see them on the AdminDashboard alongside HTTP errors.
+
+**Public surfaces:**
+- **Overlay polling vs WebSocket dedup** — `client/src/pages/Overlay.jsx`. The 3-second hardware-encoder fallback poll could overwrite a fresh WebSocket score update if its in-flight fetch landed after the WS message — visible flicker on broadcast canvases. Each poll now captures a `pollStartedAt` timestamp and skips its state mutation if `lastWsAtRef.current > pollStartedAt`. WebSocket-dead environments (YoloBox/OBS without persistent WS) are unaffected because `lastWsAtRef` stays at 0.
+- **Scoreboard polling vs WebSocket dedup** — `client/src/pages/Scoreboard.jsx`. Same pattern, simpler implementation: the 5-second poll skips one cycle if a WS message landed in the last 4 seconds. Reduces unnecessary refetches and the rare race where a stale poll overwrites a fresh WS-triggered load.
+- **Sun Mode FOUC eliminated** — `client/index.html`. A tiny inline `<script>` runs before React mounts; reads `localStorage.stickit.sunMode` and paints `<html>` background to the appropriate theme color on public routes (`/`, `/livescores`, `/scoreboard/...`). Officials/admin/tablet routes and the Overlay's transparent canvas are unaffected — the script returns early on those paths. PublicLayout's `useEffect` continues to handle runtime toggling.
+- **Scoreboard "Event not found" page** — `client/src/hooks/useResolveIds.js` + `client/src/pages/Scoreboard.jsx`. The hook now returns `resolveError: true` when `/api/resolve` fails or returns null IDs for a requested short code. Scoreboard renders a clear "Event not found" card with the bad short code echoed back and a "View live scores" link, instead of silently using the bad ID and showing a blank page. Overlay intentionally remains silent (no error text on broadcast canvases).
+
+**Exports:**
+- **Nation column removed** — `server/routes/export.js`. The CSV, Excel, and HTML print exports always emitted an empty `Nation` column because v1.16.12 removed Nation from the Athletes UI but left it wedged between First Name and Club in the output. Removed from headers, data rows, and the HTML print CSS. The underlying `athletes.nation` DB column is preserved for USSS transmit XML and meet import/export round-trip per CLAUDE.md.
+
+**Skipped / deferred:** Aerials legacy formula (procedural mitigation per existing CLAUDE.md), advanceWinner null-match logging, confirm-dialog backdrop edge-tap, manual-entry stale partial scores (by design), admin auth (Railway-level mitigation), and a five-of-eight verification pass on rules-compliance audit items — all documented in `Claude Output/StickIt_Outstanding_Upgrades.docx` for a future cleanup pass.
+
+**Files modified:** `server/index.js`, `server/db/autosave.js`, `server/routes/admin.js`, `server/routes/dual.js`, `server/routes/export.js`, `server/routes/phases.js`, `client/index.html`, `client/src/hooks/useResolveIds.js`, `client/src/pages/EventDetail.jsx`, `client/src/pages/JudgeTablet.jsx`, `client/src/pages/Overlay.jsx`, `client/src/pages/Scoreboard.jsx`, `client/src/pages/admin/AdminBackups.jsx`, `client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

@@ -572,11 +572,17 @@ export default function JudgeTablet() {
               setDeduction(0)
             } else if (rt === 'air_jump1') {
               setAirJ1(null)
+              setCode1('')
+              setCodesSubmitted(false)
             } else if (rt === 'air_jump2') {
               setAirJ2(null)
+              setCode2('')
+              setCodesSubmitted(false)
             } else {
               setCarving(null); setAbsExt(null); setUpperBody(null); setDeduction(0)
               setAirJ1(null); setAirJ2(null)
+              setCode1(''); setCode2('')
+              setCodesSubmitted(false)
             }
             setStatus('Score rejected -- please resubmit')
           } else {
