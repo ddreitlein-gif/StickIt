@@ -2,168 +2,29 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import useHighContrast from '../hooks/useHighContrast'
 import useResolveIds from '../hooks/useResolveIds'
+import AthleteBar from '../components/tablet/AthleteBar'
+import HCModeButton from '../components/tablet/HCModeButton'
+import ScoreButtonGrid, { ZONES_AIR, ZONES_TL, ZONES_COMP_5, VALUES_AIR_15 } from '../components/tablet/ScoreButtonGrid'
+import FineTuneRow from '../components/tablet/FineTuneRow'
+import DeductionPad from '../components/tablet/DeductionPad'
+import JumpCodeGrid from '../components/tablet/JumpCodeGrid'
+import ReferencePanel, { RefPillRow } from '../components/tablet/ReferencePanel'
 
 const API = '/api'
 
-// Large-button numeric keypad for touch entry
-function ScorePad({ value, onChange, min, max, step = 0.5, label, quickValues }) {
-  const [input, setInput] = useState(value !== null ? String(value) : '')
-  const [rangeError, setRangeError] = useState('')
-  const inputRef = useRef(null)
+// Frequent-jump-code lists (preserved verbatim from pre-redesign — see CLAUDE.md
+// v1.16.09 + v1.16.06 plus user's v1.18.05 confirmations Q1/Q2: RQS uses the
+// Devo list).
+const COMP_FREQ_CODES = ['N','S','T','K','TS','3','bT','bp','bL','bG','bF','7op','7oG']
+const DEVO_FREQ_CODES = ['S','T','D','X','K','TS','TT','TD','TTS','3','3p']
 
-  const fmtVal = (v) => v !== null && v !== undefined ? Number(v).toFixed(1) : ''
-
-  // Sync input when value changes externally (e.g., after rejection clears a field)
-  useEffect(() => {
-    setInput(value !== null ? fmtVal(value) : '')
-  }, [value])
-
-  const commit = () => {
-    const n = parseFloat(input)
-    if (isNaN(n)) {
-      setInput(value !== null ? fmtVal(value) : '')
-      setRangeError('')
-      return
-    }
-    if (n < min || n > max) {
-      setRangeError(`Value must be ${min}--${max}`)
-      setInput(value !== null ? fmtVal(value) : '')
-      return
-    }
-    setRangeError('')
-    onChange(n)
-  }
-
-  // Force commit before external reads (called before submit)
-  const forceCommit = () => {
-    if (inputRef.current) inputRef.current.blur()
-  }
-
-  const quick = (v) => { setInput(fmtVal(v)); setRangeError(''); onChange(v) }
-
-  const quickVals = quickValues || (() => {
-    const vals = []
-    for (let v = min; v <= max + 0.0001; v = Math.round((v + step) * 1000) / 1000) {
-      vals.push(Math.round(v * 1000) / 1000)
-    }
-    return vals
-  })()
-
-  return (
-    <div className="space-y-3">
-      <div className="text-slate-400 text-sm font-semibold uppercase tracking-wide">{label}</div>
-      <div className="flex items-center gap-3">
-        <input
-          ref={inputRef}
-          type="number" min={min} max={max} step={step}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onBlur={commit}
-          className={`w-28 text-3xl font-bold text-center bg-slate-800 border-2 focus:border-blue-500 rounded-xl p-3 text-white outline-none ${rangeError ? 'border-red-500' : 'border-slate-600'}`}
-          inputMode="decimal"
-        />
-        <div className="text-slate-500 text-sm">{min}--{max}</div>
-      </div>
-      {rangeError && (
-        <div className="text-red-400 text-xs font-semibold">{rangeError}</div>
-      )}
-      <div className="flex flex-wrap gap-2">
-        {quickVals.map(v => (
-          <button
-            key={v}
-            onClick={() => quick(v)}
-            className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${
-              value === v
-                ? 'bg-blue-600 text-white ring-2 ring-blue-400'
-                : 'bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500'
-            }`}
-          >
-            {Number(v).toFixed(1)}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
+// Friendly judge-role display labels — prototype shows "T&L Judge 3", not "TL3".
+// Server-side role state is unchanged; this map is display-only.
+const ROLE_DISPLAY = {
+  TL1: 'T&L Judge 1', TL2: 'T&L Judge 2', TL3: 'T&L Judge 3',
+  Air1: 'Air J1',     Air2: 'Air J2',     HJ:  'Head Judge',
 }
-
-// ── Cumulative Deduction Pad ─────────────────────────────────────────────────
-const DEDUCTION_BUTTONS = [
-  { value: 0.1, label: '0.1' },
-  { value: 0.5, label: '0.5' },
-  { value: 1.0, label: '1.0' },
-  { value: 1.6, label: '1.6' },
-  { value: 6.0, label: '6.0' },
-]
-
-function DeductionPad({ value, onChange }) {
-  const [manualInput, setManualInput] = useState('')
-  const [manualMode, setManualMode] = useState(false)
-
-  useEffect(() => {
-    if (value === 0) setManualInput('')
-  }, [value])
-
-  const addDeduction = (amt) => {
-    const next = Math.min(20, Math.round(((value || 0) + amt) * 10) / 10)
-    onChange(next)
-    setManualMode(false)
-  }
-
-  const clear = () => { onChange(0); setManualInput(''); setManualMode(false) }
-
-  const commitManual = () => {
-    const n = parseFloat(manualInput)
-    if (!isNaN(n) && n >= 0 && n <= 20) {
-      onChange(Math.round(n * 10) / 10)
-    }
-    setManualMode(false)
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="text-slate-400 text-sm font-semibold uppercase tracking-wide">Deduction</div>
-      <div className="flex items-center gap-3">
-        <div className={`w-28 text-3xl font-bold text-center bg-slate-800 border-2 rounded-xl p-3 text-white ${(value || 0) > 0 ? 'border-red-500' : 'border-slate-600'}`}>
-          {(value || 0).toFixed(1)}
-        </div>
-        <button onClick={clear} className="px-3 py-2 rounded-lg text-sm font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500">
-          Clear
-        </button>
-        <button onClick={() => setManualMode(!manualMode)} className="px-3 py-2 rounded-lg text-sm font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500">
-          Manual
-        </button>
-      </div>
-      {manualMode && (
-        <div className="flex items-center gap-2">
-          <input
-            type="number" min={0} max={20} step={0.1}
-            value={manualInput}
-            onChange={e => setManualInput(e.target.value)}
-            onBlur={commitManual}
-            onKeyDown={e => e.key === 'Enter' && commitManual()}
-            placeholder="0.0"
-            className="w-28 text-lg font-bold text-center bg-slate-800 border-2 border-slate-600 focus:border-blue-500 rounded-xl p-2 text-white outline-none"
-            inputMode="decimal"
-            autoFocus
-          />
-          <span className="text-slate-500 text-sm">0–20</span>
-        </div>
-      )}
-      <div className="flex flex-wrap gap-2">
-        {DEDUCTION_BUTTONS.map(b => (
-          <button
-            key={b.value}
-            onClick={() => addDeduction(b.value)}
-            className="px-4 py-3 rounded-lg text-sm font-bold bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500 transition-all"
-          >
-            +{b.label}
-          </button>
-        ))}
-      </div>
-      <div className="text-xs text-slate-500">Tap to accumulate. 0.1 minor &middot; 0.5 stumble &middot; 1.6 lane change &middot; 6.0 stop/fall</div>
-    </div>
-  )
-}
+const roleDisplay = (role) => ROLE_DISPLAY[role] || role || ''
 
 // ── Dual Mogul Judge Scoring ─────────────────────────────────────────────────
 const DUAL_ROLE_TO_NUM = {
@@ -176,128 +37,6 @@ const DUAL_ROLE_LABEL = {
 const SPLITS = [[5,0],[0,5],[4,1],[1,4],[3,2],[2,3]]
 const SPLITS_4PT = [[4,0],[0,4],[3,1],[1,3],[2,2]]
 
-// ── FIS Score Card Reference Data ───────────────────────────────────────────
-const TL_COMPONENT_REF = [
-  { label: 'Carving (50%)', ranges: [
-    { level: 'Excellent', range: '8.1 – 10.0' },
-    { level: 'Good', range: '6.1 – 8.0' },
-    { level: 'Adequate', range: '4.1 – 6.0' },
-    { level: 'Managing', range: '2.1 – 4.0' },
-    { level: 'Poor', range: '0.1 – 2.0' },
-  ]},
-  { label: 'Ab/Ext (25%)', ranges: [
-    { level: 'Excellent', range: '4.1 – 5.0' },
-    { level: 'Good', range: '3.1 – 4.0' },
-    { level: 'Adequate', range: '2.1 – 3.0' },
-    { level: 'Managing', range: '1.1 – 2.0' },
-    { level: 'Poor', range: '0.1 – 1.0' },
-  ]},
-  { label: 'UB (25%)', ranges: [
-    { level: 'Excellent', range: '4.1 – 5.0' },
-    { level: 'Good', range: '3.1 – 4.0' },
-    { level: 'Adequate', range: '2.1 – 3.0' },
-    { level: 'Managing', range: '1.1 – 2.0' },
-    { level: 'Poor', range: '0.1 – 1.0' },
-  ]},
-]
-
-const TL_NONCOMPONENT_REF = [
-  { label: 'T&L Total', ranges: [
-    { level: 'Excellent', range: '16.1 – 20.0' },
-    { level: 'Good', range: '12.1 – 16.0' },
-    { level: 'Adequate', range: '8.1 – 12.0' },
-    { level: 'Managing', range: '4.1 – 8.0' },
-    { level: 'Poor', range: '0.1 – 4.0' },
-  ]},
-]
-
-const DEDUCTION_REF = [
-  { range: '0.1 – 2.0', desc: 'Lt. touch, small stumble, fall line dev, speed check, dbl pole, Shooting' },
-  { range: '2.1 – 2.8', desc: 'Medium touch, no stop' },
-  { range: '2.9 – 4.0', desc: 'Hard touch / Sig sliding/front roll / no stop' },
-  { range: '4.1 – 5.9', desc: 'Complete fall w/o stop, Slide to near stop' },
-  { range: '6.0', desc: 'ANY Complete Stop' },
-]
-
-const AIR_REF = {
-  scores: [
-    { level: 'Excellent', range: '8.1 – 10.0' },
-    { level: 'Good', range: '6.1 – 8.0' },
-    { level: 'Average', range: '4.1 – 6.0' },
-    { level: 'Poor', range: '2.1 – 4.0' },
-    { level: 'Very Poor', range: '0.1 – 2.0' },
-  ],
-  criteria: ['Athleticism displayed', 'Control', 'Balance', 'Landing continuity of motion'],
-}
-
-function ScoreReference({ isTurns, isAir, componentScoring }) {
-  if (isTurns) {
-    const sections = componentScoring ? TL_COMPONENT_REF : TL_NONCOMPONENT_REF
-    return (
-      <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700 space-y-3">
-        <div className="text-slate-400 text-xs font-semibold uppercase tracking-wide">Scoring Reference</div>
-        {sections.map(sec => (
-          <div key={sec.label}>
-            <div className="text-blue-400 font-semibold text-xs mb-1">{sec.label}</div>
-            {sec.ranges.map(r => (
-              <div key={r.level} className="flex justify-between text-xs py-0.5">
-                <span className="text-slate-400">{r.level}</span>
-                <span className="text-white font-mono text-xs">{r.range}</span>
-              </div>
-            ))}
-          </div>
-        ))}
-        <div className="border-t border-slate-700 pt-2">
-          <div className="text-blue-400 font-semibold text-xs mb-1">Deductions</div>
-          {DEDUCTION_REF.map(d => (
-            <div key={d.range} className="py-0.5">
-              <span className="text-white font-mono text-xs">{d.range}</span>
-              <div className="text-slate-500 text-[10px] leading-tight">{d.desc}</div>
-            </div>
-          ))}
-        </div>
-        <a href="/docs/TL%20Scorecard.pdf" download
-           className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 mt-2">
-          &#128196; Download FIS T&L Card
-        </a>
-      </div>
-    )
-  }
-  if (isAir) {
-    return (
-      <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700 space-y-3">
-        <div className="text-slate-400 text-xs font-semibold uppercase tracking-wide">Scoring Reference</div>
-        <div>
-          <div className="text-blue-400 font-semibold text-xs mb-1">Jump Quality</div>
-          {AIR_REF.scores.map(r => (
-            <div key={r.level} className="flex justify-between text-xs py-0.5">
-              <span className="text-slate-400">{r.level}</span>
-              <span className="text-white font-mono text-xs">{r.range}</span>
-            </div>
-          ))}
-        </div>
-        <div className="border-t border-slate-700 pt-2">
-          <div className="text-blue-400 font-semibold text-xs mb-1">Quality Criteria</div>
-          <ul className="text-xs text-slate-400 space-y-0.5">
-            {AIR_REF.criteria.map(c => <li key={c}>&#8226; {c}</li>)}
-          </ul>
-        </div>
-        <div className="text-xs text-slate-400">
-          <span className="text-blue-400 font-semibold">Air:</span> Height and Distance
-        </div>
-        <div className="text-xs text-slate-400">
-          <span className="text-blue-400 font-semibold">Fluidity</span>
-        </div>
-        <a href="/docs/Air%20Score%20Card.pdf" download
-           className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 mt-2">
-          &#128196; Download FIS Air Card
-        </a>
-      </div>
-    )
-  }
-  return null
-}
-
 function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const [activeMatch, setActiveMatch] = useState(null)
   const [submitted, setSubmitted] = useState(false)
@@ -305,9 +44,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const [scoreRejected, setScoreRejected] = useState(false)
   const [error, setError] = useState('')
   const [status, setStatus] = useState('Waiting for match...')
-  // v1.16.17 -- event completed full-screen message
   const [eventCompleted, setEventCompleted] = useState(false)
-  // v1.16.30 -- manual score entry lockout
   const [manualEntryActive, setManualEntryActive] = useState(false)
   const pollRef = useRef(null)
   const lastMatchIdRef = useRef(null)
@@ -380,7 +117,6 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
     return () => ws.close()
   }, [eventId, judgeNum])
 
-  // v1.16.17 -- poll for event completion via review-state endpoint
   useEffect(() => {
     let cancelled = false
     const checkCompletion = async () => {
@@ -424,38 +160,41 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const mySubmission = activeMatch?.judgePoints?.find(p => p.judge_number === judgeNum)
   const isTimeTied = activeMatch?.judgePoints?.some(p => p.judge_number === 4 && p.time_tied === 1)
 
-  // v1.16.17 -- event completed full-screen message
   if (eventCompleted) return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center`}>
+    <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       <div className="text-center">
-        <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
-        <div className="text-xl text-slate-300">Thank You for Your Work</div>
+        <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', marginBottom: 12 }}>Event Completed</div>
+        <div className="text-xl" style={{ color: 'var(--tablet-dim)' }}>Thank You for Your Work</div>
       </div>
     </div>
   )
 
-  // v1.16.30 -- manual score entry lockout overlay (TD entering scores manually)
   if (manualEntryActive && activeMatch) return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center px-6`}>
+    <div className={`tablet-root min-h-screen flex items-center justify-center px-6 ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       <div className="text-center">
-        <div className="text-4xl font-display text-amber-400 mb-4">Manual Score Entry for This Round</div>
-        <div className="text-lg text-slate-300">Scores are being entered by the Technical Delegate.</div>
+        <div className="tablet-display" style={{ fontSize: 48, color: 'var(--tablet-amber2)', marginBottom: 12 }}>Manual Score Entry for This Round</div>
+        <div className="text-lg" style={{ color: 'var(--tablet-dim)' }}>Scores are being entered by the Technical Delegate.</div>
       </div>
     </div>
   )
 
   return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
-      <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+    <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
+      <div className="tablet-card" style={{ borderRadius: 0, padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <div className="font-bold text-white">{judge.name}</div>
-          <div className="text-xs text-slate-400">{DUAL_ROLE_LABEL[judge.role] || judge.role}</div>
+          <div className="font-bold" style={{ color: '#fff' }}>{judge.name}</div>
+          <div className="text-xs" style={{ color: 'var(--tablet-dim)' }}>{DUAL_ROLE_LABEL[judge.role] || judge.role}</div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
-          <div className={`text-xs px-2 py-1 rounded-full ${
-            submitted ? 'bg-green-900/50 text-green-400' : 'bg-blue-900/50 text-blue-400'
-          }`}>
+        <div className="flex items-center gap-3">
+          <HCModeButton hc={hc} onToggle={toggleHc} />
+          <div
+            className="text-xs px-3 py-1 rounded-full"
+            style={{
+              background: submitted ? 'rgba(34,197,94,0.15)' : 'rgba(14,144,229,0.15)',
+              color: submitted ? 'var(--tablet-green2)' : 'var(--tablet-blue2)',
+              fontWeight: 700,
+            }}
+          >
             {submitted ? 'Score submitted' : status}
           </div>
         </div>
@@ -464,114 +203,219 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
       <div className="p-4 space-y-6 max-w-lg mx-auto">
         {activeMatch ? (
           <>
-            <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700">
-              <div className="text-xs text-slate-400 uppercase tracking-wide mb-3">Current Match</div>
+            <div className="tablet-card" style={{ padding: 18 }}>
+              <div className="text-xs uppercase tracking-wide mb-3" style={{ color: 'var(--tablet-dim)' }}>Current Match</div>
               <div className="grid grid-cols-5 gap-2 items-center">
-                <div className="col-span-2 p-3 rounded-lg bg-blue-900/30 border border-blue-700">
-                  <div className="text-xs text-blue-400 font-semibold mb-0.5">Blue</div>
-                  <div className="text-lg font-bold text-white">
+                <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(14,144,229,0.18)', border: '1.5px solid #1d4ed8' }}>
+                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-blue2)' }}>Blue</div>
+                  <div className="text-lg font-bold" style={{ color: '#fff' }}>
                     {activeMatch.blue_first ? `${activeMatch.blue_last}, ${activeMatch.blue_first}` : 'TBD'}
                   </div>
-                  {activeMatch.blue_bib && <div className="text-xs text-slate-400 mt-0.5">Bib {activeMatch.blue_bib}</div>}
+                  {activeMatch.blue_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.blue_bib}</div>}
                 </div>
-                <div className="text-center text-slate-500 font-bold">vs</div>
-                <div className="col-span-2 p-3 rounded-lg bg-red-900/30 border border-red-700">
-                  <div className="text-xs text-red-400 font-semibold mb-0.5">Red</div>
-                  <div className="text-lg font-bold text-white">
+                <div className="text-center font-bold" style={{ color: 'var(--tablet-muted)' }}>vs</div>
+                <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.18)', border: '1.5px solid #b91c1c' }}>
+                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-red2)' }}>Red</div>
+                  <div className="text-lg font-bold" style={{ color: '#fff' }}>
                     {activeMatch.red_first ? `${activeMatch.red_last}, ${activeMatch.red_first}` : 'TBD'}
                   </div>
-                  {activeMatch.red_bib && <div className="text-xs text-slate-400 mt-0.5">Bib {activeMatch.red_bib}</div>}
+                  {activeMatch.red_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.red_bib}</div>}
                 </div>
               </div>
               {activeMatch.pairing_label && (
-                <div className="text-center text-sm font-bold text-slate-300 mt-2">
+                <div className="text-center text-sm font-bold mt-2" style={{ color: 'var(--tablet-text)' }}>
                   Pairing {activeMatch.pairing_label}
                 </div>
               )}
               {activeMatch.pointResult && activeMatch.pointResult.judgeCount > 0 && (
-                <div className="flex items-center justify-center gap-4 mt-3 pt-3 border-t border-slate-700">
-                  <span className="text-sm font-bold text-blue-300">Blue {activeMatch.pointResult.blueTotal}</span>
-                  <span className="text-slate-600 text-xs">pts</span>
-                  <span className="text-sm font-bold text-red-300">{activeMatch.pointResult.redTotal} Red</span>
-                  <span className="text-slate-600 text-xs">({activeMatch.pointResult.judgeCount}/5 judges{activeMatch.pointResult.timeTied ? ' \u00b7 Time Tied' : ''})</span>
+                <div className="flex items-center justify-center gap-4 mt-3 pt-3" style={{ borderTop: '1px solid var(--tablet-navy4)' }}>
+                  <span className="text-sm font-bold" style={{ color: 'var(--tablet-blue2)' }}>Blue {activeMatch.pointResult.blueTotal}</span>
+                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>pts</span>
+                  <span className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>{activeMatch.pointResult.redTotal} Red</span>
+                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>({activeMatch.pointResult.judgeCount}/5 judges{activeMatch.pointResult.timeTied ? ' · Time Tied' : ''})</span>
                 </div>
               )}
             </div>
 
             {scoreRejected && !submitted && (
-              <div className="bg-red-900/30 border-2 border-red-600 rounded-2xl p-4 text-center animate-pulse">
-                <div className="text-red-300 font-bold text-base">Your score was rejected</div>
-                <div className="text-red-400 text-sm">The Head Judge has rejected your previous score. Please enter and submit a new score below.</div>
+              <div className="tablet-card" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2, animation: 'pulse 1.5s ease-in-out infinite' }}>
+                <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Your score was rejected</div>
+                <div className="text-sm mt-1" style={{ color: 'var(--tablet-dim)' }}>The Head Judge has rejected your previous score. Please enter and submit a new score below.</div>
               </div>
             )}
 
             {!submitted ? (
-              <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700 space-y-4">
-                <div className="text-sm font-semibold text-white uppercase tracking-wide">
+              <div className="tablet-card" style={{ padding: 18 }}>
+                <div className="text-sm font-semibold uppercase tracking-wide mb-2" style={{ color: '#fff' }}>
                   Award {judgeNum === 5 && isTimeTied ? '4' : '5'} Points
                   {judgeNum === 5 && isTimeTied && (
-                    <span className="ml-2 text-amber-400 text-xs normal-case font-normal">(Time Tied)</span>
+                    <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>(Time Tied)</span>
                   )}
                 </div>
-                <div className="text-xs text-slate-400 mb-2">
-                  Tap a split to submit.  Blue + Red must equal {judgeNum === 5 && isTimeTied ? 4 : 5}.
+                <div className="text-xs mb-4" style={{ color: 'var(--tablet-dim)' }}>
+                  Tap a split to submit. Blue + Red must equal {judgeNum === 5 && isTimeTied ? 4 : 5}.
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   {(judgeNum === 5 && isTimeTied ? SPLITS_4PT : SPLITS).map(([b, r]) => (
                     <button
                       key={`${b}-${r}`}
+                      type="button"
                       onClick={() => submitSplit(b, r)}
                       disabled={submitting}
-                      className="flex items-center justify-center gap-3 px-4 py-5 rounded-2xl border-2 text-lg font-bold transition-all
-                        bg-slate-800 border-slate-600 hover:border-slate-400 active:bg-slate-700
-                        disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="tablet-score-btn"
+                      style={{ height: 80, fontSize: 22, gap: 12 }}
                     >
-                      <span className="text-blue-400">{b}</span>
-                      <span className="text-slate-600">/</span>
-                      <span className="text-red-400">{r}</span>
+                      <span style={{ color: 'var(--tablet-blue2)' }}>{b}</span>
+                      <span style={{ color: 'var(--tablet-muted)' }}>/</span>
+                      <span style={{ color: 'var(--tablet-red2)' }}>{r}</span>
                     </button>
                   ))}
                 </div>
                 {judgeNum === 4 && (
                   <button
+                    type="button"
                     onClick={() => submitSplit(0, 0, true)}
                     disabled={submitting}
-                    className="w-full px-4 py-5 rounded-2xl border-2 text-lg font-bold transition-all
-                      bg-amber-900/30 border-amber-600 hover:border-amber-400 active:bg-amber-800/50
-                      disabled:opacity-40 disabled:cursor-not-allowed text-amber-300"
+                    className="tablet-btn-amber w-full mt-3"
+                    style={{ height: 60, fontSize: 18 }}
                   >
                     Time Tied
                   </button>
                 )}
-                {error && <div className="bg-red-900/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>}
+                {error && <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
               </div>
             ) : (
-              <div className="bg-green-900/20 border border-green-800 rounded-2xl p-8 text-center">
-                <div className="text-5xl mb-3">&#10003;</div>
-                <div className="text-green-400 text-xl font-bold">Score Submitted</div>
+              <div className="tablet-card" style={{ padding: 32, textAlign: 'center', borderColor: 'var(--tablet-green2)', borderWidth: 2 }}>
+                <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-green2)' }}>&#10003;</div>
+                <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-green2)' }}>Score Submitted</div>
                 {mySubmission && mySubmission.time_tied === 1 ? (
-                  <div className="mt-3 text-lg text-amber-400 font-bold">Time Tied</div>
+                  <div className="mt-3 text-lg font-bold" style={{ color: 'var(--tablet-amber2)' }}>Time Tied</div>
                 ) : mySubmission && (
                   <div className="mt-3 flex items-center justify-center gap-4 text-lg">
-                    <span className="text-blue-400 font-bold">Blue {mySubmission.blue_points}</span>
-                    <span className="text-slate-500">/</span>
-                    <span className="text-red-400 font-bold">{mySubmission.red_points} Red</span>
+                    <span className="font-bold" style={{ color: 'var(--tablet-blue2)' }}>Blue {mySubmission.blue_points}</span>
+                    <span style={{ color: 'var(--tablet-muted)' }}>/</span>
+                    <span className="font-bold" style={{ color: 'var(--tablet-red2)' }}>{mySubmission.red_points} Red</span>
                   </div>
                 )}
-                <div className="text-slate-400 text-sm mt-4">Waiting for next match...</div>
+                <div className="text-sm mt-4" style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
               </div>
             )}
           </>
         ) : (
-          <div className="bg-slate-800 rounded-2xl p-8 text-center border border-slate-700">
-            <div className="text-5xl mb-3">&#9203;</div>
-            <div className="text-slate-400">Waiting for next match...</div>
+          <div className="tablet-card" style={{ padding: 32, textAlign: 'center' }}>
+            <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
+            <div style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
           </div>
         )}
       </div>
     </div>
   )
 }
+
+// ── Multi-line jump-summary chip used in Air judge athlete bar (right side) ──
+// Slide 01 prototype: small "JUMP 1" / "JUMP 2" label, big green Bebas Neue
+// score (or "—"), then small mono "code · DD value" (or "pending").
+function JumpChip({ label, code, dd, score }) {
+  const hasScore = score != null
+  const hasCode = code && code !== ''
+  return (
+    <div
+      className="tablet-card"
+      style={{
+        padding: '8px 16px',
+        minWidth: 96,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          letterSpacing: 1.5,
+          color: 'var(--tablet-dim)',
+          textTransform: 'uppercase',
+          fontWeight: 700,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="tablet-display"
+        style={{
+          fontSize: 28,
+          lineHeight: 1,
+          color: hasScore ? 'var(--tablet-green2)' : 'var(--tablet-muted)',
+        }}
+      >
+        {hasScore ? Number(score).toFixed(1) : '—'}
+      </span>
+      <span
+        className="tablet-mono"
+        style={{ fontSize: 11, color: 'var(--tablet-dim)' }}
+      >
+        {hasCode ? `${code}${dd != null ? ` · DD ${dd}` : ''}` : 'pending'}
+      </span>
+    </div>
+  )
+}
+
+// ── Reference panel data ─────────────────────────────────────────────────────
+const TL_NONCOMP_REF_SECTIONS = [
+  {
+    heading: 'T&L Total',
+    rows: [
+      { label: 'Excellent', quality: 'ex', value: '16.1 – 20', swatch: true },
+      { label: 'Good',      quality: 'gd', value: '12.1 – 16', swatch: true },
+      { label: 'Adequate',  quality: 'av', value: '8.1 – 12',  swatch: true },
+      { label: 'Managing',  quality: 'mg', value: '4.1 – 8',   swatch: true },
+      { label: 'Poor',      quality: 'po', value: '0.1 – 4',   swatch: true },
+    ],
+  },
+  {
+    heading: 'Deduction Tiers',
+    rows: [
+      { label: '0.1 – 2.0', value: 'Lt. touch / sm. stumble' },
+      { label: '2.1 – 2.8', value: 'Med. touch (no stop)' },
+      { label: '2.9 – 4.0', value: 'Hard touch / sliding' },
+      { label: '4.1 – 5.9', value: 'Complete fall (no stop)' },
+      { label: '6.0',       value: 'Any complete stop' },
+    ],
+  },
+]
+
+const COMP_COLUMN_REF = [
+  { label: 'Excellent', quality: 'ex', swatch: true },
+  { label: 'Good',      quality: 'gd', swatch: true },
+  { label: 'Adequate',  quality: 'av', swatch: true },
+  { label: 'Managing',  quality: 'mg', swatch: true },
+  { label: 'Poor',      quality: 'po', swatch: true },
+]
+const COMP_RANGES_10 = ['8.1 – 10.0', '6.1 – 8.0', '4.1 – 6.0', '2.1 – 4.0', '0.1 – 2.0']
+const COMP_RANGES_5  = ['4.1 – 5.0',  '3.1 – 4.0', '2.1 – 3.0', '1.1 – 2.0', '0.1 – 1.0']
+
+const AIR_REF_SECTIONS = [
+  {
+    heading: 'Jump Quality',
+    rows: [
+      { label: 'Excellent', quality: 'ex', value: '8.1 – 10.0', swatch: true },
+      { label: 'Good',      quality: 'gd', value: '6.1 – 8.0',  swatch: true },
+      { label: 'Average',   quality: 'av', value: '4.1 – 6.0',  swatch: true },
+      { label: 'Poor',      quality: 'po', value: '2.1 – 4.0',  swatch: true },
+      { label: 'Very Poor', quality: 'po', value: '0.1 – 2.0' },
+    ],
+  },
+  {
+    heading: 'Quality Criteria',
+    bullets: [
+      'Athleticism displayed',
+      'Control',
+      'Balance',
+      'Landing continuity of motion',
+    ],
+  },
+]
 
 // ── Main JudgeTablet ─────────────────────────────────────────────────────────
 export default function JudgeTablet() {
@@ -679,7 +523,6 @@ export default function JudgeTablet() {
           setCodesSubmitted(false)
           setCodesError('')
           setError('')
-          // Check if this judge already submitted a score for this run
           if (run && run.submitted && judgeId) {
             const alreadySubmitted = run.submitted.some(s => s.judge_id === judgeId)
             setSubmitted(alreadySubmitted)
@@ -687,9 +530,6 @@ export default function JudgeTablet() {
             setSubmitted(false)
           }
         } else if (run && run.submitted && judgeId) {
-          // Same run — polling fallback for rejection detection.
-          // If we think we submitted but our score is no longer in the array,
-          // the HJ must have rejected it.
           const stillSubmitted = run.submitted.some(s => s.judge_id === judgeId)
           if (!stillSubmitted && submittedRef.current) {
             setScoreRejected(true)
@@ -724,7 +564,6 @@ export default function JudgeTablet() {
             setScoreRejected(true)
             setSubmitted(false)
             setError('')
-            // Clear only the specific rejected score type
             const rt = msg.data?.rejectedScoreType
             if (rt === 'turns') {
               setCarving(null)
@@ -736,7 +575,6 @@ export default function JudgeTablet() {
             } else if (rt === 'air_jump2') {
               setAirJ2(null)
             } else {
-              // Fallback: clear everything if score type unknown
               setCarving(null); setAbsExt(null); setUpperBody(null); setDeduction(0)
               setAirJ1(null); setAirJ2(null)
             }
@@ -744,7 +582,6 @@ export default function JudgeTablet() {
           } else {
             setStatus('Score recorded')
           }
-          // Age group transition
           if (msg.data?.age_group_transition) {
             setAgeGroupTransition(msg.data.age_group_transition)
             setTimeout(() => setAgeGroupTransition(null), 15000)
@@ -763,14 +600,20 @@ export default function JudgeTablet() {
     return () => ws.close()
   }, [eventId, judgeId, isDual])
 
-  // If this is a dual mogul judge, render the dual-specific view
   if (isDual && judge) {
     return <DualJudgeView eventId={eventId} judge={judge} hc={hc} toggleHc={toggleHc} />
   }
 
+  // Returns true on success, false on any failure (validation or server error).
+  // On 409 mismatch ("Jump codes differ from the other Air Judge…"), surfaces
+  // the server's exact error text in the unified `error` state and returns
+  // false so the caller can stop the submit-all sequence.
   const submitCodes = async () => {
-    if (!activeRun || !code1 || (numJumps >= 2 && !code2)) { setCodesError(numJumps >= 2 ? 'Both jump codes are required' : 'Jump code is required'); return }
-    setCodesError('')
+    if (!activeRun) { setError('No active run'); return false }
+    if (!code1 || (numJumps >= 2 && !code2)) {
+      setError(numJumps >= 2 ? 'Both jump codes are required' : 'Jump code is required'); return false
+    }
+    setError('')
     try {
       const codeBody = { jump1_code: code1.trim() }
       if (numJumps >= 2) codeBody.jump2_code = code2.trim()
@@ -780,17 +623,38 @@ export default function JudgeTablet() {
         body: JSON.stringify(codeBody)
       })
       if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || 'Failed to submit codes')
+        const err = await res.json().catch(() => ({}))
+        setError(err.error || 'Failed to submit jump codes')
+        return false
       }
       const updated = await res.json()
       setActiveRun(prev => ({ ...prev, ...updated }))
       setCodesSubmitted(true)
+      return true
     } catch (e) {
-      setCodesError(e.message)
+      setError(e.message || 'Network error submitting jump codes')
+      return false
     }
   }
 
+  // Combined Submit handler for Air judge: PUT codes first, then POST scores.
+  // If codes PUT fails (e.g., 409 mismatch with the other Air Judge), the
+  // server's error text is surfaced and the score POSTs are NOT fired. All
+  // local state (codes + scores) is preserved so the judge can correct and
+  // retry. Mirrors the existing two-call flow but on a single user action.
+  const submitAirAll = async () => {
+    if (!activeRun) { setError('No active run'); return }
+    // Validate scores locally before any server call
+    if (airJ1 === null) { setError('Jump 1 score is required'); return }
+    if (numJumps >= 2 && airJ2 === null) { setError('Jump 2 score is required'); return }
+    const ok = await submitCodes()
+    if (!ok) return
+    await submitScore()
+  }
+
+  // T&L total — preserves the existing additive formula bit-for-bit.
+  // (See CLAUDE.md v1.18.05: README claimed weighted; codebase is additive
+  // 0–10 / 0–5 / 0–5; mathematically equivalent.)
   const turnsTotal = isTurns
     ? (componentScoring
         ? Math.max(0.1, Math.min(20, (carving || 0) + (absExt || 0) + (upperBody || 0) - (deduction || 0)))
@@ -852,251 +716,212 @@ export default function JudgeTablet() {
     }
   }
 
+  // ── Full-screen states ───────────────────────────────────────────────────
   if (eventCompleted) return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center`}>
+    <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       <div className="text-center">
-        <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
-        <div className="text-xl text-slate-300">Thank You for Your Work</div>
+        <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', marginBottom: 12 }}>Event Completed</div>
+        <div className="text-xl" style={{ color: 'var(--tablet-dim)' }}>Thank You for Your Work</div>
       </div>
     </div>
   )
 
   if (!judgeId) return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} flex items-center justify-center p-6`}>
+    <div className={`tablet-root min-h-screen flex items-center justify-center p-6 ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       <div className="text-center space-y-4">
-        <div className="text-4xl">&#9975;</div>
-        <div className="text-xl font-bold"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span></div>
-        <div className="text-slate-400">No judge ID provided. Use the link from the admin console.</div>
+        <div style={{ fontSize: 48 }}>&#9975;</div>
+        <div className="text-xl font-bold"><span style={{ color: '#fff' }}>Stick</span><span style={{ color: '#EF4444' }}>It</span></div>
+        <div style={{ color: 'var(--tablet-dim)' }}>No judge ID provided. Use the link from the admin console.</div>
       </div>
     </div>
   )
 
-  return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
-      <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-        <div>
-          <div className="font-bold text-white">{judge?.name || 'Loading...'}</div>
-          <div className="text-xs text-slate-400">{judge?.role || ''} Judge</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
-          <div className={`text-xs px-2 py-1 rounded-full ${
-            submitted ? 'bg-green-900/50 text-green-400' : 'bg-blue-900/50 text-blue-400'
-          }`}>
-            {status}
+  // ── Helpers for the main render ──────────────────────────────────────────
+  const isRestricted = eventDivision === 'devo' || eventDivision === 'rqs_eqs'
+  const FREQ_CODES = isRestricted ? DEVO_FREQ_CODES : COMP_FREQ_CODES
+  const filteredAllCodes = isRestricted
+    ? jumpDDs.filter(d => !/^[bfl]|o/.test(d.jump_code))
+    : jumpDDs
+
+  const athleteName = activeRun
+    ? (activeRun.is_forerunner ? 'FORERUNNER' : `${activeRun.last_name?.toUpperCase() || ''}${activeRun.first_name ? `, ${activeRun.first_name}` : ''}`)
+    : '—'
+  const athleteBib = activeRun && !activeRun.is_forerunner ? activeRun.bib_number : ''
+
+  // Athlete bar meta line — varies by judge role per the prototype:
+  //   • Air judge:           NOW SCORING · Athlete N of M · Air J1 — <name>
+  //   • TL non-component:    NOW SCORING · Athlete N of M · Jump 1: <code> · Jump 2: <code>
+  //   • TL component:        NOW SCORING · Athlete N of M · TL1 — <name>
+  // For TL non-component, judge identity moves to the right-cluster role label
+  // so meta has room for the jump codes the TL judge needs to see.
+  const athleteMeta = []
+  if (activeRun) {
+    athleteMeta.push(activeRun.is_forerunner ? <span style={{ color: '#fb923c' }}>FORERUNNER (Judge Test)</span> : 'NOW SCORING')
+    if (activeRun.run_position != null && activeRun.total_runners != null) {
+      athleteMeta.push(<>Athlete <strong>{activeRun.run_position}</strong> of <strong>{activeRun.total_runners}</strong></>)
+    }
+    if (isTurns && !componentScoring) {
+      // TL non-component: show jump codes (not judge identity — that's on the right)
+      if (activeRun.jump1_code) athleteMeta.push(<>Jump 1: <strong>{activeRun.jump1_code}</strong></>)
+      if (activeRun.jump2_code && numJumps >= 2) athleteMeta.push(<>Jump 2: <strong>{activeRun.jump2_code}</strong></>)
+    } else {
+      // Air or TL component: show judge identity in meta
+      if (judge?.role || judge?.name) {
+        athleteMeta.push(
+          <>
+            <strong style={{ color: 'var(--tablet-blue2)' }}>{roleDisplay(judge?.role)}</strong>
+            {judge?.name && <> — {judge.name}</>}
+          </>
+        )
+      }
+    }
+  }
+
+  // ── Athlete bar right cluster (per-judge-role variant) ───────────────────
+  let athleteBarRight = null
+  if (isAir && activeRun) {
+    athleteBarRight = (
+      <>
+        <JumpChip
+          label="JUMP 1"
+          code={activeRun.jump1_code || code1}
+          dd={activeRun.jump1_dd}
+          score={airJ1}
+        />
+        {numJumps >= 2 && (
+          <JumpChip
+            label="JUMP 2"
+            code={activeRun.jump2_code || code2}
+            dd={activeRun.jump2_dd}
+            score={airJ2}
+          />
+        )}
+        <HCModeButton hc={hc} onToggle={toggleHc} />
+      </>
+    )
+  } else if (isTurns && componentScoring && activeRun) {
+    const total = (carving !== null && absExt !== null && upperBody !== null)
+      ? Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)
+      : '—'
+    athleteBarRight = (
+      <>
+        <div className="flex flex-col items-end gap-1">
+          <HCModeButton hc={hc} onToggle={toggleHc} />
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs uppercase tracking-widest" style={{ color: 'var(--tablet-dim)' }}>T&L Total</span>
+            <span className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-blue2)', lineHeight: 1 }}>{total}</span>
           </div>
         </div>
-      </div>
+      </>
+    )
+  } else if (isTurns && activeRun) {
+    // TL non-component: judge role label on right (per slide 02)
+    athleteBarRight = (
+      <>
+        <span
+          className="tablet-display"
+          style={{ fontSize: 22, letterSpacing: 1, color: 'var(--tablet-text)' }}
+        >
+          {roleDisplay(judge?.role)}
+        </span>
+        <HCModeButton hc={hc} onToggle={toggleHc} />
+      </>
+    )
+  } else {
+    athleteBarRight = <HCModeButton hc={hc} onToggle={toggleHc} />
+  }
 
-      <div className="p-4 max-w-5xl mx-auto">
+  return (
+    <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
+      <div className="p-4 max-w-7xl mx-auto space-y-4">
         {ageGroupTransition && (
           <div
             onClick={() => setAgeGroupTransition(null)}
-            className="mb-4 bg-amber-600 text-black font-bold text-center text-lg py-4 px-6 rounded-2xl cursor-pointer animate-pulse"
+            className="tablet-warn-banner cursor-pointer"
+            style={{ animation: 'pulse 1.5s ease-in-out infinite' }}
           >
-            {ageGroupTransition.completed} group complete {ageGroupTransition.next ? `\u2014 ${ageGroupTransition.next} up next` : '\u2014 All groups complete'}
-          </div>
-        )}
-        {activeRun ? (
-          <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700">
-            <div className={`text-xs uppercase tracking-wide mb-1 ${activeRun.is_forerunner ? 'text-orange-400' : 'text-slate-400'}`}>
-              {activeRun.is_forerunner ? 'Forerunner (Judge Test)' : 'Now Scoring'}
-            </div>
-            <div className="text-3xl font-bold text-white">
-              {activeRun.is_forerunner ? 'Forerunner' : `${activeRun.first_name} ${activeRun.last_name}`}
-            </div>
-            <div className="flex gap-4 mt-2 text-sm text-slate-400 flex-wrap">
-              {!activeRun.is_forerunner && <span>Bib #{activeRun.bib_number}</span>}
-              {activeRun.run_position != null && activeRun.total_runners != null && (
-                <span className="text-slate-200 font-medium">Athlete {activeRun.run_position} of {activeRun.total_runners}</span>
-              )}
-              {activeRun.jump1_code && <span>Jump 1: <strong className="text-white">{activeRun.jump1_code}</strong></span>}
-              {activeRun.jump2_code && <span>Jump 2: <strong className="text-white">{activeRun.jump2_code}</strong></span>}
-            </div>
-            {activeRun.jump1_code && activeRun.jump2_code &&
-             activeRun.jump1_code.trim().toLowerCase().replace(/r/g,'') === activeRun.jump2_code.trim().toLowerCase().replace(/r/g,'') && (
-              <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded px-3 py-1.5">
-                Duplicate jump codes -- Jump 2 receives DD 0.00 (no credit for repeated jump).
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="bg-slate-800 rounded-2xl p-8 text-center border border-slate-700">
-            <div className="text-5xl mb-3">&#9203;</div>
-            <div className="text-slate-400">Waiting for next athlete...</div>
+            <span style={{ fontWeight: 800, letterSpacing: 1 }}>AGE GROUP TRANSITION</span>
+            <span>{ageGroupTransition.completed} group complete {ageGroupTransition.next ? `— ${ageGroupTransition.next} up next` : '— All groups complete'}</span>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4 mt-4">
-        <div className="space-y-6">
+        <AthleteBar
+          bib={athleteBib}
+          name={athleteName}
+          meta={athleteMeta}
+          right={athleteBarRight}
+        />
 
-        {activeRun && !submitted && isAir && (
-          <div className={`rounded-2xl p-5 border ${codesSubmitted ? 'border-green-800 bg-green-900/10' : 'border-amber-700 bg-amber-900/10'} space-y-4`}>
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-white uppercase tracking-wide">Jump Codes</div>
-              {codesSubmitted && <span className="text-xs text-green-400 font-semibold">Confirmed</span>}
-            </div>
-            {!codesSubmitted ? (
-              <>
-                {/* Quick-select buttons for frequent codes */}
-                {(() => {
-                  const COMP_FREQ_CODES = ['N','S','T','K','TS','3','bT','bp','bL','bG','bF','7op','7oG']
-                  const DEVO_FREQ_CODES = ['S','T','D','X','K','TS','TT','TD','TTS','3','3p']
-                  const isRestricted = eventDivision === 'devo' || eventDivision === 'rqs_eqs'
-                  const FREQ_CODES = isRestricted ? DEVO_FREQ_CODES : COMP_FREQ_CODES
-                  return (
-                    <div className="space-y-2">
-                      <div className="text-xs text-slate-500 uppercase tracking-wide">Quick Select</div>
-                      <div className={`grid ${numJumps >= 2 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
-                        <div>
-                          <div className="text-xs text-slate-500 mb-1">Jump 1</div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {FREQ_CODES.map(c => (
-                              <button key={c} onClick={() => setCode1(c)}
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold font-mono transition-all ${code1 === c ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500'}`}
-                              >{c}</button>
-                            ))}
-                          </div>
-                          <button onClick={() => { setCode1('NJ'); setAirJ1(0) }}
-                            className={`mt-1.5 px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition-all ${code1 === 'NJ' ? 'bg-red-700 text-white ring-2 ring-red-400' : 'bg-red-900/60 text-red-300 hover:bg-red-800 active:bg-red-700 border border-red-700'}`}
-                          >No Jump</button>
-                        </div>
-                        {numJumps >= 2 && (
-                          <div>
-                            <div className="text-xs text-slate-500 mb-1">Jump 2</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {FREQ_CODES.map(c => (
-                                <button key={c} onClick={() => setCode2(c)}
-                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold font-mono transition-all ${code2 === c ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500'}`}
-                                >{c}</button>
-                              ))}
-                            </div>
-                            <button onClick={() => { setCode2('NJ'); setAirJ2(0) }}
-                              className={`mt-1.5 px-3 py-1.5 rounded-lg text-xs font-bold font-mono transition-all ${code2 === 'NJ' ? 'bg-red-700 text-white ring-2 ring-red-400' : 'bg-red-900/60 text-red-300 hover:bg-red-800 active:bg-red-700 border border-red-700'}`}
-                            >No Jump</button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })()}
-                <div className={`grid ${numJumps >= 2 ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
-                  <div>
-                    <label className="text-xs text-slate-400 uppercase tracking-wide mb-1 block">Jump 1</label>
-                    <select className="w-full bg-slate-800 border-2 border-slate-600 focus:border-blue-500 rounded-xl px-3 py-3 text-white font-mono text-lg outline-none" value={code1} onChange={e => setCode1(e.target.value)}>
-                      <option value="">-- Select --</option>
-                      {(() => { const isR = eventDivision === 'devo' || eventDivision === 'rqs_eqs'; const dds = isR ? jumpDDs.filter(d => !/^[bfl]|o/.test(d.jump_code)) : jumpDDs; return dds.map(d => <option key={d.jump_code} value={d.jump_code}>{d.jump_code === 'bP' ? `⚠ ${d.jump_code} (DD ${d.dd_value}) — rarely used` : `${d.jump_code} (DD ${d.dd_value})`}</option>) })()}
-                    </select>
-                  </div>
-                  {numJumps >= 2 && (
-                    <div>
-                      <label className="text-xs text-slate-400 uppercase tracking-wide mb-1 block">Jump 2</label>
-                      <select className="w-full bg-slate-800 border-2 border-slate-600 focus:border-blue-500 rounded-xl px-3 py-3 text-white font-mono text-lg outline-none" value={code2} onChange={e => setCode2(e.target.value)}>
-                        <option value="">-- Select --</option>
-                        {(() => { const isR = eventDivision === 'devo' || eventDivision === 'rqs_eqs'; const dds = isR ? jumpDDs.filter(d => !/^[bfl]|o/.test(d.jump_code)) : jumpDDs; return dds.map(d => <option key={d.jump_code} value={d.jump_code}>{d.jump_code === 'bP' ? `⚠ ${d.jump_code} (DD ${d.dd_value}) — rarely used` : `${d.jump_code} (DD ${d.dd_value})`}</option>) })()}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                {numJumps >= 2 && code1 && code2 && code1.trim().toLowerCase().replace(/r/g,'') === code2.trim().toLowerCase().replace(/r/g,'') && (
-                  <div className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded px-3 py-1.5">
-                    Duplicate codes -- Jump 2 will receive DD 0.00 (no credit for repeated jump).
-                  </div>
-                )}
-                {codesError && <div className="text-red-400 text-sm">{codesError}</div>}
-                <button onClick={submitCodes} disabled={!code1 || (numJumps >= 2 && !code2)} className="w-full bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors">
-                  Confirm Jump Codes
-                </button>
-              </>
-            ) : (
-              <div className="text-sm text-slate-300 space-y-1">
-                <div>Jump 1: <strong className="text-white font-mono">{activeRun.jump1_code || code1}</strong>
-                  {activeRun.jump1_dd && <span className="text-slate-500 ml-2">(DD {activeRun.jump1_dd})</span>}
-                </div>
-                {numJumps >= 2 && (
-                  <div>Jump 2: <strong className="text-white font-mono">{activeRun.jump2_code || code2}</strong>
-                    {activeRun.jump2_dd && <span className="text-slate-500 ml-2">(DD {activeRun.jump2_dd})</span>}
-                  </div>
-                )}
-              </div>
-            )}
+        {!activeRun && (
+          <div className="tablet-card" style={{ padding: 32, textAlign: 'center' }}>
+            <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
+            <div style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
+          </div>
+        )}
+
+        {activeRun && activeRun.jump1_code && activeRun.jump2_code &&
+         activeRun.jump1_code.trim().toLowerCase().replace(/r/g,'') === activeRun.jump2_code.trim().toLowerCase().replace(/r/g,'') && (
+          <div className="tablet-warn-banner">
+            <span style={{ fontWeight: 800, letterSpacing: 1 }}>DUPLICATE JUMP CODES</span>
+            <span>Jump 2 receives DD 0.00 (no credit for repeated jump).</span>
           </div>
         )}
 
         {scoreRejected && activeRun && !submitted && (
-          <div className="bg-red-900/30 border border-red-700 rounded-2xl px-5 py-4 space-y-1">
-            <div className="text-red-300 font-bold text-base">Your score was rejected</div>
-            <div className="text-red-400 text-sm">The Head Judge has rejected your previous score.  Please enter and submit a new score below.</div>
+          <div className="tablet-card" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
+            <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Your score was rejected</div>
+            <div className="text-sm mt-1" style={{ color: 'var(--tablet-dim)' }}>The Head Judge has rejected your previous score. Please enter and submit a new score below.</div>
           </div>
         )}
 
-        {activeRun && !submitted && (isAir ? codesSubmitted : true) && (
-          <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700 space-y-6">
-            {isTurns && componentScoring && (
-              <div className="space-y-5">
-                <ScorePad label="Carving"               value={carving}   onChange={setCarving}   min={0} max={10} step={0.5} />
-                <ScorePad label="Absorption / Extension" value={absExt}    onChange={setAbsExt}    min={0} max={5}  step={0.5} />
-                <ScorePad label="Upper Body"             value={upperBody} onChange={setUpperBody} min={0} max={5}  step={0.5} />
-                <DeductionPad value={deduction} onChange={setDeduction} />
-                <div className="bg-slate-800 border border-slate-600 rounded-xl px-5 py-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm font-semibold uppercase tracking-wide">T&amp;L Total</span>
-                    <span className={`text-3xl font-bold font-mono ${carving !== null && absExt !== null && upperBody !== null ? 'text-white hc-score' : 'text-slate-600'}`}>
-                      {carving !== null && absExt !== null && upperBody !== null
-                        ? Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)
-                        : '--'}
-                    </span>
-                  </div>
-                  {carving !== null && absExt !== null && upperBody !== null && (
-                    <div className="text-xs text-slate-400 font-mono text-right">
-                      {(carving || 0).toFixed(1)} + {(absExt || 0).toFixed(1)} + {(upperBody || 0).toFixed(1)} - {(deduction || 0).toFixed(1)} = {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {isTurns && !componentScoring && (
-              <div className="space-y-5">
-                <ScorePad label="T&L Total"             value={carving}   onChange={setCarving}   min={0} max={20} step={0.5} />
-                <DeductionPad value={deduction} onChange={setDeduction} />
-                <div className="bg-slate-800 border border-slate-600 rounded-xl px-5 py-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm font-semibold uppercase tracking-wide">Final T&amp;L Score</span>
-                    <span className={`text-3xl font-bold font-mono ${carving !== null ? 'text-white hc-score' : 'text-slate-600'}`}>
-                      {carving !== null
-                        ? Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)
-                        : '--'}
-                    </span>
-                  </div>
-                  {carving !== null && (
-                    <div className="text-xs text-slate-400 font-mono text-right">
-                      {(carving || 0).toFixed(1)} - {(deduction || 0).toFixed(1)} = {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            {isAir && (
-              <>
-                <ScorePad label={`Jump 1 Score${activeRun.jump1_code ? ` (${activeRun.jump1_code} - DD: ${activeRun.jump1_dd})` : ''}`} value={airJ1} onChange={setAirJ1} min={0} max={10} step={0.5} />
-                {numJumps >= 2 && <ScorePad label={`Jump 2 Score${activeRun.jump2_code ? ` (${activeRun.jump2_code} - DD: ${activeRun.jump2_dd})` : ''}`} value={airJ2} onChange={setAirJ2} min={0} max={10} step={0.5} />}
-              </>
-            )}
-            {error && <div className="bg-red-900/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>}
-            <button onClick={submitScore} className="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold text-xl py-5 rounded-2xl transition-colors">
-              Submit Score
-            </button>
-          </div>
+        {/* ── Air Judge ─────────────────────────────────────────────────── */}
+        {activeRun && !submitted && isAir && (
+          <AirJudgePanel
+            numJumps={numJumps}
+            freqCodes={FREQ_CODES}
+            allCodes={filteredAllCodes}
+            code1={code1} setCode1={setCode1}
+            code2={code2} setCode2={setCode2}
+            airJ1={airJ1} setAirJ1={setAirJ1}
+            airJ2={airJ2} setAirJ2={setAirJ2}
+            error={error}
+            submitAll={submitAirAll}
+            activeRun={activeRun}
+          />
+        )}
+
+        {/* ── TL Judge (component) ──────────────────────────────────────── */}
+        {activeRun && !submitted && isTurns && componentScoring && (
+          <TLComponentPanel
+            carving={carving} setCarving={setCarving}
+            absExt={absExt} setAbsExt={setAbsExt}
+            upperBody={upperBody} setUpperBody={setUpperBody}
+            deduction={deduction} setDeduction={setDeduction}
+            turnsTotal={turnsTotal}
+            error={error}
+            submitScore={submitScore}
+          />
+        )}
+
+        {/* ── TL Judge (non-component) ──────────────────────────────────── */}
+        {activeRun && !submitted && isTurns && !componentScoring && (
+          <TLNonComponentPanel
+            carving={carving} setCarving={setCarving}
+            deduction={deduction} setDeduction={setDeduction}
+            turnsTotal={turnsTotal}
+            error={error}
+            submitScore={submitScore}
+          />
         )}
 
         {submitted && activeRun && (
-          <div className="bg-green-900/20 border border-green-800 rounded-2xl p-8 text-center">
-            <div className="text-5xl mb-3">&#10003;</div>
-            <div className="text-green-400 text-xl font-bold">Score Submitted</div>
+          <div className="tablet-card" style={{ padding: 32, textAlign: 'center', borderColor: 'var(--tablet-green2)', borderWidth: 2 }}>
+            <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-green2)' }}>&#10003;</div>
+            <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-green2)' }}>Score Submitted</div>
             {isTurns && turnsTotal !== null && (
-              <div className="text-white text-lg mt-2 space-y-1">
-                <div className="text-2xl font-bold hc-score">T&amp;L Total: {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}</div>
-                <div className="text-slate-400 text-sm font-mono">
+              <div className="text-lg mt-3" style={{ color: '#fff' }}>
+                <div className="tablet-display" style={{ fontSize: 36 }}>T&L Total: {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}</div>
+                <div className="text-sm tablet-mono mt-1" style={{ color: 'var(--tablet-dim)' }}>
                   {componentScoring
                     ? `${(carving || 0).toFixed(1)} + ${(absExt || 0).toFixed(1)} + ${(upperBody || 0).toFixed(1)} - ${(deduction || 0).toFixed(1)} = ${Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}`
                     : `${(carving || 0).toFixed(1)} - ${(deduction || 0).toFixed(1)} = ${Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}`
@@ -1105,19 +930,374 @@ export default function JudgeTablet() {
               </div>
             )}
             {isAir && (
-              <div className="text-white text-lg mt-2">
-                {airJ1 !== null && <div>Jump 1: {Number(airJ1).toFixed(1)}</div>}
-                {airJ2 !== null && <div>Jump 2: {Number(airJ2).toFixed(1)}</div>}
+              <div className="text-lg mt-3" style={{ color: '#fff' }}>
+                {airJ1 !== null && <div>Jump 1: <span className="tablet-mono">{Number(airJ1).toFixed(1)}</span></div>}
+                {airJ2 !== null && <div>Jump 2: <span className="tablet-mono">{Number(airJ2).toFixed(1)}</span></div>}
               </div>
             )}
-            <div className="text-slate-400 text-sm mt-4">Waiting for next athlete...</div>
+            <div className="text-sm mt-4" style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Air Judge Panel ─────────────────────────────────────────────────────────
+// Single-screen flow per slide 01 prototype:
+//   [Jump 1 column]  [Jump 2 column]  [Reference 260px sidebar]
+//   ↳ each jump column: header pill + JUMP CODE grid + All-codes dropdown
+//     + SCORE grid (mixed step) + Fine-tune row
+//   ↳ one full-width Submit button at the bottom
+// On Submit: PUT codes → POST scores. If codes PUT returns the 409 mismatch
+// from the other Air Judge, the server's exact error text is surfaced and
+// score POSTs are NOT fired. State preserved for retry.
+function AirJudgePanel({
+  numJumps, freqCodes, allCodes,
+  code1, setCode1, code2, setCode2,
+  airJ1, setAirJ1, airJ2, setAirJ2,
+  error, submitAll, activeRun,
+}) {
+  const codesPicked = !!code1 && (numJumps < 2 || !!code2)
+  const scoresPicked = airJ1 !== null && (numJumps < 2 || airJ2 !== null)
+  const canSubmit = codesPicked && scoresPicked
+  const submitLabel =
+    !codesPicked && !scoresPicked ? 'Submit Both Scores — pick codes + scores'
+    : !codesPicked                ? (numJumps >= 2 ? 'Submit Both Scores — pick both jump codes' : 'Submit Score — pick a jump code')
+    : !scoresPicked               ? (numJumps >= 2 ? 'Submit Both Scores — enter both jump scores' : 'Submit Score — enter a score')
+    :                                (numJumps >= 2 ? 'Submit Both Scores' : 'Submit Score')
+
+  const cols = numJumps >= 2
+    ? '1fr 1fr 260px'   // Jump 1, Jump 2, Reference
+    : '1fr 260px'        // Devo: Jump 1 only + Reference
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4" style={{ gridTemplateColumns: cols }}>
+        <AirJumpColumn
+          jumpLabel="Jump 1"
+          freqCodes={freqCodes}
+          allCodes={allCodes}
+          code={code1}
+          setCode={(c) => { setCode1(c); if (c === 'NJ') setAirJ1(0) }}
+          activeRunCode={activeRun.jump1_code}
+          dd={activeRun.jump1_dd}
+          value={airJ1}
+          onChange={setAirJ1}
+          isActive={airJ1 === null && !!code1}
+        />
+        {numJumps >= 2 && (
+          <AirJumpColumn
+            jumpLabel="Jump 2"
+            freqCodes={freqCodes}
+            allCodes={allCodes}
+            code={code2}
+            setCode={(c) => { setCode2(c); if (c === 'NJ') setAirJ2(0) }}
+            activeRunCode={activeRun.jump2_code}
+            dd={activeRun.jump2_dd}
+            value={airJ2}
+            onChange={setAirJ2}
+            isActive={!!code1 && airJ1 !== null && airJ2 === null}
+          />
+        )}
+        <ReferencePanel title="Scoring Reference" sections={AIR_REF_SECTIONS} width={260} />
+      </div>
+      {numJumps >= 2 && code1 && code2 && code1.trim().toLowerCase().replace(/r/g,'') === code2.trim().toLowerCase().replace(/r/g,'') && (
+        <div className="tablet-warn-banner">
+          <span style={{ fontWeight: 800, letterSpacing: 1 }}>DUPLICATE JUMP CODES</span>
+          <span>Jump 2 will receive DD 0.00 (no credit for repeated jump).</span>
         </div>
-        <div className="lg:sticky lg:top-4 lg:self-start">
-          <ScoreReference isTurns={isTurns} isAir={isAir} componentScoring={componentScoring} />
+      )}
+      {error && (
+        <div
+          className="tablet-card"
+          style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2 }}
+        >
+          <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>{error}</div>
         </div>
+      )}
+      <button
+        type="button"
+        onClick={submitAll}
+        disabled={!canSubmit}
+        className="tablet-btn-submit w-full"
+        style={{ height: 68, fontSize: 24 }}
+      >
+        {submitLabel}
+      </button>
+    </div>
+  )
+}
+
+// One column on the Air judge screen. Combines code grid + score grid + fine-tune.
+function AirJumpColumn({
+  jumpLabel, freqCodes, allCodes, code, setCode,
+  activeRunCode, dd, value, onChange, isActive,
+}) {
+  // Display code: prefer locally-picked code (drives UI immediately) then
+  // fall back to whatever's already on the run record.
+  const displayCode = code || activeRunCode || ''
+  return (
+    <div
+      className={`tablet-card ${isActive ? 'is-active' : ''}`}
+      style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}
+    >
+      {/* Header pill: column label · selected code · DD · score */}
+      <div className="flex items-center justify-between">
+        <span className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>{jumpLabel.toUpperCase()}</span>
+        <div
+          className="flex items-center gap-2 px-3 py-1 rounded-lg"
+          style={{
+            background: value !== null ? 'rgba(74, 222, 128, 0.10)' : 'var(--tablet-navy3)',
+            border: `1.5px solid ${value !== null ? 'rgba(74,222,128,0.5)' : 'var(--tablet-navy4)'}`,
+          }}
+        >
+          <span
+            className="dot"
+            style={{
+              display: 'inline-block', width: 8, height: 8, borderRadius: 4,
+              background: value !== null ? 'var(--tablet-green2)' : 'var(--tablet-blue2)',
+            }}
+          />
+          <span className="tablet-mono" style={{ fontSize: 14, color: '#fff' }}>{displayCode || '—'}</span>
+          {dd != null && (
+            <span style={{ fontSize: 12, color: 'var(--tablet-dim)' }}>DD {dd}</span>
+          )}
+          <span style={{ color: 'var(--tablet-muted)', fontSize: 14 }}>→</span>
+          <span
+            className="tablet-display"
+            style={{
+              fontSize: 22, lineHeight: 1,
+              color: value !== null ? 'var(--tablet-green2)' : 'var(--tablet-muted)',
+            }}
+          >
+            {value !== null ? Number(value).toFixed(1) : '—'}
+          </span>
         </div>
+      </div>
+
+      {/* JUMP CODE subheading + grid */}
+      <div
+        className="text-xs uppercase font-bold"
+        style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5, marginTop: 4 }}
+      >
+        Jump Code
+      </div>
+      <JumpCodeGrid
+        freqCodes={freqCodes}
+        allCodes={allCodes}
+        selected={code}
+        onSelect={setCode}
+      />
+
+      {/* SCORE subheading + mixed-step grid */}
+      <div
+        className="text-xs uppercase font-bold"
+        style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5, marginTop: 4 }}
+      >
+        Score (0–10) · Tap any value
+      </div>
+      <ScoreButtonGrid
+        values={VALUES_AIR_15}
+        cols={6}
+        rowHeight={52}
+        zones={ZONES_AIR}
+        value={value}
+        onChange={onChange}
+      />
+
+      {/* Fine-tune label + row */}
+      <div className="flex items-center gap-3" style={{ marginTop: 4 }}>
+        <span
+          className="text-xs uppercase font-bold"
+          style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5 }}
+        >
+          Fine tune:
+        </span>
+        <div style={{ flex: 1 }}>
+          <FineTuneRow value={value} onChange={onChange} min={0} max={10} step={0.1} size="sm" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── TL Component Panel (slide 03) ───────────────────────────────────────────
+function TLComponentPanel({
+  carving, setCarving, absExt, setAbsExt, upperBody, setUpperBody,
+  deduction, setDeduction, turnsTotal, error, submitScore,
+}) {
+  const allEntered = carving !== null && absExt !== null && upperBody !== null
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-4">
+        <ComponentColumn
+          title="CARVING"
+          weight="50%"
+          value={carving}
+          onChange={setCarving}
+          min={0} max={10} cols={7} rowHeight={48} fontSize={16}
+          isActive={carving === null}
+        />
+        <ComponentColumn
+          title="AB / EXT"
+          weight="25%"
+          value={absExt}
+          onChange={setAbsExt}
+          min={0} max={5} cols={6} rowHeight={48} fontSize={16}
+          isActive={carving !== null && absExt === null}
+        />
+        <ComponentColumn
+          title="UPPER BODY"
+          weight="25%"
+          value={upperBody}
+          onChange={setUpperBody}
+          min={0} max={5} cols={6} rowHeight={48} fontSize={16}
+          isActive={carving !== null && absExt !== null && upperBody === null}
+        />
+      </div>
+      <div className="tablet-card" style={{ padding: 16 }}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>DEDUCTION</div>
+          {allEntered && (
+            <div className="text-sm tablet-mono" style={{ color: 'var(--tablet-dim)' }}>
+              {(carving || 0).toFixed(1)} + {(absExt || 0).toFixed(1)} + {(upperBody || 0).toFixed(1)} − {(deduction || 0).toFixed(1)} = {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}
+            </div>
+          )}
+        </div>
+        <DeductionPad value={deduction} onChange={setDeduction} />
+      </div>
+      {error && <div className="px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
+      <button
+        type="button"
+        onClick={submitScore}
+        disabled={!allEntered}
+        className="tablet-btn-submit w-full"
+        style={{ height: 68, fontSize: 24 }}
+      >
+        {allEntered ? 'Submit Score' : 'Submit Score — enter all three components first'}
+      </button>
+    </>
+  )
+}
+
+// Slide-03 reference pills: 4 colored badges below each component column.
+// Carving uses 0-10 ranges, Ab/Ext + Upper Body use 0-5 ranges.
+const PILLS_10 = [
+  { label: 'Excellent', quality: 'ex', range: '8.1–10' },
+  { label: 'Good',      quality: 'gd', range: '6.1–8'  },
+  { label: 'Adequate',  quality: 'av', range: '4.1–6'  },
+  { label: 'Poor',      quality: 'po', range: '0.1–4'  },
+]
+const PILLS_5 = [
+  { label: 'Excellent', quality: 'ex', range: '4.1–5' },
+  { label: 'Good',      quality: 'gd', range: '3.1–4' },
+  { label: 'Adequate',  quality: 'av', range: '2.1–3' },
+  { label: 'Poor',      quality: 'po', range: '0.1–1' },
+]
+// Subtitles per the prototype: "0–10 · Good range: 6.1–8" etc.
+const COMP_GOOD_RANGE = { 10: '6.1–8', 5: '3.1–4' }
+
+function ComponentColumn({ title, weight, value, onChange, min, max, cols, rowHeight, fontSize, isActive }) {
+  const pills = max === 10 ? PILLS_10 : PILLS_5
+  const subtitle = value !== null
+    ? `${min}–${max} · Good range: ${COMP_GOOD_RANGE[max]}`
+    : `${min}–${max} · Not yet entered`
+  return (
+    <div className={`tablet-card ${isActive ? 'is-active' : ''}`} style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="flex items-baseline justify-between">
+        <span className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>{title}</span>
+        <span
+          className="tablet-display"
+          style={{
+            fontSize: 32, lineHeight: 1,
+            color: value !== null ? 'var(--tablet-green2)' : 'var(--tablet-muted)',
+          }}
+        >
+          {value !== null ? Number(value).toFixed(1) : '—'}
+        </span>
+      </div>
+      <div className="text-xs" style={{ color: 'var(--tablet-dim)' }}>
+        <strong style={{ color: 'var(--tablet-blue2)' }}>{weight}</strong> · {subtitle}
+      </div>
+      <ScoreButtonGrid
+        min={min} max={max} step={0.5}
+        cols={cols}
+        rowHeight={rowHeight}
+        fontSize={fontSize}
+        zones={max === 10 ? ZONES_AIR : ZONES_COMP_5}
+        value={value}
+        onChange={onChange}
+      />
+      <FineTuneRow value={value} onChange={onChange} min={min} max={max} step={0.1} size="sm" />
+      <RefPillRow pills={pills} />
+    </div>
+  )
+}
+
+// ── TL Non-Component Panel (slide 02) ───────────────────────────────────────
+function TLNonComponentPanel({ carving, setCarving, deduction, setDeduction, turnsTotal, error, submitScore }) {
+  const has = carving !== null
+  // Final score amber when inside Adequate range (8.1–12), else uses zone color.
+  const finalForColor = has ? Math.max(0.1, Math.min(20, turnsTotal)) : null
+  const finalColor =
+    finalForColor === null         ? 'var(--tablet-muted)' :
+    finalForColor >= 16.5          ? '#4ade80' :
+    finalForColor >= 12.5          ? '#86efac' :
+    finalForColor >= 8.5           ? '#fbbf24' :
+    finalForColor >= 4.5           ? '#fb923c' :
+                                     '#f87171'
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+      <div className="space-y-4">
+        <div className="tablet-card" style={{ padding: 16 }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>RAW T&L SCORE</div>
+            <span className="tablet-display" style={{ fontSize: 56, color: has ? 'var(--tablet-blue2)' : 'var(--tablet-muted)', lineHeight: 1 }}>
+              {has ? Number(carving).toFixed(1) : '—'}
+            </span>
+          </div>
+          <ScoreButtonGrid
+            min={0} max={20} step={0.5}
+            cols={11}
+            rowHeight={66}
+            zones={ZONES_TL}
+            value={carving}
+            onChange={setCarving}
+          />
+          <div className="mt-3">
+            <FineTuneRow value={carving} onChange={setCarving} min={0} max={20} step={0.1} size="lg" />
+          </div>
+        </div>
+        <div className="tablet-card" style={{ padding: 16 }}>
+          <div className="tablet-display mb-2" style={{ fontSize: 22, letterSpacing: 1 }}>DEDUCTION</div>
+          <DeductionPad value={deduction} onChange={setDeduction} />
+        </div>
+        {error && <div className="px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
+      </div>
+      <div className="space-y-4">
+        <div className="tablet-card" style={{ padding: 18, textAlign: 'center' }}>
+          <div className="text-xs uppercase tracking-widest mb-1" style={{ color: 'var(--tablet-dim)', letterSpacing: 2 }}>Final T&L Score</div>
+          <div className="tablet-display" style={{ fontSize: 84, color: finalColor, lineHeight: 1 }}>
+            {has ? Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1) : '—'}
+          </div>
+          {has && (
+            <div className="text-sm tablet-mono mt-2" style={{ color: 'var(--tablet-dim)' }}>
+              {(carving || 0).toFixed(1)} − {(deduction || 0).toFixed(1)} = {Math.max(0.1, Math.min(20, turnsTotal)).toFixed(1)}
+            </div>
+          )}
+        </div>
+        <ReferencePanel title="T&L Reference" sections={TL_NONCOMP_REF_SECTIONS} width="100%" />
+        <button
+          type="button"
+          onClick={submitScore}
+          disabled={!has}
+          className="tablet-btn-submit w-full"
+          style={{ height: 68, fontSize: 22 }}
+        >
+          {has ? 'Submit Score' : 'Submit Score — enter score first'}
+        </button>
       </div>
     </div>
   )

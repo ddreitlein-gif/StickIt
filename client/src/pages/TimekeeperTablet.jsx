@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import useHighContrast from '../hooks/useHighContrast'
 import useResolveIds from '../hooks/useResolveIds'
+import AthleteBar from '../components/tablet/AthleteBar'
+import HCModeButton from '../components/tablet/HCModeButton'
 
 const API = '/api'
 
@@ -19,17 +21,20 @@ export default function TimekeeperTablet() {
   const [eventInfo, setEventInfo]   = useState(null)
   const [nextUp, setNextUp]         = useState(null)
   const [starting, setStarting]     = useState(false)
-  const [phaseLabel, setPhaseLabel] = useState(null) // v1.9.00: active phase label
+  const [phaseLabel, setPhaseLabel] = useState(null)
   const [showManualCalc, setShowManualCalc] = useState(false)
   const [topTimer, setTopTimer]   = useState('')
   const [botTimer, setBotTimer]   = useState('')
   const [calcError, setCalcError] = useState('')
   const [ageGroupTransition, setAgeGroupTransition] = useState(null)
   const [eventCompleted, setEventCompleted] = useState(false)
+  const [recentTimes, setRecentTimes] = useState([])
+  const [confirmNT, setConfirmNT]   = useState(false)
+  const [confirmDNS, setConfirmDNS] = useState(false)
   const pollRef = useRef(null)
   const wsRef   = useRef(null)
 
-  // Fetch event info once (and on eventId change)
+  // Fetch event info + recent runs once on load
   useEffect(() => {
     if (resolving) return
     const fetchInfo = async () => {
@@ -39,10 +44,27 @@ export default function TimekeeperTablet() {
         if (data) setEventInfo(data)
       } catch {}
     }
+    const fetchRecent = async () => {
+      try {
+        const r = await fetch(`${API}/events/${eventId}/runs`)
+        const all = await r.json()
+        if (Array.isArray(all)) {
+          const completed = all
+            .filter(x => x.run_time != null && x.run_time !== -1 && x.first_name)
+            .slice(-8)
+            .reverse()
+          setRecentTimes(completed.map(x => ({
+            bib: x.bib_number,
+            name: `${x.last_name?.toUpperCase() || ''}${x.first_name ? `, ${x.first_name}` : ''}`,
+            time: x.run_time,
+          })))
+        }
+      } catch {}
+    }
     fetchInfo()
+    fetchRecent()
   }, [eventId, resolving])
 
-  // v1.9.00: Fetch next-up athlete (phase-aware — server determines active run_number)
   const fetchNextUp = async () => {
     try {
       const r = await fetch(`${API}/events/${eventId}/runs/next-up`)
@@ -61,7 +83,7 @@ export default function TimekeeperTablet() {
   const isPaper = eventInfo?.score_entry_mode === 'paper'
   const isDevo = eventInfo?.division === 'devo'
 
-  // Poll for active run every 2 seconds
+  // Poll for active run
   useEffect(() => {
     if (resolving) return
     const poll = async () => {
@@ -72,7 +94,6 @@ export default function TimekeeperTablet() {
         const run = data?.id ? data : null
         if (run?.id !== activeRun?.id) {
           setActiveRun(run)
-          // Check if time was already submitted for this run (refresh persistence)
           const alreadySubmitted = run && run.run_time != null
           setSubmitted(alreadySubmitted)
           if (!alreadySubmitted) {
@@ -81,8 +102,13 @@ export default function TimekeeperTablet() {
           }
           setStatusMsg(run ? (alreadySubmitted ? 'Time submitted' : 'Run in progress') : 'Waiting for next athlete...')
         }
-        // Always refresh next-up when no active run (or in paper mode, always)
+        // In tablet mode, only fetch / show Next Up when there is no active
+        // run — prevents a stale next-up athlete from lingering in the sidebar
+        // while a run is in progress (which led to a duplicate-Start-Run UX
+        // bug). Paper mode is unchanged: it shows Next Up alongside an active
+        // run because the timekeeper is the one who starts paper-mode runs.
         if (!run || isPaper) fetchNextUp()
+        else setNextUp(null)
       } catch {}
     }
     poll()
@@ -90,7 +116,7 @@ export default function TimekeeperTablet() {
     return () => clearInterval(pollRef.current)
   }, [eventId, activeRun?.id, isPaper, resolving])
 
-  // WebSocket for instant score_update notifications
+  // WebSocket
   useEffect(() => {
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const ws = new WebSocket(`${wsProto}//${location.host}`)
@@ -129,16 +155,59 @@ export default function TimekeeperTablet() {
       }
       setSubmitted(true)
       setStatusMsg('Time submitted')
+      setRecentTimes(prev => [{
+        bib: activeRun.bib_number,
+        name: `${activeRun.last_name?.toUpperCase() || ''}${activeRun.first_name ? `, ${activeRun.first_name}` : ''}`,
+        time: t,
+      }, ...prev].slice(0, 8))
     } catch (e) { setError(e.message) }
   }
 
-  const handleKey = (e) => { if (e.key === 'Enter') submitTime() }
+  const submitNoTime = async () => {
+    if (!activeRun) { setError('No active run'); return }
+    setError('')
+    try {
+      const res = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_time: -1 }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Submit failed')
+      }
+      setSubmitted(true)
+      setStatusMsg('No Time submitted')
+    } catch (e) { setError(e.message) }
+  }
 
-  // Parse hh:mm:ss.ss to total seconds (base-60)
+  // Numpad input handlers
+  const pressKey = (k) => {
+    if (k === '⌫') {
+      setTimeInput(s => s.slice(0, -1))
+      return
+    }
+    if (k === '.') {
+      if (timeInput.includes('.')) return
+      setTimeInput(s => (s.length === 0 ? '0.' : s + '.'))
+      return
+    }
+    // digit
+    setTimeInput(s => {
+      if (s.includes('.')) {
+        // allow up to 2 decimal places
+        const [, dec] = s.split('.')
+        if (dec && dec.length >= 2) return s
+      }
+      // limit to 6 chars (e.g., "999.99")
+      if (s.length >= 6) return s
+      return s + k
+    })
+  }
+
   const parseTimeToSeconds = (str) => {
     const trimmed = (str || '').trim()
     if (!trimmed) return null
-    // Accept hh:mm:ss.ss or mm:ss.ss or ss.ss
     const parts = trimmed.split(':')
     let hours = 0, minutes = 0, seconds = 0
     if (parts.length === 3) {
@@ -190,403 +259,415 @@ export default function TimekeeperTablet() {
     finally { setStarting(false) }
   }
 
+  const dnsNextUp = async () => {
+    if (!nextUp) return
+    try {
+      const res = await fetch(`${API}/events/${eventId}/runs/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification', run_status: 'DNS' }),
+      })
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Failed') }
+      setNextUp(null)
+    } catch (e) { setError('DNS failed: ' + e.message) }
+  }
+
+  // ── Full-screen states ───────────────────────────────────────────────────
   if (eventCompleted) return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center`}>
+    <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       <div className="text-center">
-        <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
-        <div className="text-xl text-slate-300">Thank You for Your Work</div>
+        <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', marginBottom: 12 }}>Event Completed</div>
+        <div className="text-xl" style={{ color: 'var(--tablet-dim)' }}>Thank You for Your Work</div>
       </div>
     </div>
   )
 
-  return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
-      {/* Header */}
-      <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-        <div>
-          <div className="font-bold text-white text-lg">Timekeeper</div>
-          <div className="text-xs text-slate-400"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span> System</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
-          <div className={`text-xs px-3 py-1 rounded-full ${
-            isDualMogul  ? 'bg-slate-800    text-slate-400'   :
-            isDevo       ? 'bg-slate-800    text-slate-400'   :
-            isPaper      ? 'bg-amber-900/50 text-amber-400'  :
-            submitted    ? 'bg-green-900/50 text-green-400'  :
-            activeRun    ? 'bg-blue-900/50  text-blue-400 animate-pulse' :
-                           'bg-slate-800    text-slate-400'
-          }`}>
-            {isDualMogul ? 'Disabled' : isDevo ? 'No Time — Devo' : isPaper ? 'Paper Entry — Start Only' : statusMsg}
-          </div>
-        </div>
+  // ── Right cluster: athlete bar shows pace info + status pill + HC button ──
+  const statusPill = (() => {
+    if (isDualMogul) return { text: 'Disabled', bg: 'rgba(100,116,139,0.2)', color: 'var(--tablet-dim)' }
+    if (isDevo)      return { text: 'No Time — Devo', bg: 'rgba(100,116,139,0.2)', color: 'var(--tablet-dim)' }
+    if (isPaper)     return { text: 'Paper Entry — Start Only', bg: 'rgba(245,158,11,0.18)', color: 'var(--tablet-amber2)' }
+    if (submitted)   return { text: 'Time submitted', bg: 'rgba(34,197,94,0.15)', color: 'var(--tablet-green2)' }
+    if (activeRun)   return { text: '⏱ RUN IN PROGRESS', bg: 'rgba(245,158,11,0.18)', color: 'var(--tablet-amber2)' }
+    return { text: statusMsg, bg: 'rgba(100,116,139,0.2)', color: 'var(--tablet-dim)' }
+  })()
+
+  const headerBar = (
+    <div className="tablet-card flex items-center justify-between" style={{ padding: '14px 24px', borderRadius: 18 }}>
+      <div className="flex items-center gap-6 flex-wrap text-sm">
+        <span className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>TIMEKEEPER</span>
+        {eventInfo?.course_length != null && (
+          <span style={{ color: 'var(--tablet-dim)' }}>Course: <strong style={{ color: '#fff' }}>{eventInfo.course_length}m</strong></span>
+        )}
+        {eventInfo?.pace_time != null && (
+          <span style={{ color: 'var(--tablet-dim)' }}>Pace: <strong style={{ color: 'var(--tablet-green2)' }}>{Number(eventInfo.pace_time).toFixed(2)}s</strong></span>
+        )}
+        {eventInfo?.gender && (
+          <span style={{ color: 'var(--tablet-dim)' }}>{eventInfo.gender === 'F' ? 'Women' : 'Men'}</span>
+        )}
       </div>
+      <div className="flex items-center gap-3">
+        <span
+          className="text-xs px-3 py-1 rounded-full font-bold"
+          style={{ background: statusPill.bg, color: statusPill.color, letterSpacing: 1 }}
+        >
+          {statusPill.text}
+        </span>
+        <HCModeButton hc={hc} onToggle={toggleHc} />
+      </div>
+    </div>
+  )
 
-      <div className="p-4 space-y-6 max-w-lg mx-auto">
-
+  // ── Render ───────────────────────────────────────────────────────────────
+  return (
+    <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
+      <div className="p-4 max-w-7xl mx-auto space-y-4">
         {ageGroupTransition && (
           <div
             onClick={() => setAgeGroupTransition(null)}
-            className="bg-amber-600 text-black font-bold text-center text-lg py-4 px-6 rounded-2xl cursor-pointer animate-pulse"
+            className="tablet-warn-banner cursor-pointer"
+            style={{ animation: 'pulse 1.5s ease-in-out infinite' }}
           >
-            {ageGroupTransition.completed} group complete {ageGroupTransition.next ? `\u2014 ${ageGroupTransition.next} up next` : '\u2014 All groups complete'}
+            <span style={{ fontWeight: 800, letterSpacing: 1 }}>AGE GROUP TRANSITION</span>
+            <span>{ageGroupTransition.completed} group complete {ageGroupTransition.next ? `— ${ageGroupTransition.next} up next` : '— All groups complete'}</span>
           </div>
         )}
 
-        {/* Dual mogul: timekeeper not used */}
-        {isDualMogul && (
-          <div className="bg-slate-800 rounded-2xl p-8 text-center border border-slate-700">
-            <div className="text-5xl mb-3 text-slate-500">&#9203;</div>
-            <div className="text-slate-300 text-lg font-semibold mb-2">Timekeeper Not Required</div>
-            <div className="text-slate-500 text-sm">
-              Dual Moguls does not use timed scoring.  Time scores are entered by the timing judge on the judge tablet.
+        {headerBar}
+
+        {/* Dual mogul — disabled view, no further panels */}
+        {isDualMogul ? (
+          <div className="tablet-card text-center" style={{ padding: 64 }}>
+            <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
+            <div className="tablet-display mt-3" style={{ fontSize: 28 }}>Timekeeper Not Required</div>
+            <div className="text-sm mt-2" style={{ color: 'var(--tablet-dim)' }}>
+              Dual Moguls does not use timed scoring. Time scores are entered by the timing judge on the judge tablet.
             </div>
           </div>
-        )}
-
-        {/* Devo: no time scoring */}
-        {isDevo && !isDualMogul && !activeRun && (
-          <div className="bg-slate-800 rounded-2xl p-8 text-center border border-slate-700">
-            <div className="text-5xl mb-3 text-slate-500">&#9203;</div>
-            <div className="text-slate-300 text-lg font-semibold mb-2">No Time for Devo Events</div>
-            <div className="text-slate-500 text-sm">
-              Devo events do not use timed scoring.
-            </div>
-          </div>
-        )}
-
-        {/* Devo active run: show athlete but no time entry, allow starting next */}
-        {isDevo && activeRun && !isDualMogul && (
-          <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700">
-            <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Now Running</div>
-            <div className="text-3xl font-bold text-white">
-              {activeRun.first_name} {activeRun.last_name}
-            </div>
-            <div className="flex flex-wrap gap-4 mt-2 text-sm text-slate-400">
-              <span>Bib #{activeRun.bib_number}</span>
-              {activeRun.run_position != null && activeRun.total_runners != null && (
-                <span className="text-slate-200 font-medium">
-                  Athlete {activeRun.run_position} of {activeRun.total_runners}
-                </span>
-              )}
-            </div>
-            <div className="mt-3 text-amber-400 text-sm font-semibold">No time required for Devo events.</div>
-            {nextUp && (
-              <div className="border-t border-slate-700 mt-4 pt-4 space-y-3 text-center">
-                <div className="text-xs text-slate-500 uppercase tracking-wide">Next Up{nextUp.phase_label ? ` — ${nextUp.phase_label}` : ''}</div>
-                <div className="text-xl font-bold text-white">{nextUp.last_name}, {nextUp.first_name}</div>
-                <div className="text-sm text-slate-400">Bib #{nextUp.bib_number} {nextUp.run_order != null && <span className="ml-2">Order: {nextUp.run_order}</span>}</div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={startNextRun}
-                    disabled={starting}
-                    className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors"
-                  >
-                    {starting ? 'Starting...' : `Start ${nextUp.phase_label || 'Next Run'}`}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`Mark ${nextUp.last_name}, ${nextUp.first_name} as DNS?`)) return;
-                      try {
-                        const res = await fetch(`${API}/events/${eventId}/runs/manual`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification', run_status: 'DNS' }),
-                        });
-                        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
-                        setNextUp(null);
-                      } catch (e) { setError('DNS failed: ' + e.message); }
-                    }}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-sm px-4 py-4 rounded-2xl transition-colors"
-                  >
-                    DNS
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Pace time info banner */}
-        {eventInfo && !isDualMogul && !isPaper && !isDevo && (
-          <div className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm">
-            <div className="flex flex-wrap gap-4 text-slate-400">
-              {eventInfo.course_length && (
-                <span>Course: <strong className="text-white">{eventInfo.course_length}m</strong></span>
-              )}
-              {eventInfo.pace_time && (
-                <span>Pace Time: <strong className="text-emerald-400">{Number(eventInfo.pace_time).toFixed(2)}s</strong></span>
-              )}
-              {eventInfo.gender && (
-                <span>Gender: <strong className="text-white">{eventInfo.gender === 'F' ? 'Women' : 'Men'}</strong></span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* No pace time warning */}
-        {noPaceTime && !isDualMogul && !isPaper && !isDevo && (
-          <div className="bg-amber-900/30 border border-amber-700 rounded-xl p-4 text-amber-400 text-sm">
-            <strong>Time cannot be entered until course length is completed.</strong>
-            <div className="text-amber-500 mt-1">Course length must be set in the event configuration before time scoring is available.</div>
-          </div>
-        )}
-
-        {/* Current athlete banner */}
-        {!isDualMogul && !isDevo && activeRun ? (
-          <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700">
-            <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Now Running</div>
-            <div className="text-3xl font-bold text-white">
-              {activeRun.first_name} {activeRun.last_name}
-            </div>
-            <div className="flex flex-wrap gap-4 mt-2 text-sm text-slate-400">
-              <span>Bib #{activeRun.bib_number}</span>
-              {activeRun.run_position != null && activeRun.total_runners != null && (
-                <span className="text-slate-200 font-medium">
-                  Athlete {activeRun.run_position} of {activeRun.total_runners}
-                </span>
-              )}
-              {activeRun.jump1_code && (
-                <span>J1: <strong className="text-white">{activeRun.jump1_code}</strong></span>
-              )}
-              {activeRun.jump2_code && (
-                <span>J2: <strong className="text-white">{activeRun.jump2_code}</strong></span>
-              )}
-            </div>
-            {activeRun.run_time != null && (
-              <div className={`mt-2 text-sm font-semibold ${activeRun.run_time == -1 ? 'text-red-400' : 'text-green-400'}`}>
-                {activeRun.run_time == -1 ? 'No Time (NT)' : `Time recorded: ${Number(activeRun.run_time).toFixed(2)}s`}
-              </div>
-            )}
-          </div>
-        ) : !isDualMogul && !isDevo ? (
-          <div className="bg-slate-800 rounded-2xl p-6 text-center border border-slate-700 space-y-4">
-            <div className="text-5xl mb-1 text-slate-500">&#9203;</div>
-            <div className="text-slate-400 text-lg">Waiting for next athlete...</div>
-            <div className="text-xs text-slate-500">The next athlete must be started from the Scoring tab or by tapping Start below.</div>
-            {nextUp && (
-              <div className="mt-3 border-t border-slate-700 pt-4 space-y-3">
-                <div className="text-xs text-slate-500 uppercase tracking-wide">Next Up{nextUp.phase_label ? ` — ${nextUp.phase_label}` : ''}</div>
-                <div className="text-xl font-bold text-white">{nextUp.last_name}, {nextUp.first_name}</div>
-                <div className="text-sm text-slate-400">Bib #{nextUp.bib_number} {nextUp.run_order != null && <span className="ml-2">Order: {nextUp.run_order}</span>}</div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={startNextRun}
-                    disabled={starting}
-                    className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors"
-                  >
-                    {starting ? 'Starting...' : `Start ${nextUp.phase_label || 'Run'}`}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`Mark ${nextUp.last_name}, ${nextUp.first_name} as DNS?`)) return;
-                      try {
-                        const res = await fetch(`${API}/events/${eventId}/runs/manual`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification', run_status: 'DNS' }),
-                        });
-                        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
-                        setNextUp(null);
-                      } catch (e) { setError('DNS failed: ' + e.message); }
-                    }}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-sm px-4 py-4 rounded-2xl transition-colors"
-                  >
-                    DNS
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {/* Paper mode: no time entry, show start next run */}
-        {isPaper && activeRun && !isDualMogul && (
-          <div className="bg-amber-900/20 border border-amber-700 rounded-2xl p-5 text-center space-y-4">
-            <div className="text-amber-400 font-semibold mb-1">Paper Entry Mode</div>
-            <div className="text-slate-400 text-sm">Time entry disabled. Scores entered via admin console.</div>
-            {nextUp && (
-              <div className="border-t border-amber-800 pt-4 space-y-3">
-                <div className="text-xs text-slate-500 uppercase tracking-wide">Next Up{nextUp.phase_label ? ` — ${nextUp.phase_label}` : ''}</div>
-                <div className="text-xl font-bold text-white">{nextUp.last_name}, {nextUp.first_name}</div>
-                <div className="text-sm text-slate-400">Bib #{nextUp.bib_number} {nextUp.run_order != null && <span className="ml-2">Order: {nextUp.run_order}</span>}</div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={startNextRun}
-                    disabled={starting}
-                    className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors"
-                  >
-                    {starting ? 'Starting...' : `Start ${nextUp.phase_label || 'Next Run'}`}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`Mark ${nextUp.last_name}, ${nextUp.first_name} as DNS?`)) return;
-                      try {
-                        const res = await fetch(`${API}/events/${eventId}/runs/manual`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification', run_status: 'DNS' }),
-                        });
-                        if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
-                        setNextUp(null);
-                      } catch (e) { setError('DNS failed: ' + e.message); }
-                    }}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold text-sm px-4 py-4 rounded-2xl transition-colors"
-                  >
-                    DNS
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Time entry */}
-        {activeRun && !submitted && !noPaceTime && !isDualMogul && !isPaper && !isDevo && (
-          <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700 space-y-4">
-            <div className="text-slate-400 text-sm font-semibold uppercase tracking-wide">
-              Finish Time (seconds)
-            </div>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="e.g. 26.54"
-              value={timeInput}
-              onChange={e => setTimeInput(e.target.value)}
-              onKeyDown={handleKey}
-              autoFocus
-              className="w-full text-4xl font-bold text-center bg-slate-800 border-2 border-slate-600 focus:border-emerald-500 rounded-xl p-4 text-white outline-none"
-              inputMode="decimal"
-            />
-            {/* Quick-select common times */}
-            <div className="flex flex-wrap gap-2">
-              {[20, 22, 24, 26, 28, 30, 32, 34].map(v => (
-                <button
-                  key={v}
-                  onClick={() => setTimeInput(v + '.00')}
-                  className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${
-                    timeInput === v + '.00'
-                      ? 'bg-emerald-600 text-white ring-2 ring-emerald-400'
-                      : 'bg-slate-700 text-slate-200 hover:bg-slate-600 active:bg-slate-500'
-                  }`}
-                >
-                  {v}s
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={() => { setCalcError(''); setShowManualCalc(true) }}
-              className="w-full bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white font-bold text-sm py-3 rounded-xl transition-colors border border-slate-600"
-            >
-              Manual Time Calculation
-            </button>
-
-            <button
-              onClick={async () => {
-                if (!activeRun) { setError('No active run'); return }
-                if (!window.confirm(`Mark ${activeRun.first_name} ${activeRun.last_name} as No Time?`)) return
-                setError('')
-                try {
-                  const res = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ run_time: -1 }),
-                  })
-                  if (!res.ok) {
-                    const err = await res.json()
-                    throw new Error(err.error || 'Submit failed')
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
+            {/* Main left column */}
+            <div className="space-y-4">
+              {activeRun ? (
+                <AthleteBar
+                  bib={activeRun.is_forerunner ? '' : activeRun.bib_number}
+                  name={activeRun.is_forerunner
+                    ? 'FORERUNNER'
+                    : `${activeRun.last_name?.toUpperCase() || ''}${activeRun.first_name ? `, ${activeRun.first_name}` : ''}`}
+                  meta={[
+                    'NOW RUNNING',
+                    activeRun.run_position != null && activeRun.total_runners != null
+                      ? <>Athlete <strong>{activeRun.run_position}</strong> of <strong>{activeRun.total_runners}</strong></>
+                      : null,
+                    activeRun.jump1_code ? <>J1: <strong>{activeRun.jump1_code}</strong></> : null,
+                    activeRun.jump2_code ? <>J2: <strong>{activeRun.jump2_code}</strong></> : null,
+                  ].filter(Boolean)}
+                  right={
+                    activeRun.run_time != null && (
+                      <span className="tablet-display" style={{
+                        fontSize: 36,
+                        color: activeRun.run_time === -1 ? 'var(--tablet-red2)' : 'var(--tablet-green2)',
+                      }}>
+                        {activeRun.run_time === -1 ? 'NT' : `${Number(activeRun.run_time).toFixed(2)}s`}
+                      </span>
+                    )
                   }
-                  setSubmitted(true)
-                  setStatusMsg('No Time submitted')
-                } catch (e) { setError(e.message) }
-              }}
-              className="w-full bg-red-700 hover:bg-red-600 active:bg-red-800 text-white font-bold text-lg py-4 rounded-2xl transition-colors"
-            >
-              No Time
-            </button>
+                />
+              ) : (
+                <div className="tablet-card text-center" style={{ padding: 32 }}>
+                  <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
+                  <div style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
+                </div>
+              )}
 
-            {error && (
-              <div className="bg-red-900/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>
-            )}
+              {/* Devo no-time message (with active run) */}
+              {isDevo && activeRun && (
+                <div className="tablet-warn-banner">
+                  <span style={{ fontWeight: 800, letterSpacing: 1 }}>NO TIME — DEVO</span>
+                  <span>Devo events do not use timed scoring.</span>
+                </div>
+              )}
 
-            <button
-              onClick={submitTime}
-              disabled={!timeInput}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xl py-5 rounded-2xl transition-colors"
-            >
-              Submit Time
-            </button>
+              {/* No pace-time configured */}
+              {noPaceTime && !isPaper && !isDevo && (
+                <div className="tablet-warn-banner">
+                  <span style={{ fontWeight: 800, letterSpacing: 1 }}>COURSE LENGTH NOT SET</span>
+                  <span>Time cannot be entered until course length is set in event configuration.</span>
+                </div>
+              )}
+
+              {/* Paper-mode banner */}
+              {isPaper && activeRun && (
+                <div className="tablet-warn-banner">
+                  <span style={{ fontWeight: 800, letterSpacing: 1 }}>PAPER ENTRY MODE</span>
+                  <span>Time entry disabled. Scores entered via admin console.</span>
+                </div>
+              )}
+
+              {/* Time-entry pad — visible only when active run + not paper + not devo + pace-time configured + not yet submitted */}
+              {activeRun && !submitted && !noPaceTime && !isPaper && !isDevo && (
+                <div className="tablet-card" style={{ padding: 18 }}>
+                  <div className="text-xs uppercase tracking-widest mb-2" style={{ color: 'var(--tablet-dim)', letterSpacing: 2 }}>Finish Time (seconds)</div>
+                  {/* Display + inline backspace per slide-04 prototype */}
+                  <div className="flex items-stretch gap-2">
+                    <div
+                      className="tablet-display tablet-mono"
+                      style={{
+                        flex: 1,
+                        fontSize: 88,
+                        lineHeight: 1,
+                        textAlign: 'center',
+                        padding: '16px 24px',
+                        borderRadius: 16,
+                        border: `2px solid ${timeInput ? 'var(--tablet-blue)' : 'var(--tablet-navy4)'}`,
+                        background: 'var(--tablet-navy3)',
+                        color: timeInput ? '#fff' : 'var(--tablet-muted)',
+                        letterSpacing: 2,
+                      }}
+                    >
+                      {timeInput || '0.00'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => pressKey('⌫')}
+                      className="tablet-numpad-btn tablet-numpad-back"
+                      style={{ width: 80, height: 'auto', borderRadius: 16, fontSize: 24 }}
+                      aria-label="Backspace"
+                    >
+                      ⌫
+                    </button>
+                  </div>
+
+                  {/* Numpad — calculator order: 7-8-9 / 4-5-6 / 1-2-3 / [empty] 0 . */}
+                  <div className="grid grid-cols-3 gap-2 mt-4">
+                    {['7','8','9','4','5','6','1','2','3'].map(k => (
+                      <button key={k} type="button" onClick={() => pressKey(k)} className="tablet-numpad-btn">{k}</button>
+                    ))}
+                    {/* bottom row: empty · 0 · . */}
+                    <div aria-hidden="true" />
+                    <button type="button" onClick={() => pressKey('0')} className="tablet-numpad-btn">0</button>
+                    <button type="button" onClick={() => pressKey('.')} className="tablet-numpad-btn">.</button>
+                  </div>
+
+                  {/* Manual calc */}
+                  <button
+                    type="button"
+                    onClick={() => { setCalcError(''); setShowManualCalc(true) }}
+                    className="tablet-btn-amber w-full mt-3"
+                    style={{ height: 50, fontSize: 16 }}
+                  >
+                    ⏱ Manual Time Calculation (Top / Bottom Timer)
+                  </button>
+
+                  {error && (
+                    <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>
+                  )}
+
+                  {/* NT (left) + Submit Time (right, flex 2.5) */}
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmNT(true)}
+                      className="tablet-btn-danger"
+                      style={{ flex: 1, height: 68, fontSize: 22 }}
+                    >
+                      No Time
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitTime}
+                      disabled={!timeInput}
+                      className="tablet-btn-submit"
+                      style={{ flex: 2.5, height: 68, fontSize: 24 }}
+                    >
+                      ✓ Submit Time
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Submitted confirmation */}
+              {submitted && activeRun && !isPaper && !isDevo && (
+                activeRun.run_time === -1 ? (
+                  <div className="tablet-card text-center" style={{ padding: 32, borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
+                    <div className="tablet-display" style={{ fontSize: 96, color: 'var(--tablet-red2)' }}>NT</div>
+                    <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-red2)' }}>No Time Submitted</div>
+                    <div className="text-sm mt-2" style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
+                  </div>
+                ) : (
+                  <div className="tablet-card text-center" style={{ padding: 32, borderColor: 'var(--tablet-green2)', borderWidth: 2 }}>
+                    <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-green2)' }}>&#10003;</div>
+                    <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-green2)' }}>Time Submitted</div>
+                    <div className="tablet-display tablet-mono mt-2" style={{ fontSize: 56, color: '#fff' }}>{timeInput || Number(activeRun.run_time).toFixed(2)}s</div>
+                    <div className="text-sm mt-2" style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Right sidebar */}
+            <div className="space-y-4">
+              {/* Next Up card — hidden in tablet mode when a run is in progress
+                  so the timekeeper can't accidentally start a duplicate run.
+                  Paper mode keeps Next Up visible during an active run because
+                  paper-mode timekeepers start runs while scores trickle in. */}
+              {nextUp && (!activeRun || isPaper) && (
+                <div className="tablet-card" style={{ padding: 16 }}>
+                  <div className="text-xs uppercase tracking-widest mb-2" style={{ color: 'var(--tablet-dim)', letterSpacing: 2 }}>
+                    Next Up{nextUp.phase_label ? ` — ${nextUp.phase_label}` : ''}
+                  </div>
+                  <div className="tablet-display" style={{ fontSize: 32, lineHeight: 1 }}>
+                    <span style={{ color: 'var(--tablet-blue2)' }}>#{nextUp.bib_number}</span> {nextUp.last_name?.toUpperCase()}, {nextUp.first_name}
+                  </div>
+                  {nextUp.run_order != null && (
+                    <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>Order: {nextUp.run_order}</div>
+                  )}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={startNextRun}
+                      disabled={starting}
+                      className="tablet-btn-submit"
+                      style={{ flex: 1, height: 56, fontSize: 18 }}
+                    >
+                      {starting ? 'Starting...' : `Start ${nextUp.phase_label || 'Run'}`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDNS(true)}
+                      className="tablet-btn-amber"
+                      style={{ height: 56, fontSize: 16 }}
+                    >
+                      DNS
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Previous Times */}
+              {recentTimes.length > 0 && (
+                <div className="tablet-card" style={{ padding: 16 }}>
+                  <div className="text-xs uppercase tracking-widest mb-3" style={{ color: 'var(--tablet-dim)', letterSpacing: 2 }}>Previous Times</div>
+                  <div className="space-y-1.5 text-sm">
+                    {recentTimes.map((r, i) => {
+                      const fast = eventInfo?.pace_time && r.time < eventInfo.pace_time
+                      const color = fast ? 'var(--tablet-green2)' : 'var(--tablet-amber2)'
+                      return (
+                        <div key={i} className="flex items-center justify-between gap-2">
+                          <span className="truncate" style={{ color: 'var(--tablet-dim)' }}>
+                            <span style={{ color: 'var(--tablet-blue2)', fontWeight: 700 }}>#{r.bib}</span> {r.name}
+                          </span>
+                          <span className="tablet-mono font-bold" style={{ color }}>{Number(r.time).toFixed(2)}s</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Pace Time box */}
+              {eventInfo?.pace_time && (
+                <div className="tablet-card text-center" style={{ padding: 16 }}>
+                  <div className="text-xs uppercase tracking-widest" style={{ color: 'var(--tablet-dim)', letterSpacing: 2 }}>Pace Time</div>
+                  <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', lineHeight: 1, marginTop: 4 }}>
+                    {Number(eventInfo.pace_time).toFixed(2)}s
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
-
-        {/* Submitted confirmation */}
-        {submitted && activeRun && !isDualMogul && !isPaper && !isDevo && (
-          activeRun.run_time == -1 ? (
-            <div className="bg-red-900/20 border border-red-800 rounded-2xl p-8 text-center">
-              <div className="text-red-400 text-5xl mb-3">NT</div>
-              <div className="text-red-400 text-xl font-bold">No Time Submitted</div>
-              <div className="text-slate-400 text-sm mt-4">Waiting for next athlete...</div>
-            </div>
-          ) : (
-            <div className="bg-green-900/20 border border-green-800 rounded-2xl p-8 text-center">
-              <div className="text-green-400 text-5xl mb-3">&#10003;</div>
-              <div className="text-green-400 text-xl font-bold">Time Submitted</div>
-              <div className="text-white text-4xl font-bold mt-2 hc-score">{timeInput}s</div>
-              <div className="text-slate-400 text-sm mt-4">Waiting for next athlete...</div>
-            </div>
-          )
-        )}
-
       </div>
 
-      {/* Manual Time Calculation Modal */}
-      {showManualCalc && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className={`${hc ? 'bg-black border-white' : 'bg-slate-900 border-slate-700'} border-2 rounded-2xl p-6 w-full max-w-md space-y-5`}>
-            <div className="text-center">
-              <div className="text-lg font-bold text-white">Manual Time Calculation</div>
-              <div className="text-xs text-slate-400 mt-1">Enter synchronized stopwatch times. Run time = Bottom − Top.</div>
-            </div>
+      {/* NT confirm dialog */}
+      {confirmNT && activeRun && (
+        <ConfirmDialog
+          title="Confirm No Time"
+          body={<>Mark <strong style={{ color: '#fff' }}>{activeRun.first_name} {activeRun.last_name}</strong> as <strong style={{ color: 'var(--tablet-red2)' }}>No Time</strong>?</>}
+          confirmLabel="Mark as NT"
+          confirmVariant="red"
+          onCancel={() => setConfirmNT(false)}
+          onConfirm={() => { setConfirmNT(false); submitNoTime() }}
+        />
+      )}
 
-            <div className="space-y-3">
+      {/* DNS confirm dialog */}
+      {confirmDNS && nextUp && (
+        <ConfirmDialog
+          title="Confirm DNS"
+          body={<>Mark <strong style={{ color: '#fff' }}>{nextUp.last_name}, {nextUp.first_name}</strong> as <strong style={{ color: 'var(--tablet-amber2)' }}>DNS</strong>?</>}
+          confirmLabel="Mark as DNS"
+          confirmVariant="amber"
+          onCancel={() => setConfirmDNS(false)}
+          onConfirm={() => { setConfirmDNS(false); dnsNextUp() }}
+        />
+      )}
+
+      {/* Manual Time Calculation modal */}
+      {showManualCalc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={() => { setShowManualCalc(false); setTopTimer(''); setBotTimer(''); setCalcError('') }}
+        >
+          <div
+            className="tablet-card w-full max-w-md"
+            style={{ padding: 24 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <div className="tablet-display" style={{ fontSize: 28, lineHeight: 1 }}>Manual Time Calculation</div>
+              <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>Enter synchronized stopwatch times. Run time = Bottom − Top.</div>
+            </div>
+            <div className="space-y-3 mt-4">
               <div>
-                <label className="text-sm text-slate-400 font-semibold uppercase tracking-wide">Top Timer</label>
+                <label className="text-xs uppercase tracking-widest" style={{ color: 'var(--tablet-dim)' }}>Top Timer</label>
                 <input
                   type="text"
                   placeholder="hh:mm:ss.ss"
                   value={topTimer}
                   onChange={e => setTopTimer(e.target.value)}
-                  className="w-full text-2xl font-bold text-center bg-slate-800 border-2 border-slate-600 focus:border-blue-500 rounded-xl p-3 text-white outline-none mt-1"
+                  className="tablet-mono w-full mt-1 outline-none"
+                  style={{
+                    fontSize: 28, fontWeight: 700, textAlign: 'center',
+                    background: 'var(--tablet-navy3)', color: '#fff',
+                    border: '2px solid var(--tablet-navy4)', borderRadius: 12, padding: 12,
+                  }}
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-400 font-semibold uppercase tracking-wide">Bottom Timer</label>
+                <label className="text-xs uppercase tracking-widest" style={{ color: 'var(--tablet-dim)' }}>Bottom Timer</label>
                 <input
                   type="text"
                   placeholder="hh:mm:ss.ss"
                   value={botTimer}
                   onChange={e => setBotTimer(e.target.value)}
-                  className="w-full text-2xl font-bold text-center bg-slate-800 border-2 border-slate-600 focus:border-blue-500 rounded-xl p-3 text-white outline-none mt-1"
+                  className="tablet-mono w-full mt-1 outline-none"
+                  style={{
+                    fontSize: 28, fontWeight: 700, textAlign: 'center',
+                    background: 'var(--tablet-navy3)', color: '#fff',
+                    border: '2px solid var(--tablet-navy4)', borderRadius: 12, padding: 12,
+                  }}
                 />
               </div>
             </div>
-
             {calcError && (
-              <div className="bg-red-900/30 text-red-400 rounded-lg px-4 py-3 text-sm">{calcError}</div>
+              <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{calcError}</div>
             )}
-
-            <div className="flex gap-3">
+            <div className="flex gap-3 mt-4">
               <button
+                type="button"
                 onClick={() => { setShowManualCalc(false); setTopTimer(''); setBotTimer(''); setCalcError('') }}
-                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition-colors"
+                className="tablet-btn-neutral"
+                style={{ flex: 1, height: 50 }}
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={calculateManualTime}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors"
+                className="tablet-btn-submit"
+                style={{ flex: 1, height: 50, fontSize: 18 }}
               >
                 Calculate
               </button>
@@ -594,6 +675,33 @@ export default function TimekeeperTablet() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function ConfirmDialog({ title, body, confirmLabel, confirmVariant = 'submit', onCancel, onConfirm }) {
+  const confirmClass =
+    confirmVariant === 'red'   ? 'tablet-btn-danger' :
+    confirmVariant === 'amber' ? 'tablet-btn-amber'  :
+                                 'tablet-btn-submit'
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={onCancel}
+    >
+      <div
+        className="tablet-card w-full max-w-md"
+        style={{ padding: 24 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="tablet-display" style={{ fontSize: 28, lineHeight: 1, marginBottom: 8 }}>{title}</div>
+        <p className="text-sm mb-5" style={{ color: 'var(--tablet-dim)' }}>{body}</p>
+        <div className="flex gap-3 justify-end">
+          <button type="button" onClick={onCancel} className="tablet-btn-neutral" style={{ height: 44, padding: '0 24px' }}>Cancel</button>
+          <button type="button" onClick={onConfirm} className={confirmClass} style={{ height: 44, padding: '0 24px', fontSize: 16 }}>{confirmLabel}</button>
+        </div>
+      </div>
     </div>
   )
 }

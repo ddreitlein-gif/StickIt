@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.18.04
+**Current version:** v1.19.00
 
 ## Commands
 
@@ -175,6 +175,111 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.19.00 Feature Notes
+
+### Judge Tablet Prototype Audit + Post-Audit Polish (v1.19.00)
+
+Major UI release. Comprehensive audit of the v1.18.05 redesign against the high-fidelity Slide 01–05 PDF prototype with **19 discrepancies addressed**, plus four post-audit follow-up fixes after iPad testing, plus a full migration of the HJ tablet inner judge-list rows from legacy Tailwind to the new tablet-* token system. The minor version bump from v1.18 → v1.19 reflects the scope. **No scoring math changes.** All formulas, DD lookup, judge roles, server routes, and API contracts are unchanged.
+
+**Slide 01 — Air Judge:**
+- **Two-step → single-screen flow.** The redesigned `AirJudgePanel` now renders both jump-code grids and both score grids simultaneously in two side-by-side columns plus a 260px right-side reference sidebar. Judge can fill code/score in any order. New combined `submitAirAll()` handler PUTs codes first, then POSTs scores; on 409 mismatch from the other Air Judge, the server's exact error text (`"Jump codes differ from the other Air Judge.  Contact the Head Judge to resolve."`) is surfaced in a red banner and score POSTs are NOT fired. Local state preserved on error for retry. Each judge picks codes from scratch — no pre-select. Mismatch protection at `server/routes/runs.js:911-921` is unchanged.
+- **Mixed-step score grid.** New `VALUES_AIR_15 = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0]` matches the prototype's 6×3 layout: 1.0 increments 0–5, then 0.5 increments 6–10. `ScoreButtonGrid` extended with optional `values` prop; when provided, renders those exact buttons. Selection anchor via `nearestAnchor()` keeps the highlight stable when fine-tune (±0.1) drifts the value off-grid.
+- **Multi-line jump chips** in the athlete bar replace the inline `ScoreSummaryChip`. Each chip shows `JUMP 1` label, big green Bebas Neue score (or `—`), and small mono `code · DD value` (or `pending`).
+- **JUMP CODE / SCORE subheadings** added above each grid, plus inline `Fine tune:` label.
+- **260px right-side reference sidebar** restored (was dropped to full-width below in v1.18.05).
+
+**Slide 02 — TL non-component:**
+- **Friendly judge-role display** via new `ROLE_DISPLAY` map: `T&L Judge 1`, `T&L Judge 2`, `T&L Judge 3` instead of `TL1/TL2/TL3`. Internal `judge.role` value unchanged.
+- **TL athlete-bar meta line** now shows `Jump 1: <code> · Jump 2: <code>` from `activeRun.jump1_code` / `jump2_code`. Judge identity moves to the right cluster (matching the prototype).
+
+**Slide 03 — Component scoring:**
+- **Reference pills as colored badges.** New `RefPillRow` component + `tablet-ref-pill` CSS class. Each component column ends with a horizontal row of 4 small badges: `[Excellent 8.1–10] [Good 6.1–8] [Adequate 4.1–6] [Poor 0.1–4]` (Carving) or 0–5 ranges for Ab/Ext + Upper Body. Replaces the previous `tablet-ref-row` stack.
+- **Subtitle copy** updated per prototype: `0–10 · Good range: 6.1–8` (Carving), `0–5 · Good range: 3.1–4` (Ab/Ext + Upper Body), `0–5 · Not yet entered` before pick.
+- Score display moved from below-the-title to inline-with-title, using green Bebas Neue when picked.
+
+**Slide 04 — Timekeeper:**
+- **Numpad flipped to calculator order** (matches stopwatch entry conventions): 7-8-9 / 4-5-6 / 1-2-3 / `[empty] 0 .` bottom row. Was phone-style in v1.18.05.
+- **Backspace inline with the time display** (right edge, 80px wide, red-tint border) instead of in the numpad.
+- **Submit Time** label gets ✓ checkmark prefix.
+- **Manual Time Calculation** button gets the ⏱ stopwatch glyph and longer label `(Top / Bottom Timer)`.
+- **No Time** uses the danger (red) variant instead of neutral.
+
+**Slide 05 — Head Judge:**
+- **3-column status bar at top** with `StatusSquare` (12×12 normal, 14×14 HC) and friendly labels — `T&L JUDGES 3/3`, `AIR JUDGES 2/2`, `TIME IN ✓`. Driven by existing `event.num_tl_judges` / `num_air_judges` / `num_jumps` / `has_speed`. Replaces the right-column "Score Status" box from v1.18.05.
+- **AthleteBar** at top with friendly "Head Judge" role label and HC mode button.
+- **`RunStatusGrid` component** wired in for DNS/DNF/RNS/DSQ. Built-in confirm dialog preserves the v1.16.16 confirmation pattern. The pre-existing `setRunStatus` `window.confirm` was removed to avoid double-confirmation.
+- Inner judge-list rows (T&L, Air, Time) intentionally **kept on legacy Tailwind** for this release — the v1.16.16 reject confirm dialogs are inline-rendered with complex state, and rebuilding them would risk the critical reject/approve flow. The legacy `.hc` cascade keeps HC mode working visually.
+
+**HC variants (Slides 06–10):** Inherit automatically via `[data-hc="1"]` overrides on every new `tablet-*` class. The legacy `.hc` cascade in `index.css` stays in place as defense-in-depth for any inline Tailwind that hasn't migrated yet.
+
+**Component-layer additions:**
+- `client/src/components/tablet/ScoreButtonGrid.jsx` — new `values?: number[]` prop, `nearestAnchor()` helper, exported `VALUES_AIR_15` constant.
+- `client/src/components/tablet/ReferencePanel.jsx` — new exported `RefPillRow` component.
+- `client/src/index.css` — new `tablet-ref-pill` class with q-ex/gd/av/mg/po color variants and HC override.
+
+**Files modified:** `client/src/components/tablet/ScoreButtonGrid.jsx`, `ReferencePanel.jsx`, `client/src/pages/JudgeTablet.jsx`, `TimekeeperTablet.jsx`, `HeadJudgeTablet.jsx`, `client/src/index.css`, `client/src/components/Layout.jsx`, `client/package.json`, `server/index.js`, `server/package.json`, `CLAUDE.md`
+
+### Post-Audit Follow-Up Fixes (v1.19.00)
+
+After iPad testing, four small bug fixes were applied:
+
+1. **HJ tablet — DNS/DNF/RNS/DSQ button labels removed.** The `RunStatusGrid` component rendered descriptive sub-labels under each code (`Did Not Start`, `Did Not Finish`, `Refused Score`, `Disqualified`) that didn't appear in the prototype. Removed; codes render solo at 26px in `tablet-display`.
+2. **Timekeeper — stale Next Up bug.** When a run started in tablet mode, the timekeeper's "Next Up" sidebar continued to show the just-started athlete with a Start Run button (because the poll loop only refetched Next Up when `!run || isPaper`, leaving the previously-fetched value in state). Render condition now gated on `(!activeRun || isPaper)` and stale state explicitly cleared in the poll loop. Paper mode behavior is unchanged — paper-mode timekeepers continue to see Next Up alongside an active run because they're the operator who starts subsequent runs.
+3. **Live Scoreboard — "NOW COMPETING" banner alignment.** Banner inline style had `margin: '0 auto 20px'` overridden by explicit `marginLeft: 16` / `marginRight: 16`, forcing the banner to sit 16px from the left edge with a 760px max-width — leaving the right side empty. Fixed by wrapping the gradient panel in a centered 760px container with `padding: '0 16px'` for narrow-screen safety. Now lines up with the rank cards below it.
+4. **HJ tablet — inner judge-list row migration.** The v1.18.06 release intentionally left the inner T&L / Air / Timekeeper rows on legacy Tailwind classes (slate/gray) because the inline reject confirm dialogs have complex state. v1.19.00 completes the migration via a CSS-only restyle — Tailwind class swaps to the new `tablet-*` token system. Zero JSX structure changes, zero logic changes, all data displays preserved verbatim:
+   - Component breakdown text (`Crv 5.5 / UB 1.0 / A&E 4.5 / Ded 1.5`) — same conditional, same fields.
+   - Inline reject confirm dialogs for T&L / Air / Time — same `executeReject` / `cancelReject` / `executeTimeReject` handlers; styled with `tablet-card`, `tablet-btn-danger`, `tablet-btn-neutral`.
+   - Clear Codes link, Reject Time button, Time Points calculation (`48 - 32 * (run_time / pace_time)`), aerials v2 grid — all untouched.
+   - Score values use `tablet-mono` (JetBrains Mono); air jump codes accent in `--tablet-blue2`; section headers in Bebas Neue `tablet-display` matching the v1.18.06 outer chrome.
+
+**Disposition:** Released. Build delivered as `StickIt_1_19_00.zip` to `~/Desktop/Scoring Server/Scoring Zip Files/`. Git push triggers Railway auto-deploy.
+
+---
+
+## v1.18.05 Feature Notes
+
+### Judge Tablet UI Redesign — Mogul / Dual Mogul / RQS / Devo (v1.18.05)
+
+Visual redesign of the four judge-facing tablet pages (`JudgeTablet.jsx`, `HeadJudgeTablet.jsx`, `TimekeeperTablet.jsx`) based on a high-fidelity design package (`Judge Tablets.zip`). New navy/blue palette, color-zoned score buttons (Excellent / Good / Average / Managing / Poor), Bebas Neue / DM Sans / JetBrains Mono typography, 260–280px sidebar reference panels, and a unified High Contrast (HC) mode mirror of every screen in black/white/amber.
+
+**Zero scoring math changes.** All formulas are bit-for-bit identical: T&L total (`carving + absExt + upperBody − deduction`, clamped 0.1–20), single T&L (`raw − deduction`), air score (`raw × DD`), speed score (`max(0, 48 − 32 × t/pace_time)`), DD lookup, deduction presets (`0.1, 0.5, 1.0, 1.6, 6.0`), tie-break order, and judge-role structure are all unchanged. Only the UI layer is touched.
+
+**Per-division behavior preserved.** The redesigned UI is driven by the existing `event.num_tl_judges` / `event.num_air_judges` / `event.num_jumps` / `event.has_speed` flags and the existing `eventDivision === 'devo' || eventDivision === 'rqs_eqs'` restricted-division check. Division defaults stay at:
+- **Comp Series:** 3 TL + 2 Air, 2 jumps, time, component scoring on
+- **RQS-EQS:** 2 TL + 1 Air, 2 jumps, time, component scoring off (uses non-component TL view)
+- **Devo:** 2 TL + 1 Air, 1 jump (Air judge column renders full-width), no time entry
+- **Dual Mogul:** 5-judge bracket layout (DualTurns1/2, DualAir, DualTime, DualOverall) with split-point judge view
+
+**Jump-code lists.** RQS uses the same `DEVO_FREQ_CODES` quick-select as Devo (`S, T, D, X, K, TS, TT, TD, TTS, 3, 3p`) and the same dropdown filter (`/^[bfl]|o/`). Comp Series uses `COMP_FREQ_CODES` (`N, S, T, K, TS, 3, bT, bp, bL, bG, bF, 7op, 7oG`). DDs come from the existing `jump_dd_table` rows seeded with `ruleset='uss'` — unchanged.
+
+**HC mode.** The existing `useHighContrast` hook (localStorage `stickit-high-contrast`) is the toggle source of truth for both the legacy `.hc` cascade and the new `[data-hc="1"]` selector system. Toggling HC flips a `data-hc` attribute on the page root container — no React state, no scoring values, no in-progress entries are reset. Available in all divisions on all four tablets. README discrepancy note (component weights stated as `0.5/0.25/0.25` weighted formula vs. codebase's additive `10+5+5` formula): mathematically identical, codebase formula is preserved.
+
+**Implementation.** New CSS variable block + `tablet-*` utility classes added to `client/src/index.css` (lines 233+); new `[data-hc="1"]` overrides for HC mode. Eleven shared presentational components added in `client/src/components/tablet/`:
+- `AthleteBar.jsx` — top bar with bib + name + meta + right slot
+- `HCModeButton.jsx` — amber HC toggle with normal/HC variants (← Normal Mode / HC MODE ON badge pair)
+- `ScoreButtonGrid.jsx` — color-zoned score grid with `ZONES_AIR` / `ZONES_TL` / `ZONES_COMP_5` exports
+- `JumpCodeGrid.jsx` — 7×2 quick-select + "All codes" dropdown + No-Jump button
+- `DeductionPad.jsx` — 5 presets + Clear + Manual entry, replaces inline DeductionPad
+- `FineTuneRow.jsx` — −0.1 / score / +0.1 row with disabled-when-empty state
+- `ReferencePanel.jsx` — sidebar reference with Excellent/Good/Adequate/Managing/Poor color rows
+- `CalculatedScorePanel.jsx` — HJ tablet right panel (Turns/Air/Speed grid + Total)
+- `JudgeReviewRow.jsx` — generic HJ judge-list row with reject button
+- `StatusSquare.jsx` — 12×12 (or 14×14 in HC) green-glow square (square not circle, per design spec)
+- `RunStatusGrid.jsx` — DNS/DNF/RNS/DSQ 4-button grid with confirm dialog (preserves v1.16.16 confirmation pattern)
+
+**JudgeTablet refactor.** The Air judge view, TL non-component view, TL component view, and dual mogul judge view all migrate to the new design. The legacy `ScorePad` and `DeductionPad` inline components are removed. New panels: `AirJudgePanel` (two-step flow — jump codes → scoring), `TLComponentPanel` (3-column Carving/Ab-Ext/Upper Body grid), `TLNonComponentPanel` (4×11 score grid + sidebar). `submitCodes()`, `submitScore()`, `turnsTotal` calculation, and all WebSocket / polling logic preserved verbatim.
+
+**TimekeeperTablet refactor.** New 88px Bebas Neue finish-time display, custom 3×4 numpad (replacing `<input type="number">`), amber Manual Time Calculation button, NT (neutral, left) + Submit Time (green, flex 2.5, right). New right sidebar with Next Up card, Previous Times list (green for sub-pace times, amber for slower), and Pace Time box. Devo no-time, dual mogul disabled, paper-mode start-only, age-group banner, NT confirm dialog, and Manual Time Calc modal all preserved.
+
+**HeadJudgeTablet refactor.** Targeted refactor — outer wrappers migrated to `tablet-root data-hc=...` (with belt-and-suspenders `.hc` class for legacy inline-Tailwind in the inner judge-list rows), HC toggle replaced with `HCModeButton` (3 sites), `BracketReviewPanel` restyled with new tokens, event-completed full-screens use new tokens. Inner judge-row layout in the standard mogul HJ view kept on legacy Tailwind for now — the v1.16.16 reject confirm dialogs, run-status confirm dialogs, age-group transition banner, dual mogul bracket review, and final review screen all retain existing logic. The `.hc` cascade in `index.css` (lines 147–232) still applies to the inner Tailwind classes so HC mode visually works end-to-end.
+
+**Out of scope this release.** `AerialsJudgeTablet.jsx` (per-judge-per-jump v2 model) is not touched — separate redesign track. Public surfaces (Home, LiveScores, Scoreboard, Overlay) remain on the v1.17.00 redesign. Officials and Admin pages unchanged.
+
+**Files created:** `client/src/components/tablet/AthleteBar.jsx`, `HCModeButton.jsx`, `ScoreButtonGrid.jsx`, `JumpCodeGrid.jsx`, `DeductionPad.jsx`, `FineTuneRow.jsx`, `ReferencePanel.jsx`, `CalculatedScorePanel.jsx`, `JudgeReviewRow.jsx`, `StatusSquare.jsx`, `RunStatusGrid.jsx`
+**Files modified:** `client/src/index.css`, `client/src/pages/JudgeTablet.jsx`, `client/src/pages/HeadJudgeTablet.jsx`, `client/src/pages/TimekeeperTablet.jsx`, `client/src/components/Layout.jsx`, `client/package.json`, `server/index.js`, `server/package.json`, `CLAUDE.md`
 
 ---
 

@@ -390,35 +390,36 @@ function ScoreboardHeader({ event, eventLabel }) {
 // =============================================================================
 function NowCompetingBanner({ run }) {
   return (
-    <div style={{
-      maxWidth: 760,
-      margin: '0 auto 20px',
-      padding: '16px 20px',
-      background: 'var(--gradient-red)',
-      borderRadius: 14,
-      marginLeft: 16,
-      marginRight: 16,
-      boxShadow: '0 6px 24px rgba(230,57,70,0.35)',
-      color: '#fff',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 14
-    }}>
-      <LiveDot size={10} color="#fff" />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="sk-display" style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.2em', opacity: 0.9 }}>
-          NOW COMPETING
+    // Outer container centers the banner and provides 16px horizontal padding
+    // so it doesn't touch the screen edges on narrow viewports. The inner
+    // element holds the gradient background and content.
+    <div style={{ maxWidth: 760, margin: '0 auto 20px', padding: '0 16px' }}>
+      <div style={{
+        padding: '16px 20px',
+        background: 'var(--gradient-red)',
+        borderRadius: 14,
+        boxShadow: '0 6px 24px rgba(230,57,70,0.35)',
+        color: '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14
+      }}>
+        <LiveDot size={10} color="#fff" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="sk-display" style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.2em', opacity: 0.9 }}>
+            NOW COMPETING
+          </div>
+          <div className="sk-display" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>
+            {(run.last_name || '').toUpperCase()}, {run.first_name || ''}
+          </div>
         </div>
-        <div className="sk-display" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>
-          {(run.last_name || '').toUpperCase()}, {run.first_name || ''}
-        </div>
-      </div>
-      <div style={{ textAlign: 'right' }}>
-        <div className="sk-display" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.15em', opacity: 0.85 }}>
-          BIB
-        </div>
-        <div className="sk-mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>
-          {run.bib_number ?? '–'}
+        <div style={{ textAlign: 'right' }}>
+          <div className="sk-display" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.15em', opacity: 0.85 }}>
+            BIB
+          </div>
+          <div className="sk-mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>
+            {run.bib_number ?? '–'}
+          </div>
         </div>
       </div>
     </div>

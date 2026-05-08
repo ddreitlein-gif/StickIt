@@ -2,6 +2,17 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import useHighContrast from '../hooks/useHighContrast'
 import useResolveIds from '../hooks/useResolveIds'
+import HCModeButton from '../components/tablet/HCModeButton'
+import StatusSquare from '../components/tablet/StatusSquare'
+import AthleteBar from '../components/tablet/AthleteBar'
+import CalculatedScorePanel from '../components/tablet/CalculatedScorePanel'
+import RunStatusGrid from '../components/tablet/RunStatusGrid'
+
+const ROLE_DISPLAY_HJ = {
+  TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3',
+  Air1: 'Air J1', Air2: 'Air J2', HJ: 'Head Judge',
+}
+const roleDisp = (r) => ROLE_DISPLAY_HJ[r] || ROLE_LABELS[r] || r || ''
 
 const API = '/api'
 
@@ -70,16 +81,30 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
     const blueWon = m.winner_registration_id && m.winner_registration_id === m.registration_id_blue
     const redWon  = m.winner_registration_id && m.winner_registration_id === m.registration_id_red
     return (
-      <div key={m.id} className="bg-slate-800 rounded-lg border border-slate-700 p-2 text-sm min-w-[180px]">
-        <div className={`flex items-center justify-between px-2 py-1 rounded ${blueWon ? 'bg-blue-900/40 font-bold text-white' : 'text-slate-400'}`}>
-          <span className="font-mono text-xs mr-2">{m.blue_bib != null ? `#${m.blue_bib}` : ''}</span>
+      <div key={m.id} className="tablet-card text-sm" style={{ padding: 8, minWidth: 180 }}>
+        <div
+          className="flex items-center justify-between px-2 py-1 rounded"
+          style={{
+            background: blueWon ? 'rgba(14,144,229,0.30)' : 'transparent',
+            color: blueWon ? '#fff' : 'var(--tablet-dim)',
+            fontWeight: blueWon ? 700 : 400,
+          }}
+        >
+          <span className="tablet-mono text-xs mr-2">{m.blue_bib != null ? `#${m.blue_bib}` : ''}</span>
           <span className="truncate flex-1">{m.blue_last || (m.registration_id_blue ? '...' : 'BYE')}</span>
-          {blueWon && <span className="ml-2 text-emerald-400 font-bold">W</span>}
+          {blueWon && <span className="ml-2 font-bold" style={{ color: 'var(--tablet-green2)' }}>W</span>}
         </div>
-        <div className={`flex items-center justify-between px-2 py-1 rounded mt-0.5 ${redWon ? 'bg-red-900/40 font-bold text-white' : 'text-slate-400'}`}>
-          <span className="font-mono text-xs mr-2">{m.red_bib != null ? `#${m.red_bib}` : ''}</span>
+        <div
+          className="flex items-center justify-between px-2 py-1 rounded mt-0.5"
+          style={{
+            background: redWon ? 'rgba(239,68,68,0.30)' : 'transparent',
+            color: redWon ? '#fff' : 'var(--tablet-dim)',
+            fontWeight: redWon ? 700 : 400,
+          }}
+        >
+          <span className="tablet-mono text-xs mr-2">{m.red_bib != null ? `#${m.red_bib}` : ''}</span>
           <span className="truncate flex-1">{m.red_last || (m.registration_id_red ? '...' : 'BYE')}</span>
-          {redWon && <span className="ml-2 text-emerald-400 font-bold">W</span>}
+          {redWon && <span className="ml-2 font-bold" style={{ color: 'var(--tablet-green2)' }}>W</span>}
         </div>
       </div>
     )
@@ -89,7 +114,7 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
     <div className="flex gap-3 overflow-x-auto pb-2">
       {groups.map(g => (
         <div key={`${isConsol}-${g.round}`} className="flex-shrink-0">
-          <div className="text-xs uppercase tracking-wide text-slate-500 mb-2 font-semibold">
+          <div className="text-xs uppercase mb-2 font-semibold" style={{ color: 'var(--tablet-muted)', letterSpacing: 1.5 }}>
             {roundLabel(g.round, isConsol)}
           </div>
           <div className="flex flex-col gap-2 justify-around min-h-full">
@@ -101,40 +126,44 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
   )
 
   return (
-    <div className="bg-slate-900 rounded-2xl p-5 border border-blue-700">
+    <div className="tablet-card" style={{ padding: 20, borderColor: 'var(--tablet-blue)', borderWidth: 2 }}>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <div className="text-blue-400 text-lg font-bold">Bracket Complete -- Final Review</div>
-          <div className="text-xs text-slate-400 mt-0.5">
+          <div className="tablet-display" style={{ fontSize: 28, color: 'var(--tablet-blue2)' }}>Bracket Complete — Final Review</div>
+          <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>
             Review the completed bracket below, then approve to finalize the event or send back to scoring for edits.
           </div>
         </div>
       </div>
 
-      <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 mb-4 overflow-hidden">
-        <div className="text-xs uppercase tracking-wide text-emerald-400 mb-2 font-semibold">Main Bracket</div>
+      <div className="tablet-card mb-4" style={{ padding: 12, background: 'var(--tablet-navy)', overflow: 'hidden' }}>
+        <div className="text-xs uppercase tracking-widest mb-2 font-semibold" style={{ color: 'var(--tablet-green2)', letterSpacing: 1.5 }}>Main Bracket</div>
         {renderColumns(groupByRound(mainMatches), false)}
       </div>
 
       {consolMatches.length > 0 && (
-        <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 mb-4 overflow-hidden">
-          <div className="text-xs uppercase tracking-wide text-amber-400 mb-2 font-semibold">Consolation Bracket</div>
+        <div className="tablet-card mb-4" style={{ padding: 12, background: 'var(--tablet-navy)', overflow: 'hidden' }}>
+          <div className="text-xs uppercase tracking-widest mb-2 font-semibold" style={{ color: 'var(--tablet-amber2)', letterSpacing: 1.5 }}>Consolation Bracket</div>
           {renderColumns(groupByRound(consolMatches), true)}
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3">
         <button
+          type="button"
           onClick={onApprove}
           disabled={finalizing || sendingBack}
-          className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
+          className="tablet-btn-submit"
+          style={{ height: 64, fontSize: 20 }}
         >
-          {finalizing ? 'Finalizing...' : 'Approve & Finalize Event'}
+          {finalizing ? 'Finalizing...' : '✓ Approve & Finalize Event'}
         </button>
         <button
+          type="button"
           onClick={onSendBack}
           disabled={finalizing || sendingBack}
-          className="bg-amber-700 hover:bg-amber-600 active:bg-amber-800 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
+          className="tablet-btn-amber"
+          style={{ height: 64, fontSize: 20 }}
         >
           {sendingBack ? 'Sending Back...' : 'Send Back to Scoring'}
         </button>
@@ -360,25 +389,25 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
   // v1.16.17 -- event completed full-screen message
   if (eventCompleted) {
     return (
-      <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center`}>
+      <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
         <div className="text-center">
-          <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
-          <div className="text-xl text-slate-300">Thank You for Your Work</div>
+          <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', marginBottom: 12 }}>Event Completed</div>
+          <div className="text-xl" style={{ color: 'var(--tablet-dim)' }}>Thank You for Your Work</div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
+    <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
       {/* Header */}
-      <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+      <div className="tablet-card flex items-center justify-between" style={{ borderRadius: 0, padding: '14px 24px' }}>
         <div>
-          <div className="font-bold text-white text-lg">Head Judge</div>
-          <div className="text-xs text-slate-400"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span> System &middot; Dual Moguls</div>
+          <div className="tablet-display" style={{ fontSize: 22, lineHeight: 1, letterSpacing: 1 }}>HEAD JUDGE</div>
+          <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}><span style={{ color: '#fff' }}>Stick</span><span style={{ color: '#EF4444' }}>It</span> System · Dual Moguls</div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
+        <div className="flex items-center gap-3">
+          <HCModeButton hc={hc} onToggle={toggleHc} />
           {activeMatch && !matchComplete && !hjPending && (
             <div className="text-xs px-3 py-1.5 rounded-full bg-blue-900/40 text-blue-400">
               Match in progress
@@ -1011,10 +1040,10 @@ export default function HeadJudgeTablet() {
     } finally { setFinalizing(false) }
   }
 
+  // Note: confirmation is handled by RunStatusGrid's modal (preserves the
+  // v1.16.16 confirm-dialog UX). No window.confirm here to avoid duplicate prompts.
   const setRunStatus = async (run_status) => {
     if (!activeRun) return
-    const name = `${activeRun.first_name} ${activeRun.last_name}`
-    if (!window.confirm(`Mark ${name} as ${run_status}?`)) return
     setSettingStatus(true); setError(''); setStatusMsg('')
     try {
       const res = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}/status`, {
@@ -1182,10 +1211,10 @@ export default function HeadJudgeTablet() {
   // v1.16.13: Event completed — show final results + finalize button
   if (eventCompleted) {
     if (eventFinalized) return (
-      <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white flex items-center justify-center`}>
+      <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
         <div className="text-center">
-          <div className="text-4xl font-display text-emerald-400 mb-4">Event Completed</div>
-          <div className="text-xl text-slate-300">Thank You for Your Work</div>
+          <div className="tablet-display" style={{ fontSize: 56, color: 'var(--tablet-green2)', marginBottom: 12 }}>Event Completed</div>
+          <div className="text-xl" style={{ color: 'var(--tablet-dim)' }}>Thank You for Your Work</div>
         </div>
       </div>
     )
@@ -1198,15 +1227,13 @@ export default function HeadJudgeTablet() {
     }
 
     return (
-      <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
+      <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
         <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
           <div>
             <div className="font-bold text-white text-lg">Head Judge — Final Review</div>
             <div className="text-xs text-slate-400"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span> System</div>
           </div>
-          <button onClick={toggleHc} className={`text-xs px-3 py-1.5 rounded-full font-semibold ${hc ? 'bg-yellow-400 text-black' : 'bg-slate-700 text-slate-400'}`}>
-            {hc ? 'Hi-Contrast' : 'Normal'}
-          </button>
+          <HCModeButton hc={hc} onToggle={toggleHc} />
         </div>
         <div className="p-4 max-w-4xl mx-auto">
           <div className="text-center mb-4">
@@ -1313,14 +1340,14 @@ export default function HeadJudgeTablet() {
     }
 
     return (
-      <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
+      <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
         <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
           <div>
             <div className="font-bold text-white text-lg">Head Judge — {reviewMode.name || `Run ${reviewMode.run_number}`} Review</div>
             <div className="text-xs text-slate-400"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span> System</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
+            <HCModeButton hc={hc} onToggle={toggleHc} />
             <div className="text-xs px-3 py-1.5 rounded-full bg-amber-900/50 text-amber-400 font-semibold animate-pulse">
               Review Pending
             </div>
@@ -1399,35 +1426,42 @@ export default function HeadJudgeTablet() {
   }
 
   return (
-    <div className={`min-h-screen ${hc ? 'hc bg-black' : 'bg-slate-950'} text-white`}>
+    <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
 
-      {/* Header */}
-      <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-        <div>
-          <div className="font-bold text-white text-lg">Head Judge</div>
-          <div className="text-xs text-slate-400"><span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span> System</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleHc} className={`px-3 py-1 rounded-full text-xs font-bold border-2 transition-colors ${hc ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-slate-700 text-slate-300 border-slate-600'}`}>{hc ? 'Normal' : 'Hi-Contrast'}</button>
-          {awaitingApproval && (
-            <div className="text-xs px-3 py-1.5 rounded-full bg-amber-900/50 text-amber-400 font-semibold animate-pulse">
-              Awaiting Approval
-            </div>
-          )}
-          {!awaitingApproval && activeRun && (
-            <div className="text-xs px-3 py-1.5 rounded-full bg-blue-900/40 text-blue-400">
-              Scoring in progress
-            </div>
-          )}
-          {!activeRun && (
-            <div className="text-xs px-3 py-1.5 rounded-full bg-slate-800 text-slate-500">
-              Waiting
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="p-4">
+      <div className="p-4 max-w-7xl mx-auto">
+        {/* Athlete bar / header */}
+        {activeRun ? (
+          <AthleteBar
+            bib={activeRun.is_forerunner ? '' : activeRun.bib_number}
+            name={activeRun.is_forerunner
+              ? 'FORERUNNER'
+              : `${activeRun.last_name?.toUpperCase() || ''}${activeRun.first_name ? `, ${activeRun.first_name}` : ''}`}
+            meta={[
+              activeRun.is_forerunner ? <span style={{ color: '#fb923c' }}>FORERUNNER (Judge Test)</span> : 'NOW SCORING',
+              activeRun.run_position != null && activeRun.total_runners != null
+                ? <>Athlete <strong>{activeRun.run_position}</strong> of <strong>{activeRun.total_runners}</strong></>
+                : null,
+              !activeRun.is_forerunner ? <>Run <strong>#{activeRun.run_number}</strong></> : null,
+            ].filter(Boolean)}
+            right={
+              <>
+                <span
+                  className="tablet-display"
+                  style={{ fontSize: 22, letterSpacing: 1, color: 'var(--tablet-text)' }}
+                >
+                  Head Judge
+                </span>
+                <HCModeButton hc={hc} onToggle={toggleHc} />
+              </>
+            }
+            className="mb-4"
+          />
+        ) : (
+          <div className="tablet-card flex items-center justify-between mb-4" style={{ padding: '14px 24px' }}>
+            <span className="tablet-display" style={{ fontSize: 22, letterSpacing: 1 }}>HEAD JUDGE</span>
+            <HCModeButton hc={hc} onToggle={toggleHc} />
+          </div>
+        )}
 
         {/* Status/error messages - full width */}
         {statusMsg && (
@@ -1492,28 +1526,70 @@ export default function HeadJudgeTablet() {
           </div>
         )}
 
-        {/* Now Scoring - full width bar */}
-        {activeRun && (
-          <div className={`rounded-2xl px-5 py-3 border mb-4 ${activeRun.is_forerunner ? 'bg-orange-900/20 border-orange-700' : 'bg-slate-800 border-slate-700'}`}>
-            <div className={`text-xs uppercase tracking-wide mb-2 ${activeRun.is_forerunner ? 'text-orange-400' : 'text-slate-400'}`}>
-              {activeRun.is_forerunner ? 'Forerunner (Judge Test)' : 'Now Scoring'}
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {!activeRun.is_forerunner && <span className="text-2xl font-bold font-mono text-white">#{activeRun.bib_number}</span>}
-                <span className="text-2xl font-bold text-white">
-                  {activeRun.is_forerunner ? 'Forerunner' : `${activeRun.first_name} ${activeRun.last_name}`}
-                </span>
+        {/* 3-column status bar (slide 05): T&L count · Air count · Time */}
+        {activeRun && eventCfg && (() => {
+          const isAerials = eventCfg.discipline === 'aerials'
+          const tlCount   = submitted.filter(s => s.score_type === 'turns').length
+          const a1Count   = submitted.filter(s => s.score_type === 'air_jump1').length
+          const a2Count   = submitted.filter(s => s.score_type === 'air_jump2').length
+          const formCount = submitted.filter(s => s.score_type === 'form').length
+          const landCount = submitted.filter(s => s.score_type === 'landing').length
+          const needTL    = eventCfg.num_tl_judges || 3
+          const needAir   = eventCfg.num_air_judges || 2
+          const nJumps    = eventCfg.num_jumps || 2
+          const hasTime   = activeRun?.run_time != null
+          const needSpeed = !isAerials && !!eventCfg.has_speed
+
+          let col1Done, col2Done, speedDone
+          let col1Label, col1Text, col2Label, col2Text, speedText
+
+          if (isAerials) {
+            const needForm = eventCfg.num_tl_judges || 1
+            const needLand = eventCfg.num_air_judges || 1
+            col1Done  = formCount >= needForm
+            col1Label = 'FORM JUDGES'
+            col1Text  = `${formCount} / ${needForm}`
+            col2Done  = a1Count >= needAir && a2Count >= needAir && landCount >= needLand
+            col2Label = 'AIR / LANDING'
+            col2Text  = `${Math.min(a1Count, a2Count)} air, ${landCount} land / ${needAir}`
+            speedDone = true
+            speedText = 'N/A'
+          } else {
+            col1Done  = tlCount >= needTL
+            col1Label = 'T&L JUDGES'
+            col1Text  = `${tlCount} / ${needTL}`
+            col2Done  = nJumps === 1 ? a1Count >= needAir : (a1Count >= needAir && a2Count >= needAir)
+            col2Label = 'AIR JUDGES'
+            col2Text  = nJumps === 1 ? `${a1Count} / ${needAir}` : `${Math.min(a1Count, a2Count)} / ${needAir}`
+            speedDone = !needSpeed || hasTime
+            speedText = !needSpeed ? 'N/A' : hasTime ? 'IN ✓' : 'PENDING'
+          }
+          return (
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="tablet-card flex items-center gap-3" style={{ padding: 14 }}>
+                <StatusSquare active={col1Done} />
+                <div>
+                  <div className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5 }}>{col1Label}</div>
+                  <div className="tablet-display" style={{ fontSize: 24, color: col1Done ? 'var(--tablet-green2)' : 'var(--tablet-amber2)' }}>{col1Text}</div>
+                </div>
               </div>
-              <div className="text-right text-sm text-slate-400">
-                {!activeRun.is_forerunner && activeRun.run_position != null && activeRun.total_runners != null && (
-                  <div className="text-slate-200 font-medium">Athlete {activeRun.run_position} of {activeRun.total_runners}</div>
-                )}
-                {!activeRun.is_forerunner && <div>Run #{activeRun.run_number}</div>}
+              <div className="tablet-card flex items-center gap-3" style={{ padding: 14 }}>
+                <StatusSquare active={col2Done} />
+                <div>
+                  <div className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5 }}>{col2Label}</div>
+                  <div className="tablet-display" style={{ fontSize: 24, color: col2Done ? 'var(--tablet-green2)' : 'var(--tablet-amber2)' }}>{col2Text}</div>
+                </div>
+              </div>
+              <div className="tablet-card flex items-center gap-3" style={{ padding: 14 }}>
+                <StatusSquare active={speedDone} />
+                <div>
+                  <div className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5 }}>TIME</div>
+                  <div className="tablet-display" style={{ fontSize: 24, color: speedDone ? 'var(--tablet-green2)' : 'var(--tablet-amber2)' }}>{speedText}</div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* v1.18.00 — Aerials v2 per-judge-per-jump grid */}
         {activeRun && isAerialsV2 && (
@@ -1612,16 +1688,16 @@ export default function HeadJudgeTablet() {
 
             {/* ── LEFT COLUMN: T&L Judges ──────────────────────────────── */}
             <div>
-              <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700">
-                <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-3">T&amp;L Judges</div>
+              <div className="tablet-card" style={{ padding: 18 }}>
+                <div className="tablet-display mb-3" style={{ fontSize: 16, letterSpacing: 1.5, color: 'var(--tablet-dim)' }}>T&amp;L JUDGES</div>
                 {tlRoles.length === 0 && (
-                  <div className="text-slate-600 text-sm">No T&amp;L scores submitted yet.</div>
+                  <div className="text-sm" style={{ color: 'var(--tablet-muted)' }}>No T&amp;L scores submitted yet.</div>
                 )}
                 {tlRoles.map(([role, scores]) => (
                   <div key={role} className="space-y-2 mb-3 last:mb-0">
-                    <div className="text-slate-500 text-xs uppercase tracking-wide font-semibold">
+                    <div className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-blue2)', letterSpacing: 1 }}>
                       {ROLE_LABELS[role] || role}
-                      {scores[0]?.name && <span className="normal-case italic text-slate-400 ml-1">— {scores[0].name}</span>}
+                      {scores[0]?.name && <span className="normal-case italic ml-1" style={{ color: 'var(--tablet-dim)' }}>— {scores[0].name}</span>}
                     </div>
                     {scores.map(s => {
                       const isConfirming = confirmReject?.scoreId === s.id
@@ -1630,14 +1706,14 @@ export default function HeadJudgeTablet() {
                           {!isConfirming && (
                             <div className="flex items-center justify-between py-1">
                               <div className="flex items-center gap-3 flex-wrap">
-                                <span className="font-mono font-bold text-white text-lg">{fmt1(s.raw_score)}</span>
+                                <span className="tablet-mono font-bold text-lg" style={{ color: '#fff' }}>{fmt1(s.raw_score)}</span>
                                 {s.score_type === 'turns' && eventCfg?.component_scoring !== 0 && (s.tl_carving != null || s.tl_abext != null || s.tl_upper_body != null) && (
-                                  <span className="text-xs text-slate-400 font-mono">
+                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-dim)' }}>
                                     Crv {fmt1(s.tl_carving)} / UB {fmt1(s.tl_upper_body)} / A&amp;E {fmt1(s.tl_abext)} / Ded {fmt1(s.tl_deduction)}
                                   </span>
                                 )}
                                 {s.score_type === 'turns' && eventCfg?.component_scoring === 0 && s.tl_deduction != null && (
-                                  <span className="text-xs text-slate-400 font-mono">
+                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-dim)' }}>
                                     Ded {s.tl_deduction}
                                   </span>
                                 )}
@@ -1645,7 +1721,8 @@ export default function HeadJudgeTablet() {
                               {activeRun.status !== 'complete' && (
                                 <button
                                   onClick={() => initiateReject(s)}
-                                  className="text-xs px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 border border-red-800 hover:bg-red-900/60 active:bg-red-900/80 font-semibold transition-colors flex-shrink-0"
+                                  className="tablet-btn-danger flex-shrink-0"
+                                  style={{ height: 32, fontSize: 13, padding: '0 12px' }}
                                 >
                                   Reject
                                 </button>
@@ -1653,30 +1730,32 @@ export default function HeadJudgeTablet() {
                             </div>
                           )}
                           {isConfirming && (
-                            <div className="rounded-xl border border-red-700 bg-red-900/20 px-4 py-3 space-y-3">
-                              <div className="text-sm text-red-300 font-semibold">Reject this score?</div>
-                              <div className="text-sm text-slate-300">
+                            <div className="tablet-card space-y-3" style={{ padding: '14px 16px', borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
+                              <div className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>Reject this score?</div>
+                              <div className="text-sm" style={{ color: 'var(--tablet-text)' }}>
                                 <span className="font-bold">{s.name || ROLE_LABELS[role] || role}</span>
                                 {' -- '}
                                 {SCORE_LABELS[s.score_type] || s.score_type}
                                 {': '}
-                                <span className="font-mono font-bold text-white">{fmt1(s.raw_score)}</span>
+                                <span className="tablet-mono font-bold" style={{ color: '#fff' }}>{fmt1(s.raw_score)}</span>
                               </div>
-                              <p className="text-xs text-red-400">
+                              <p className="text-xs" style={{ color: 'var(--tablet-dim)' }}>
                                 The judge will be prompted to resubmit.  The run will return to scoring state.
                               </p>
                               <div className="flex gap-3">
                                 <button
                                   onClick={executeReject}
                                   disabled={rejecting}
-                                  className="flex-1 bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm"
+                                  className="tablet-btn-danger flex-1"
+                                  style={{ height: 40, fontSize: 14 }}
                                 >
                                   {rejecting ? 'Rejecting...' : 'Confirm Reject'}
                                 </button>
                                 <button
                                   onClick={cancelReject}
                                   disabled={rejecting}
-                                  className="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 text-slate-200 font-bold py-2.5 rounded-xl transition-colors text-sm"
+                                  className="tablet-btn-neutral flex-1"
+                                  style={{ height: 40, fontSize: 14 }}
                                 >
                                   Cancel
                                 </button>
@@ -1695,17 +1774,17 @@ export default function HeadJudgeTablet() {
             <div className="space-y-4">
 
               {/* Air Judges */}
-              <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700">
-                <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-3">Air Judges</div>
+              <div className="tablet-card" style={{ padding: 18 }}>
+                <div className="tablet-display mb-3" style={{ fontSize: 16, letterSpacing: 1.5, color: 'var(--tablet-dim)' }}>AIR JUDGES</div>
 
                 {/* Jump codes */}
                 {(activeRun.jump1_code || activeRun.jump2_code) && (
-                  <div className="flex flex-wrap gap-4 mb-4 text-sm text-slate-400 items-center">
+                  <div className="flex flex-wrap gap-4 mb-4 text-sm items-center" style={{ color: 'var(--tablet-dim)' }}>
                     {activeRun.jump1_code && (
-                      <span>J1: <strong className="text-white">{activeRun.jump1_code}</strong> <span className="text-slate-500">(DD {activeRun.jump1_dd})</span></span>
+                      <span>J1: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump1_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump1_dd})</span></span>
                     )}
                     {activeRun.jump2_code && (
-                      <span>J2: <strong className="text-white">{activeRun.jump2_code}</strong> <span className="text-slate-500">(DD {activeRun.jump2_dd})</span></span>
+                      <span>J2: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump2_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump2_dd})</span></span>
                     )}
                     {activeRun.status !== 'complete' && (
                       <button
@@ -1733,13 +1812,13 @@ export default function HeadJudgeTablet() {
 
                 {/* Air judge scores */}
                 {airRoles.length === 0 && (
-                  <div className="text-slate-600 text-sm">No air scores submitted yet.</div>
+                  <div className="text-sm" style={{ color: 'var(--tablet-muted)' }}>No air scores submitted yet.</div>
                 )}
                 {airRoles.map(([role, scores]) => (
                   <div key={role} className="space-y-2 mb-3 last:mb-0">
-                    <div className="text-slate-500 text-xs uppercase tracking-wide font-semibold">
+                    <div className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-blue2)', letterSpacing: 1 }}>
                       {ROLE_LABELS[role] || role}
-                      {scores[0]?.name && <span className="normal-case italic text-slate-400 ml-1">— {scores[0].name}</span>}
+                      {scores[0]?.name && <span className="normal-case italic ml-1" style={{ color: 'var(--tablet-dim)' }}>— {scores[0].name}</span>}
                     </div>
                     {scores.map(s => {
                       const isConfirming = confirmReject?.scoreId === s.id
@@ -1748,19 +1827,20 @@ export default function HeadJudgeTablet() {
                           {!isConfirming && (
                             <div className="flex items-center justify-between py-1">
                               <div className="flex items-center gap-3">
-                                <span className="text-xs text-slate-500 w-14">{SCORE_LABELS[s.score_type] || s.score_type}</span>
+                                <span className="text-xs w-14" style={{ color: 'var(--tablet-muted)' }}>{SCORE_LABELS[s.score_type] || s.score_type}</span>
                                 {s.score_type === 'air_jump1' && activeRun.jump1_code && (
-                                  <span className="text-xs text-slate-400 font-mono">{activeRun.jump1_code}</span>
+                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump1_code}</span>
                                 )}
                                 {s.score_type === 'air_jump2' && activeRun.jump2_code && (
-                                  <span className="text-xs text-slate-400 font-mono">{activeRun.jump2_code}</span>
+                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump2_code}</span>
                                 )}
-                                <span className="font-mono font-bold text-white text-lg">{fmt1(s.raw_score)}</span>
+                                <span className="tablet-mono font-bold text-lg" style={{ color: '#fff' }}>{fmt1(s.raw_score)}</span>
                               </div>
                               {activeRun.status !== 'complete' && (
                                 <button
                                   onClick={() => initiateReject(s)}
-                                  className="text-xs px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 border border-red-800 hover:bg-red-900/60 active:bg-red-900/80 font-semibold transition-colors"
+                                  className="tablet-btn-danger"
+                                  style={{ height: 32, fontSize: 13, padding: '0 12px' }}
                                 >
                                   Reject
                                 </button>
@@ -1768,30 +1848,32 @@ export default function HeadJudgeTablet() {
                             </div>
                           )}
                           {isConfirming && (
-                            <div className="rounded-xl border border-red-700 bg-red-900/20 px-4 py-3 space-y-3">
-                              <div className="text-sm text-red-300 font-semibold">Reject this score?</div>
-                              <div className="text-sm text-slate-300">
+                            <div className="tablet-card space-y-3" style={{ padding: '14px 16px', borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
+                              <div className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>Reject this score?</div>
+                              <div className="text-sm" style={{ color: 'var(--tablet-text)' }}>
                                 <span className="font-bold">{s.name || ROLE_LABELS[role] || role}</span>
                                 {' -- '}
                                 {SCORE_LABELS[s.score_type] || s.score_type}
                                 {': '}
-                                <span className="font-mono font-bold text-white">{fmt1(s.raw_score)}</span>
+                                <span className="tablet-mono font-bold" style={{ color: '#fff' }}>{fmt1(s.raw_score)}</span>
                               </div>
-                              <p className="text-xs text-red-400">
+                              <p className="text-xs" style={{ color: 'var(--tablet-dim)' }}>
                                 The judge will be prompted to resubmit.  The run will return to scoring state.
                               </p>
                               <div className="flex gap-3">
                                 <button
                                   onClick={executeReject}
                                   disabled={rejecting}
-                                  className="flex-1 bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm"
+                                  className="tablet-btn-danger flex-1"
+                                  style={{ height: 40, fontSize: 14 }}
                                 >
                                   {rejecting ? 'Rejecting...' : 'Confirm Reject'}
                                 </button>
                                 <button
                                   onClick={cancelReject}
                                   disabled={rejecting}
-                                  className="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 text-slate-200 font-bold py-2.5 rounded-xl transition-colors text-sm"
+                                  className="tablet-btn-neutral flex-1"
+                                  style={{ height: 40, fontSize: 14 }}
                                 >
                                   Cancel
                                 </button>
@@ -1807,16 +1889,18 @@ export default function HeadJudgeTablet() {
 
               {/* Timekeeper */}
               {activeRun.run_time != null && (
-                <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700 space-y-3">
-                  <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Timekeeper</div>
+                <div className="tablet-card space-y-3" style={{ padding: 16 }}>
+                  <div className="tablet-display" style={{ fontSize: 16, letterSpacing: 1.5, color: 'var(--tablet-dim)' }}>TIMEKEEPER</div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm">Time</span>
-                    <span className={`font-mono font-bold text-xl ${activeRun.run_time == -1 ? 'text-red-400' : 'text-white'}`}>{activeRun.run_time == -1 ? 'NT' : `${Number(activeRun.run_time).toFixed(2)} s`}</span>
+                    <span className="text-sm" style={{ color: 'var(--tablet-dim)' }}>Time</span>
+                    <span className="tablet-mono font-bold text-xl" style={{ color: activeRun.run_time == -1 ? 'var(--tablet-red2)' : 'var(--tablet-green2)' }}>
+                      {activeRun.run_time == -1 ? 'NT' : `${Number(activeRun.run_time).toFixed(2)} s`}
+                    </span>
                   </div>
                   {eventCfg?.has_speed && eventCfg?.pace_time && (
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-400 text-sm">Time Points</span>
-                      <span className="font-mono font-bold text-blue-300 text-lg">
+                      <span className="text-sm" style={{ color: 'var(--tablet-dim)' }}>Time Points</span>
+                      <span className="tablet-mono font-bold text-lg" style={{ color: 'var(--tablet-blue2)' }}>
                         {activeRun.run_time == -1 ? '0.00' : (() => {
                           const sp = 48 - 32 * (activeRun.run_time / eventCfg.pace_time)
                           return (Math.round(Math.max(0, Math.min(sp, 20)) * 100) / 100).toFixed(2)
@@ -1827,32 +1911,35 @@ export default function HeadJudgeTablet() {
                   {activeRun.status !== 'complete' && !confirmTimeReject && (
                     <button
                       onClick={() => { setConfirmTimeReject(true); setError(''); setStatusMsg('') }}
-                      className="text-xs px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 border border-red-800 hover:bg-red-900/60 active:bg-red-900/80 font-semibold transition-colors"
+                      className="tablet-btn-amber"
+                      style={{ height: 36, fontSize: 14 }}
                     >
                       Reject Time
                     </button>
                   )}
                   {confirmTimeReject && (
-                    <div className="rounded-xl border border-red-700 bg-red-900/20 px-4 py-3 space-y-3">
-                      <div className="text-sm text-red-300 font-semibold">Reject this time?</div>
-                      <div className="text-sm text-slate-300">
-                        <span className="font-mono font-bold text-white">{activeRun.run_time == -1 ? 'NT' : `${Number(activeRun.run_time).toFixed(2)} s`}</span>
+                    <div className="tablet-card space-y-3" style={{ padding: '14px 16px', borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
+                      <div className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>Reject this time?</div>
+                      <div className="text-sm" style={{ color: 'var(--tablet-text)' }}>
+                        <span className="tablet-mono font-bold" style={{ color: '#fff' }}>{activeRun.run_time == -1 ? 'NT' : `${Number(activeRun.run_time).toFixed(2)} s`}</span>
                       </div>
-                      <p className="text-xs text-red-400">
+                      <p className="text-xs" style={{ color: 'var(--tablet-dim)' }}>
                         The timekeeper will need to resubmit.  Computed scores will be cleared.
                       </p>
                       <div className="flex gap-3">
                         <button
                           onClick={executeTimeReject}
                           disabled={rejectingTime}
-                          className="flex-1 bg-red-600 hover:bg-red-500 active:bg-red-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm"
+                          className="tablet-btn-danger flex-1"
+                          style={{ height: 40, fontSize: 14 }}
                         >
                           {rejectingTime ? 'Rejecting...' : 'Confirm Reject'}
                         </button>
                         <button
                           onClick={() => setConfirmTimeReject(false)}
                           disabled={rejectingTime}
-                          className="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 text-slate-200 font-bold py-2.5 rounded-xl transition-colors text-sm"
+                          className="tablet-btn-neutral flex-1"
+                          style={{ height: 40, fontSize: 14 }}
                         >
                           Cancel
                         </button>
@@ -1865,77 +1952,6 @@ export default function HeadJudgeTablet() {
 
             {/* ── RIGHT COLUMN: Run Summary ────────────────────────────── */}
             <div className="space-y-4">
-
-              {/* Score Status */}
-              {eventCfg && (() => {
-                const isAerials = eventCfg.discipline === 'aerials'
-                const tlCount   = submitted.filter(s => s.score_type === 'turns').length
-                const a1Count   = submitted.filter(s => s.score_type === 'air_jump1').length
-                const a2Count   = submitted.filter(s => s.score_type === 'air_jump2').length
-                const formCount = submitted.filter(s => s.score_type === 'form').length
-                const landCount = submitted.filter(s => s.score_type === 'landing').length
-                const needTL    = eventCfg.num_tl_judges || 3
-                const needAir   = eventCfg.num_air_judges || 2
-                const hasTime   = activeRun?.run_time != null
-                const needSpeed = !isAerials && !!eventCfg.has_speed
-
-                let col1Done, col2Done, speedDone
-                let col1Label, col1Text, col2Label, col2Text
-
-                if (isAerials) {
-                  const needForm = eventCfg.num_tl_judges || 1
-                  const needLand = eventCfg.num_air_judges || 1
-                  col1Done  = formCount >= needForm
-                  col1Label = 'Form Judges'
-                  col1Text  = `${formCount} / ${needForm}`
-                  col2Done  = a1Count >= needAir && a2Count >= needAir && landCount >= needLand
-                  col2Label = 'Air / Landing'
-                  col2Text  = `${Math.min(a1Count, a2Count)} air, ${landCount} land / ${needAir}`
-                  speedDone = true
-                } else {
-                  const nJumps = eventCfg.num_jumps || 2
-                  col1Done  = tlCount >= needTL
-                  col1Label = 'T&L Judges'
-                  col1Text  = `${tlCount} / ${needTL}`
-                  col2Done  = nJumps === 1 ? a1Count >= needAir : (a1Count >= needAir && a2Count >= needAir)
-                  col2Label = 'Air Judges'
-                  col2Text  = nJumps === 1 ? `${a1Count} / ${needAir}` : `${Math.min(a1Count, a2Count)} / ${needAir}`
-                  speedDone = !needSpeed || hasTime
-                }
-
-                const allDone = col1Done && col2Done && speedDone
-                const dot = (done) => (
-                  <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${done ? 'bg-green-400' : 'bg-amber-400'}`} />
-                )
-                return (
-                  <div className={`rounded-2xl p-4 border ${allDone ? 'border-green-800 bg-green-900/10' : 'border-slate-700 bg-slate-900'}`}>
-                    <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-3">Score Status</div>
-                    <div className="grid grid-cols-3 gap-3 text-center text-sm">
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">{col1Label}</div>
-                        <div className={`font-bold ${col1Done ? 'text-green-400' : 'text-amber-400'}`}>
-                          {dot(col1Done)}{col1Text}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">{col2Label}</div>
-                        <div className={`font-bold ${col2Done ? 'text-green-400' : 'text-amber-400'}`}>
-                          {dot(col2Done)}{col2Text}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">Time</div>
-                        <div className={`font-bold ${speedDone ? 'text-green-400' : 'text-amber-400'}`}>
-                          {dot(speedDone)}{isAerials ? 'N/A' : !needSpeed ? 'N/A' : hasTime ? 'In' : 'Pending'}
-                        </div>
-                      </div>
-                    </div>
-                    {allDone && !awaitingApproval && (
-                      <div className="text-center text-xs text-green-400 mt-2 font-semibold">All scores received</div>
-                    )}
-                  </div>
-                )
-              })()}
 
               {/* Running Score */}
               {runningScore && !hasComputed && (
@@ -2103,40 +2119,15 @@ export default function HeadJudgeTablet() {
                 </div>
               )}
 
-              {/* Set Run Status */}
-              <div className="bg-slate-900 rounded-2xl p-5 border border-slate-700">
-                <div className="text-xs text-slate-400 uppercase tracking-wide mb-3 font-semibold">Set Run Status</div>
-                <div className="grid grid-cols-4 gap-3">
-                  <button
-                    onClick={() => setRunStatus('DNS')}
-                    disabled={settingStatus}
-                    className="py-4 rounded-xl font-bold text-slate-300 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 transition-colors"
-                  >
-                    DNS
-                  </button>
-                  <button
-                    onClick={() => setRunStatus('DNF')}
-                    disabled={settingStatus}
-                    className="py-4 rounded-xl font-bold text-amber-400 bg-amber-900/30 hover:bg-amber-900/50 active:bg-amber-900/60 border border-amber-800 disabled:opacity-50 transition-colors"
-                  >
-                    DNF
-                  </button>
-                  <button
-                    onClick={() => setRunStatus('RNS')}
-                    disabled={settingStatus}
-                    className="py-4 rounded-xl font-bold text-yellow-400 bg-yellow-900/30 hover:bg-yellow-900/50 active:bg-yellow-900/60 border border-yellow-800 disabled:opacity-50 transition-colors"
-                  >
-                    RNS
-                  </button>
-                  <button
-                    onClick={() => setRunStatus('DSQ')}
-                    disabled={settingStatus}
-                    className="py-4 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors"
-                  >
-                    DSQ
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600 mt-2 text-center">
+              {/* Set Run Status — RunStatusGrid wraps each click in a confirm dialog */}
+              <div className="tablet-card" style={{ padding: 18 }}>
+                <div className="text-xs uppercase font-bold mb-3" style={{ color: 'var(--tablet-dim)', letterSpacing: 1.5 }}>SET RUN STATUS</div>
+                <RunStatusGrid
+                  athleteName={activeRun ? `${activeRun.first_name} ${activeRun.last_name}` : 'this athlete'}
+                  onSelect={setRunStatus}
+                  disabled={settingStatus}
+                />
+                <p className="text-xs mt-2 text-center" style={{ color: 'var(--tablet-muted)' }}>
                   These do not require judge scores or time.
                 </p>
               </div>
