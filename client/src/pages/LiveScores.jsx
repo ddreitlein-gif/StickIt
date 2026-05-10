@@ -25,14 +25,10 @@ function adaptMeet(m) {
 }
 
 function LiveStrip({ meets }) {
-  // Flatten any active events across the visible meets.
-  const liveEvents = [];
-  meets.forEach(m => {
-    (m.events || []).forEach(ev => {
-      if (ev.status === 'active') liveEvents.push({ ev, meet: m });
-    });
-  });
-  if (liveEvents.length === 0) return null;
+  const liveMeets = meets
+    .map(m => ({ meet: m, events: (m.events || []).filter(ev => ev.status === 'active') }))
+    .filter(g => g.events.length > 0);
+  if (liveMeets.length === 0) return null;
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -43,41 +39,60 @@ function LiveStrip({ meets }) {
       </div>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
         gap: 10
       }}>
-        {liveEvents.map(({ ev, meet }) => {
-          const disc = DISCIPLINE_LABEL[ev.discipline] || ev.discipline;
-          const gen = GENDER_LABEL[ev.gender] || '';
-          return (
-            <Link
-              key={ev.id}
-              to={`/scoreboard/${ev.short_code || ev.id}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '12px 14px',
-                background: 'var(--gradient-red)',
-                borderRadius: 12,
-                color: '#fff',
-                textDecoration: 'none',
-                boxShadow: '0 4px 16px rgba(230,57,70,0.25)'
-              }}
-            >
+        {liveMeets.map(({ meet, events }) => (
+          <div
+            key={meet.id}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              padding: '12px 14px',
+              background: 'var(--gradient-red)',
+              borderRadius: 12,
+              color: '#fff',
+              boxShadow: '0 4px 16px rgba(230,57,70,0.25)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               <LiveDot size={6} color="#fff" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="sk-display" style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {meet.name}
-                </div>
-                <div style={{ fontSize: 11, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {[gen, disc].filter(Boolean).join(' · ')}
-                </div>
+              <div className="sk-display" style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.05em', color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {meet.name}
               </div>
-              <span style={{ fontSize: 18, opacity: 0.85 }}>→</span>
-            </Link>
-          );
-        })}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {events.map(ev => {
+                const disc = DISCIPLINE_LABEL[ev.discipline] || ev.discipline;
+                const gen = GENDER_LABEL[ev.gender] || '';
+                const label = [gen, disc].filter(Boolean).join(' · ');
+                return (
+                  <Link
+                    key={ev.id}
+                    to={`/scoreboard/${ev.short_code || ev.id}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 10px',
+                      background: 'rgba(255,255,255,0.18)',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      borderRadius: 999,
+                      color: '#fff',
+                      textDecoration: 'none',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {label} <span style={{ opacity: 0.8 }}>→</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

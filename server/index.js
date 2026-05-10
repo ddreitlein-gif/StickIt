@@ -108,7 +108,7 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.19.01' }));
+app.get('/api/version', (req, res) => res.json({ version: 'v1.19.02' }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -199,7 +199,7 @@ initSchema().then(async () => {
   } catch (e) {
     console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
   }
-  server.listen(PORT, () => console.log(`StickIt v1.19.01 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt v1.19.02 ready on port ${PORT}`));
   startScheduledSync();
   startAutoBackup((err, ctx) => {
     app.errorLog.push({

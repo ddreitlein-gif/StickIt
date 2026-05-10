@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.19.01
+**Current version:** v1.19.02
 
 ## Commands
 
@@ -175,6 +175,16 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.19.02 Feature Notes
+
+### LIVE NOW — Grouped by Meet (v1.19.02)
+
+The red "LIVE NOW" strip at the top of `/livescores` previously flattened every active event across every visible meet into its own card. With three concurrent meets each running multiple events, the section ballooned to 15+ cards with the same meet name repeating five or six times — visually noisy. Now `LiveStrip` (`client/src/pages/LiveScores.jsx`) groups by meet: one red gradient card per meet, meet name in `sk-display` as the card header, and one small white-tinted pill per active event inside (showing `Men · Moguls` etc.). Each pill is the `<Link>` to `/scoreboard/<short_code>` — same target as before, so navigation is unchanged. Single-event meets render with the same meet-card chrome (uniform style, no separate fallback layout). Grid `minmax` widened from 260px to 300px to keep three columns comfortable at desktop widths now that cards have two stacked rows. No server changes — the `/api/meets/livescores` payload already nests events under meets, so client-side `meets.map(m => ({ meet: m, events: m.events.filter(active) }))` is all that's needed.
+
+**Files modified:** `client/src/pages/LiveScores.jsx`, `client/src/components/Layout.jsx`, `server/index.js`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
