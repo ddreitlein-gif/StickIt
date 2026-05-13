@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.21.00
+**Current version:** v1.22.00
 
 ## Commands
 
@@ -175,6 +175,108 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.22.00 Feature Notes
+
+### Training Days (v1.22.00)
+
+New per-meet training-day workflow with multiple named days, an opt-out participant checklist, and a roster PDF. Operators can pre-stage athlete lists for one or more pre-comp training sessions.
+
+**Scope.** Per-meet (multiple training days each). Each training day has a name (free-text) plus an optional date. The participant list defaults to every registered athlete across every event in the meet, deduplicated by athlete with the first non-empty bib retained; scratched athletes are excluded by default. The operator unchecks anyone who shouldn't attend; the resulting "excluded" set is persisted per training day. New event registrations made AFTER the training day exists auto-appear (checked); removing an event registration auto-removes them. Soft-deleted athletes (`athletes.deleted_at IS NOT NULL`) are filtered out.
+
+**UI.** Standalone page at `/dashboard/meets/:meetId/training`, reached from a new **Training Days** button in the action row on the meet detail page ([MeetDetail.jsx](client/src/pages/MeetDetail.jsx)). Two-column layout — left panel lists training days for the meet with edit/delete affordances and a **+ New** button (modal: name + date); right panel shows the selected day's participants as a checkbox table (✓ · Bib · Last, First · USSA # · Club) with a header **Reset (Include All)** action and a **Print PDF** button.
+
+**Database.** Two new tables added via the existing try/catch migration pattern in [server/db/schema.js](server/db/schema.js):
+- `training_days(id TEXT PRIMARY KEY, meet_id TEXT NOT NULL, name TEXT NOT NULL, date TEXT, created_at, updated_at)`
+- `training_day_exclusions(training_day_id TEXT NOT NULL, athlete_id TEXT NOT NULL, PRIMARY KEY (training_day_id, athlete_id))`
+
+`deleteMeetCascade` in [server/routes/meets.js](server/routes/meets.js) now clears both tables when a meet is deleted.
+
+**Server route.** New [server/routes/training.js](server/routes/training.js) mounted at `/api`. Endpoints:
+- `GET    /meets/:meetId/training-days` — list
+- `POST   /meets/:meetId/training-days` — create (body: name, date)
+- `PUT    /meets/:meetId/training-days/:id` — update name/date
+- `DELETE /meets/:meetId/training-days/:id` — delete (cascades exclusions)
+- `GET    /training-days/:id/participants` — computed roster with `included` flag per athlete
+- `POST   /training-days/:id/exclusions` — body `{ athlete_id, exclude: bool }` — inserts or deletes the exclusion row
+- `POST   /training-days/:id/reset` — clears all exclusions
+
+The participants query mirrors the dedup pattern at [server/routes/pdf.js](server/routes/pdf.js) (the `/api/pdf/registration` endpoint). Sort: bib ASC (blanks last), then last name.
+
+**PDF.** New `POST /api/pdf/training-day/:id` endpoint emits the participant roster as a one-page LETTER PDF using the existing pdfkit helpers (`pdfHeader`, `drawTable`, `streamPdf`). Header: meet name + "Training Day Participants — `<training day name>` — `<formatted date>`". Columns: Bib (0.6w) · Last (1.8w) · First (1.8w) · USSA # (1.0w) · Club (2.0w). Only included athletes (i.e., not in the exclusion set) appear. Filename: `Training_Day_<MeetSlug>_<DaySlug>.pdf`.
+
+**API helpers.** Seven new entries in [client/src/utils/api.js](client/src/utils/api.js): `listTrainingDays`, `createTrainingDay`, `updateTrainingDay`, `deleteTrainingDay`, `getTrainingParticipants`, `toggleTrainingExclusion`, `resetTrainingExclusions`, `downloadTrainingDayPdf`.
+
+**Out of scope.** Meet export/import (`buildMeetExportZip` / `POST /api/meets/import`) does NOT round-trip training days yet — if you export a meet then import it elsewhere, the training-day rows do not survive. Adding this is a future small change (additive INSERT columns mirroring the v1.16.22 pattern).
+
+**Files created:** `server/routes/training.js`, `client/src/pages/TrainingDays.jsx`
+**Files modified:** `server/db/schema.js`, `server/routes/meets.js`, `server/routes/pdf.js`, `server/index.js`, `client/src/App.jsx`, `client/src/pages/MeetDetail.jsx`, `client/src/utils/api.js`
+
+### Officials Sidebar Flattened + USSS Database Page (v1.22.00)
+
+Two related UX changes that promote the previously-nested Information submenu and the inline USSS Database card into top-level sidebar entries.
+
+**Before (v1.21.x):** Officials sidebar had Meets, Athletes, and a collapsible "Information" group containing Jump DDs (modal), User Guide (page), About (modal), and a multi-line USSS Database status card with Sync Now / Upload File buttons.
+
+**After (v1.22.00):** Flat top-level nav — Meets, Athletes, **USSS Database** (new) — with a separator and three reference action rows below: Jump DDs (modal, unchanged), User Guide (modal navigation to `/help`), About (modal, unchanged). The collapsible "Information" group is removed. The USSS Database sidebar card is removed in favor of the new page.
+
+**New page.** [client/src/pages/UsssDatabase.jsx](client/src/pages/UsssDatabase.jsx) at route `/dashboard/usss`. Two-section layout: a Sync Status card showing Last sync (formatted local time), List (year + identifier), Records (total + breakdown by competitor/coach/official), Source, and File name; plus an Update card with **Sync Now** and **Upload File** buttons. Both buttons reuse the existing `/api/usss/sync` and `/api/usss/upload` endpoints — no server changes. Returns to the live sync flow that was already in production, just relocated to a full page with more breathing room.
+
+**Home page.** The "Help & User Guide" link on the public Home page is removed (it was redundant with the now-top-level User Guide sidebar entry on Officials and the Help entry on Admin).
+
+**Files modified:** [client/src/components/Layout.jsx](client/src/components/Layout.jsx), [client/src/pages/Home.jsx](client/src/pages/Home.jsx), [client/src/App.jsx](client/src/App.jsx)
+**Files created:** [client/src/pages/UsssDatabase.jsx](client/src/pages/UsssDatabase.jsx)
+
+### USSS XML Transmit — DNS / DNF / DSQ / RNS Included in `FS_notclassified` (v1.22.00)
+
+The USSS XML transmit (`POST /api/export/usss-transmit/:meetId`, [server/routes/transmit.js](server/routes/transmit.js)) previously silently dropped athletes whose every run was status'd — they appeared nowhere in the resulting XML. They now appear in the standard FIS `<FS_notclassified>` block as `<FS_notranked Status="...">` entries with their bib + Competitor block.
+
+**Single mogul events.** `processMogulEvent` no longer skips status'd runs entirely. It builds two athlete buckets:
+- `classified` — athletes with at least one successful (status=NULL) run; ranked normally with their best score across runs.
+- `notClassified` — athletes whose every run was DNS / DNF / DSQ / RNS; tagged with the status of their LATEST (highest run_number) status'd run.
+
+`generateSingleMogulXml` now accepts a `notClassified` array and emits an `<FS_notranked>` element per athlete inside `<FS_notclassified>`. The `Status` attribute carries the literal DNS/DNF/DSQ/RNS value.
+
+**Dual mogul events.** `computeDualStandings` now reads `dual_bracket.loser_status` (added in v1.6.01) and tags any athlete who **never won a match** AND whose elimination match has a `loser_status` set with `runStatus`. `generateDualMogulXml` splits the standings into classified (no `runStatus`) and notClassified (has `runStatus`). Ranks are assigned only to classified athletes — 1..N without gaps. NotClassified athletes appear in `<FS_notclassified>` with no `<Rank>` element. Athletes who lost a match by status BUT had previously won at least one match remain in `<FS_classified>` with their bracket-derived placement (the status applied to only one match they lost; they advanced fairly through prior rounds).
+
+**Status value.** Emitted verbatim — `DNS`, `DNF`, `DSQ`, `RNS`. The first three are FIS standard; `RNS` is USSS-specific. If a downstream USSS parser rejects RNS specifically, a future change can map RNS → DNF before emission.
+
+**No schema changes.** Both `runs.run_status` and `dual_bracket.loser_status` columns existed; the transmit code just stopped ignoring them.
+
+**Files modified:** [server/routes/transmit.js](server/routes/transmit.js)
+
+### Help Page — Back Button to Prior Page (v1.22.00)
+
+Help system now has a clear way out. Added a **← Back** button at the very top of the help sidebar (above the Getting Started group) in [HelpSidebar.jsx](client/src/help/HelpSidebar.jsx). Clicking it returns the user to whichever page they were on when they opened the User Guide.
+
+**Mechanism.** The two entry points that navigate to `/help` — the **User Guide** button in the Officials sidebar ([Layout.jsx](client/src/components/Layout.jsx)) and the **Help** entry in the Admin sidebar ([AdminLayout.jsx](client/src/components/AdminLayout.jsx)) — now write the current `pathname + search` to `sessionStorage` under key `stickit.help.referrer` immediately before calling `navigate('/help')`. The HelpSidebar reads this on mount and uses it as the back button's target. Topic-to-topic navigation inside `/help` does NOT overwrite the referrer, so back always returns to the original entry point regardless of how deep the user clicked into the guide.
+
+**`sessionStorage` semantics.** Per-tab and survives in-tab refresh, so reloading the help page keeps the back target. New tabs / bookmarks / shared deep-links arrive with no stored referrer.
+
+**Cold-arrival fallback.** When `sessionStorage` is empty (bookmark, fresh tab, external link), the back button falls back to `/` (Home).
+
+**Loop safety.** If the stored referrer happens to begin with `/help`, it's ignored and the fallback applies — the button can never loop back into the guide.
+
+**Styling.** New `.help-sidebar-back` class in [help.css](client/src/help/help.css) — uppercase Barlow Condensed, panel-tinted background with a 1px border, hover transitions to the link color. Sits visually distinct from the topic-tree group headers.
+
+**Files modified:** `client/src/help/HelpSidebar.jsx`, `client/src/help/help.css`, `client/src/components/Layout.jsx`, `client/src/components/AdminLayout.jsx`
+
+### Version String — Single Source of Truth (v1.22.00)
+
+The version literal previously lived in five places (two in `server/index.js`, two in `server/routes/admin.js`, and one hard-coded in the Officials sidebar) and drifted between them. The Admin Dashboard kept reporting `v1.16.31` while the rest of the app reported `v1.21.00` (and earlier `v1.16.10` per the v1.16.12 fix). This recurring drift is now structurally prevented.
+
+**New file** [server/version.js](server/version.js) — exports `{ VERSION }`. Single source of truth.
+
+**Server consumers** — [server/index.js](server/index.js) (`/api/version` endpoint + startup log) and [server/routes/admin.js](server/routes/admin.js) (`GET /system` and `GET /dashboard` endpoints) both `require('../version')` and emit `VERSION`. Bumping `server/version.js` updates all four sites at once.
+
+**Client consumer** — the sidebar version label in [Layout.jsx](client/src/components/Layout.jsx) now fetches `/api/version` on mount (was hard-coded). Pre-existing behavior in AboutPanel — which already fetched `/api/version` — is unchanged. A small `useState('v1.22.00')` default still seeds before fetch resolves; it's intentionally not load-bearing.
+
+**Bump procedure going forward.** Edit `server/version.js`. Optionally edit the two `package.json` versions (still independent per project convention). The remaining string in `client/src/components/Layout.jsx`'s useState default is cosmetic only (visible only on a brief flash before /api/version resolves) and can be bumped or left alone.
+
+**Files created:** `server/version.js`
+**Files modified:** `server/index.js`, `server/routes/admin.js`, `client/src/components/Layout.jsx`
 
 ---
 

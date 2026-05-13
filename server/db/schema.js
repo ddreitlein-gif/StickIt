@@ -261,6 +261,21 @@ async function initSchema() {
     `ALTER TABLE runs ADD COLUMN aerials_model TEXT`,
     // v1.20.00 -- voice manual score entry transcript
     `ALTER TABLE runs ADD COLUMN voice_transcript TEXT`,
+    // Training days (per-meet participant rosters with opt-out exclusions)
+    `CREATE TABLE IF NOT EXISTS training_days (
+      id TEXT PRIMARY KEY,
+      meet_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS training_day_exclusions (
+      training_day_id TEXT NOT NULL,
+      athlete_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (training_day_id, athlete_id)
+    )`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

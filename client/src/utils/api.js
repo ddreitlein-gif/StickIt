@@ -161,6 +161,30 @@ export const api = {
 
   // Meet clone
   cloneMeet: (meetId, data) => apiFetch(`/meets/${meetId}/clone`, { method: 'POST', body: data }),
+
+  // Training days
+  listTrainingDays: (meetId) => apiFetch(`/meets/${meetId}/training-days`),
+  createTrainingDay: (meetId, data) => apiFetch(`/meets/${meetId}/training-days`, { method: 'POST', body: data }),
+  updateTrainingDay: (meetId, id, data) => apiFetch(`/meets/${meetId}/training-days/${id}`, { method: 'PUT', body: data }),
+  deleteTrainingDay: (meetId, id) => apiFetch(`/meets/${meetId}/training-days/${id}`, { method: 'DELETE' }),
+  getTrainingParticipants: (id) => apiFetch(`/training-days/${id}/participants`),
+  toggleTrainingExclusion: (id, athlete_id, exclude) =>
+    apiFetch(`/training-days/${id}/exclusions`, { method: 'POST', body: { athlete_id, exclude } }),
+  resetTrainingExclusions: (id) => apiFetch(`/training-days/${id}/reset`, { method: 'POST' }),
+  downloadTrainingDayPdf: async (id, suggestedName) => {
+    const res = await fetch(`/api/pdf/training-day/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (suggestedName || `Training_Day_${id}`).replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export function createWebSocket(eventId, onMessage) {

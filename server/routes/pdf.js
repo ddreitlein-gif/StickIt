@@ -1403,6 +1403,93 @@ router.post('/registration', async (req, res) => {
 });
 
 // ===========================================================================
+// POST /api/pdf/training-day/:id — Training day participant roster
+// ===========================================================================
+router.post('/training-day/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const td = await queryOne('SELECT * FROM training_days WHERE id=?', [id]);
+    if (!td) return res.status(404).json({ error: 'Training day not found' });
+    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [td.meet_id]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+
+    // All non-scratched registrations across every event in the meet,
+    // deduped by athlete, with the first non-null bib retained.
+    const rows = await queryAll(
+      `SELECT DISTINCT a.id AS athlete_id, a.first_name, a.last_name,
+              a.ussa_num, a.club, a.deleted_at, r.bib_number
+       FROM registrations r
+       JOIN athletes a ON a.id = r.athlete_id
+       JOIN events e   ON e.id = r.event_id
+       WHERE e.meet_id=? AND r.status != 'scratched'`,
+      [meet.id]
+    );
+    const live = rows.filter(r => !r.deleted_at);
+    const seen = {};
+    const deduped = [];
+    for (const a of live) {
+      if (!seen[a.athlete_id]) { seen[a.athlete_id] = a; deduped.push(a); }
+      else if (!seen[a.athlete_id].bib_number && a.bib_number) {
+        seen[a.athlete_id].bib_number = a.bib_number;
+      }
+    }
+
+    // Apply exclusion filter — only included athletes appear on the PDF
+    const exclusionRows = await queryAll(
+      'SELECT athlete_id FROM training_day_exclusions WHERE training_day_id=?',
+      [id]
+    );
+    const excluded = new Set(exclusionRows.map(r => r.athlete_id));
+    const included = deduped.filter(a => !excluded.has(a.athlete_id));
+
+    // Sort by bib (numeric ASC, blanks last), then by last name
+    included.sort((a, b) => {
+      const ba = parseInt(a.bib_number);
+      const bb = parseInt(b.bib_number);
+      const aHas = Number.isFinite(ba);
+      const bHas = Number.isFinite(bb);
+      if (aHas && bHas && ba !== bb) return ba - bb;
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+      return (a.last_name || '').localeCompare(b.last_name || '') ||
+             (a.first_name || '').localeCompare(b.first_name || '');
+    });
+
+    // Subtitle: training day name plus optional date
+    let dateStr = '';
+    if (td.date) {
+      try {
+        dateStr = new Date(td.date + 'T12:00:00').toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+        });
+      } catch { dateStr = td.date; }
+    }
+    const subtitle = dateStr ? `${td.name} — ${dateStr}` : td.name;
+
+    const doc = new PDFDocument({ size: 'LETTER', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
+    const slug = (s) => (s || '').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
+    const filename = `Training_Day_${slug(meet.name)}_${slug(td.name) || 'roster'}.pdf`;
+    streamPdf(res, doc, filename);
+    pdfHeader(doc, meet, { name: 'Training Day Participants' }, subtitle);
+
+    doc.fontSize(8).fillColor('#666').text(`${included.length} participant${included.length === 1 ? '' : 's'}`, { align: 'center' });
+    doc.fillColor('#000').moveDown(0.3);
+
+    drawTable(doc, [
+      { header: 'Bib',    width: 0.6, value: r => r.bib_number || '', bold: true },
+      { header: 'Last',   width: 1.8, value: r => r.last_name || '', bold: true },
+      { header: 'First',  width: 1.8, value: r => r.first_name || '' },
+      { header: 'USSA #', width: 1.0, value: r => r.ussa_num || '' },
+      { header: 'Club',   width: 2.0, value: r => r.club || '' },
+    ], included);
+    stampFooter(doc);
+    doc.end();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ===========================================================================
 // POST /api/pdf/timer-sheet — Manual Time Sheet (triple-spaced for on-hill)
 // ===========================================================================
 router.post('/timer-sheet', async (req, res) => {

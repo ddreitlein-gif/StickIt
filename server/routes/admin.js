@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { queryAll, queryOne, execute } = require('../db/schema');
+const { VERSION } = require('../version');
 
 const VALID_ROLES = ['official', 'event_admin', 'system_admin'];
 
@@ -114,7 +115,7 @@ router.get('/system', async (req, res) => {
       const row = await queryOne(`SELECT COUNT(*) as cnt FROM ${table}`);
       counts[table] = row ? row.cnt : 0;
     }
-    res.json({ version: 'v1.16.31', counts });
+    res.json({ version: VERSION, counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -181,7 +182,7 @@ router.get('/dashboard', async (req, res) => {
     const PORT = process.env.PORT || 3001;
 
     res.json({
-      version: 'v1.16.31',
+      version: VERSION,
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
       ip_addresses: ips,
       port: PORT,

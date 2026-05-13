@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 const NAV = [
   { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
   { to: '/dashboard/athletes', label: 'Athletes', icon: '&#9975;' },
+  { to: '/dashboard/usss', label: 'USSS Database', icon: '&#128203;' },
 ]
 
 // ── Jump DD Reference Panel ──────────────────────────────────────────────────
@@ -76,7 +77,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v1.21.00')
+  const [version, setVersion] = useState('v1.22.00')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])
@@ -107,50 +108,22 @@ function AboutPanel({ onClose }) {
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [infoOpen, setInfoOpen] = useState(false)
   const [showDDs, setShowDDs] = useState(false)
   const [showAbout, setShowAbout] = useState(false)
-  const [usssStatus, setUsssStatus] = useState(null)
-  const [usssSyncing, setUsssSyncing] = useState(false)
-  const [usssUploading, setUsssUploading] = useState(false)
-  const [usssMsg, setUsssMsg] = useState('')
+  const [version, setVersion] = useState('')
   const location = useLocation()
   const navigate = useNavigate()
 
-  const loadUsssStatus = () => {
-    fetch('/api/usss/status').then(r => r.json()).then(setUsssStatus).catch(() => {})
-  }
+  useEffect(() => {
+    fetch('/api/version')
+      .then(r => r.json())
+      .then(d => d.version && setVersion(d.version))
+      .catch(() => {})
+  }, [])
 
-  useEffect(() => { loadUsssStatus() }, [])
-
-  const handleUsssSync = async () => {
-    setUsssSyncing(true); setUsssMsg('')
-    try {
-      const r = await fetch('/api/usss/sync', { method: 'POST' })
-      const data = await r.json()
-      if (!r.ok) throw new Error(data.error)
-      if (data.skipped) setUsssMsg('Already current')
-      else setUsssMsg(`Synced ${data.recordCount} records`)
-      loadUsssStatus()
-    } catch (e) { setUsssMsg('Sync failed: ' + e.message) }
-    finally { setUsssSyncing(false) }
-  }
-
-  const handleUsssUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    setUsssUploading(true); setUsssMsg('')
-    try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const r = await fetch('/api/usss/upload', { method: 'POST', body: fd })
-      const data = await r.json()
-      if (!r.ok) throw new Error(data.error)
-      setUsssMsg(`Uploaded ${data.recordCount} records`)
-      loadUsssStatus()
-    } catch (err) { setUsssMsg('Upload failed: ' + err.message) }
-    finally { setUsssUploading(false); e.target.value = '' }
-  }
+  // Shared classes for sidebar action buttons (modal triggers / external nav)
+  const sidebarActionBtnClass =
+    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800 w-full text-left'
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-950">
@@ -168,7 +141,7 @@ export default function Layout() {
               <p className="font-display text-3xl font-bold leading-none tracking-wide">
                 <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
               </p>
-              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.21.00</p>
+              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">{version || ' '}</p>
             </div>
           )}
         </div>
@@ -199,76 +172,32 @@ export default function Layout() {
             </NavLink>
           ))}
 
-          {/* Information section */}
-          <div className="mt-4 pt-3 border-t border-slate-800">
+          {/* Reference / help — modal triggers + external navigation */}
+          <div className="mt-4 pt-3 border-t border-slate-800 space-y-1">
             <button
-              onClick={() => setInfoOpen(v => !v)}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800 w-full"
+              onClick={() => setShowDDs(true)}
+              className={sidebarActionBtnClass}
             >
-              <span className="text-lg">&#9432;</span>
-              {sidebarOpen && (
-                <>
-                  <span className="flex-1 text-left">Information</span>
-                  <span className={`text-xs transition-transform ${infoOpen ? 'rotate-90' : ''}`}>&#9654;</span>
-                </>
-              )}
+              <span className="text-lg">&#128200;</span>
+              {sidebarOpen && <span>Jump DDs</span>}
             </button>
-            {infoOpen && sidebarOpen && (
-              <div className="ml-4 mt-1 space-y-0.5">
-                <button
-                  onClick={() => setShowDDs(true)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-white hover:bg-slate-800 transition-colors w-full text-left"
-                >
-                  <span className="text-sm">&#128200;</span>
-                  <span>Jump DDs</span>
-                </button>
-                <button
-                  onClick={() => navigate('/help')}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-white hover:bg-slate-800 transition-colors w-full text-left"
-                >
-                  <span className="text-sm">&#128214;</span>
-                  <span>User Guide</span>
-                </button>
-                <button
-                  onClick={() => setShowAbout(true)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-white hover:bg-slate-800 transition-colors w-full text-left"
-                >
-                  <span className="text-sm">&#9881;</span>
-                  <span>About</span>
-                </button>
-
-                {/* USSS Database subsection */}
-                <div className="mt-3 pt-3 border-t border-slate-800">
-                  <div className="px-3 mb-2">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">USSS Database</span>
-                  </div>
-                  {usssStatus && usssStatus.status ? (
-                    <div className="px-3 space-y-1 text-xs text-slate-500">
-                      <div>Last sync: {new Date(usssStatus.status.last_sync_at + 'Z').toLocaleString()}</div>
-                      <div>List: {usssStatus.status.list_year} {usssStatus.status.list_identifier}</div>
-                      <div>Records: {usssStatus.counts.total} ({usssStatus.counts.competitors} athletes)</div>
-                      <div>Source: {usssStatus.status.source}</div>
-                    </div>
-                  ) : (
-                    <div className="px-3 text-xs text-slate-600 italic">No USSS data -- use Sync Now or upload a People file</div>
-                  )}
-                  {usssMsg && <div className="px-3 mt-1 text-xs text-blue-400">{usssMsg}</div>}
-                  <div className="flex gap-2 px-3 mt-2">
-                    <button
-                      onClick={handleUsssSync}
-                      disabled={usssSyncing}
-                      className="px-2 py-1 text-xs rounded bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors disabled:opacity-50"
-                    >
-                      {usssSyncing ? 'Syncing...' : 'Sync Now'}
-                    </button>
-                    <label className="px-2 py-1 text-xs rounded bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors cursor-pointer">
-                      {usssUploading ? 'Uploading...' : 'Upload File'}
-                      <input type="file" accept=".txt" className="hidden" onChange={handleUsssUpload} disabled={usssUploading} />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
+            <button
+              onClick={() => {
+                try { sessionStorage.setItem('stickit.help.referrer', location.pathname + location.search) } catch {}
+                navigate('/help')
+              }}
+              className={sidebarActionBtnClass}
+            >
+              <span className="text-lg">&#128214;</span>
+              {sidebarOpen && <span>User Guide</span>}
+            </button>
+            <button
+              onClick={() => setShowAbout(true)}
+              className={sidebarActionBtnClass}
+            >
+              <span className="text-lg">&#9881;</span>
+              {sidebarOpen && <span>About</span>}
+            </button>
           </div>
         </nav>
 
@@ -277,7 +206,7 @@ export default function Layout() {
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className="m-3 p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition-colors text-xs"
         >
-          {sidebarOpen ? '\u25C0' : '\u25B6'}
+          {sidebarOpen ? '◀' : '▶'}
         </button>
       </aside>
 

@@ -44,7 +44,7 @@ async function buildJudgePointsMap(bracket) {
 
 function generateSingleMogulXml(params) {
   const {
-    meet, event, ranked, judges, officials,
+    meet, event, ranked, notClassified = [], judges, officials,
     natCode, category, tdInfo
   } = params;
 
@@ -106,9 +106,6 @@ function generateSingleMogulXml(params) {
   lines.push(`${indent(2)}<FS_classified>`);
 
   for (const r of ranked) {
-    // Skip non-finishers
-    if (r.run_status) continue;
-
     lines.push(`${indent(3)}<FS_ranked Status="QLF">`);
     lines.push(`${indent(4)}<Rank>${r.rank}</Rank>`);
     lines.push(`${indent(4)}<Bib>${r.bib_number || ''}</Bib>`);
@@ -138,8 +135,23 @@ function generateSingleMogulXml(params) {
 
   lines.push(`${indent(2)}</FS_classified>`);
 
-  // FS_notclassified (always present, even if empty)
+  // FS_notclassified — DNS / DNF / DSQ / RNS athletes (no successful runs)
   lines.push(`${indent(2)}<FS_notclassified>`);
+  for (const r of notClassified) {
+    const status = (r.runStatus || 'DNS').toUpperCase();
+    lines.push(`${indent(3)}<FS_notranked Status="${escapeXml(status)}">`);
+    lines.push(`${indent(4)}<Bib>${r.bib_number || ''}</Bib>`);
+    lines.push(`${indent(4)}<Competitor>`);
+    lines.push(`${indent(5)}<Fiscode>9999999</Fiscode>`);
+    lines.push(`${indent(5)}<Lastname>${escapeXml((r.last_name || '').toUpperCase())}</Lastname>`);
+    lines.push(`${indent(5)}<Firstname>${escapeXml(r.first_name || '')}</Firstname>`);
+    lines.push(`${indent(5)}<Sex>${sex}</Sex>`);
+    lines.push(`${indent(5)}<Nation>${escapeXml(r.nation || 'USA')}</Nation>`);
+    lines.push(`${indent(5)}<Yearofbirth>${r.birth_year || ''}</Yearofbirth>`);
+    lines.push(`${indent(5)}<NAT_code>${escapeXml(r.ussa_num || '')}</NAT_code>`);
+    lines.push(`${indent(4)}</Competitor>`);
+    lines.push(`${indent(3)}</FS_notranked>`);
+  }
   lines.push(`${indent(2)}</FS_notclassified>`);
 
   lines.push(`${indent(1)}</FS_race>`);
@@ -214,10 +226,14 @@ function generateDualMogulXml(params) {
   lines.push(`${indent(3)}<NumberJudges>${scoringJudgeCount}</NumberJudges>`);
   lines.push(`${indent(2)}</FS_raceinfo>`);
 
+  // Split standings into classified (no DNS/DNF/DSQ/RNS) and notClassified
+  const classifiedStandings = standings.filter(s => !s.runStatus);
+  const notClassifiedStandings = standings.filter(s => s.runStatus);
+
   // FS_classified
   lines.push(`${indent(2)}<FS_classified>`);
 
-  for (const s of standings) {
+  for (const s of classifiedStandings) {
     lines.push(`${indent(3)}<FS_ranked Status="QLF">`);
     lines.push(`${indent(4)}<Rank>${s.rank}</Rank>`);
     lines.push(`${indent(4)}<Bib>${s.bib || ''}</Bib>`);
@@ -245,7 +261,23 @@ function generateDualMogulXml(params) {
 
   lines.push(`${indent(2)}</FS_classified>`);
 
+  // FS_notclassified — DNS / DNF / DSQ / RNS athletes
   lines.push(`${indent(2)}<FS_notclassified>`);
+  for (const s of notClassifiedStandings) {
+    const status = (s.runStatus || 'DNS').toUpperCase();
+    lines.push(`${indent(3)}<FS_notranked Status="${escapeXml(status)}">`);
+    lines.push(`${indent(4)}<Bib>${s.bib || ''}</Bib>`);
+    lines.push(`${indent(4)}<Competitor>`);
+    lines.push(`${indent(5)}<Fiscode>9999999</Fiscode>`);
+    lines.push(`${indent(5)}<Lastname>${escapeXml((s.lastName || '').toUpperCase())}</Lastname>`);
+    lines.push(`${indent(5)}<Firstname>${escapeXml(s.firstName || '')}</Firstname>`);
+    lines.push(`${indent(5)}<Sex>${sex}</Sex>`);
+    lines.push(`${indent(5)}<Nation>${escapeXml(s.nation || 'USA')}</Nation>`);
+    lines.push(`${indent(5)}<Yearofbirth>${s.birthYear || ''}</Yearofbirth>`);
+    lines.push(`${indent(5)}<NAT_code>${escapeXml(s.ussaNum || '')}</NAT_code>`);
+    lines.push(`${indent(4)}</Competitor>`);
+    lines.push(`${indent(3)}</FS_notranked>`);
+  }
   lines.push(`${indent(2)}</FS_notclassified>`);
 
   lines.push(`${indent(1)}</FS_race>`);
@@ -345,23 +377,28 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
 
     if (blueRegId) {
       ensureAthlete(blueRegId);
+      const won = match.winner_registration_id === blueRegId;
       athleteMatches[blueRegId].push({
         round: match.bracket_round,
         matchId: match.id,
         color: 'blue',
         opponentRegId: redRegId,
-        won: match.winner_registration_id === blueRegId,
+        won,
+        // loser_status applies to whichever side lost this match
+        loserStatus: !won ? (match.loser_status || null) : null,
         isSmallFinal: !!match.is_small_final,
       });
     }
     if (redRegId) {
       ensureAthlete(redRegId);
+      const won = match.winner_registration_id === redRegId;
       athleteMatches[redRegId].push({
         round: match.bracket_round,
         matchId: match.id,
         color: 'red',
         opponentRegId: blueRegId,
-        won: match.winner_registration_id === redRegId,
+        won,
+        loserStatus: !won ? (match.loser_status || null) : null,
         isSmallFinal: !!match.is_small_final,
       });
     }
@@ -445,6 +482,14 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
     // Sort by round number
     runElements.sort((a, b) => a.round - b.round);
 
+    // Tag DNS/DNF/DSQ/RNS athletes: never won a match AND elimination match has loser_status.
+    const wonCount = matches.filter(m => m.won).length;
+    let runStatus = null;
+    if (wonCount === 0) {
+      const statusedLoss = matches.find(m => !m.won && m.loserStatus);
+      if (statusedLoss) runStatus = statusedLoss.loserStatus;
+    }
+
     athleteData.push({
       regId,
       bib: reg.bib_number || '',
@@ -456,6 +501,7 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
       sortOrder,
       level,
       runElements,
+      runStatus,
     });
   }
 
@@ -465,14 +511,21 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
     return (a.bib || 0) - (b.bib || 0);
   });
 
-  // Assign ranks
-  for (let i = 0; i < athleteData.length; i++) {
-    athleteData[i].rank = i + 1;
+  // Assign ranks ONLY to classified athletes (those without a runStatus).
+  // notClassified athletes appear in FS_notclassified without a Rank element.
+  let rankCounter = 0;
+  for (const a of athleteData) {
+    if (!a.runStatus) {
+      rankCounter += 1;
+      a.rank = rankCounter;
+    }
   }
 
-  // Compute Pointsdescend: 30 * 0.98^(rank-1) (exponential decay, matches Winfree/USSS)
+  // Compute Pointsdescend only for classified athletes
   for (const a of athleteData) {
-    a.pointsdescend = Math.round(30 * Math.pow(0.98, a.rank - 1) * 1000) / 1000;
+    if (a.rank != null) {
+      a.pointsdescend = Math.round(30 * Math.pow(0.98, a.rank - 1) * 1000) / 1000;
+    }
   }
 
   return athleteData;
@@ -572,50 +625,75 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
         return null;
       }
 
-      // Build run 1 and run 2 per athlete
+      // Build run 1 and run 2 per athlete; track DNS/DNF/DSQ/RNS statuses
+      // so athletes with no successful runs can still appear in FS_notclassified.
       const athleteRuns = {};
+      const athleteHasSuccess = {};
+      const athleteStatuses = {}; // regId -> { run_number: status }
       for (const r of completeRuns) {
-        if (r.run_status) continue; // Skip DNS/DNF/DSQ
-        if (!athleteRuns[r.registration_id]) {
-          athleteRuns[r.registration_id] = { ...r, _run1_total: null, _run2_total: null };
+        const id = r.registration_id;
+        if (r.run_status) {
+          // Stash the status. Keep an identity record for the athlete in case
+          // every one of their runs ends up status'd.
+          if (!athleteStatuses[id]) athleteStatuses[id] = {};
+          athleteStatuses[id][r.run_number] = r.run_status;
+          if (!athleteRuns[id]) {
+            athleteRuns[id] = { ...r, _run1_total: null, _run2_total: null };
+          }
+          continue;
+        }
+        athleteHasSuccess[id] = true;
+        if (!athleteRuns[id]) {
+          athleteRuns[id] = { ...r, _run1_total: null, _run2_total: null };
         }
         if (r.run_number === 1) {
-          athleteRuns[r.registration_id]._run1_total = r.total_score;
-          // If this is also the best, keep all fields
-          if (!athleteRuns[r.registration_id].total_score ||
-              r.total_score > athleteRuns[r.registration_id].total_score) {
-            Object.assign(athleteRuns[r.registration_id], r);
+          athleteRuns[id]._run1_total = r.total_score;
+          if (!athleteRuns[id].total_score ||
+              r.total_score > athleteRuns[id].total_score) {
+            Object.assign(athleteRuns[id], r);
           }
         } else if (r.run_number === 2) {
-          athleteRuns[r.registration_id]._run2_total = r.total_score;
-          if (r.total_score > athleteRuns[r.registration_id].total_score) {
-            Object.assign(athleteRuns[r.registration_id], r);
+          athleteRuns[id]._run2_total = r.total_score;
+          if (!athleteRuns[id].total_score ||
+              r.total_score > athleteRuns[id].total_score) {
+            Object.assign(athleteRuns[id], r);
           }
         }
       }
 
-      // For athletes with only one run, set their run total
+      // Split into classified (≥1 successful run) vs notClassified (all status'd)
+      const classified = [];
+      const notClassified = [];
       for (const [regId, data] of Object.entries(athleteRuns)) {
-        if (data._run1_total == null && data._run2_total == null) {
-          // Single run, use run_number to determine
-          if (data.run_number === 1) data._run1_total = data.total_score;
-          else data._run2_total = data.total_score;
+        if (athleteHasSuccess[regId]) {
+          if (data._run1_total == null && data._run2_total == null) {
+            // Single run, use run_number to determine
+            if (data.run_number === 1) data._run1_total = data.total_score;
+            else data._run2_total = data.total_score;
+          }
+          if (data._run1_total == null) data._run1_total = 0;
+          if (data._run2_total == null) data._run2_total = 0;
+          classified.push(data);
+        } else {
+          const byRun = athleteStatuses[regId] || {};
+          const runNums = Object.keys(byRun).map(Number).sort((a, b) => b - a);
+          const runStatus = runNums.length > 0 ? byRun[runNums[0]] : 'DNS';
+          notClassified.push({ ...data, runStatus });
         }
-        if (data._run1_total == null) data._run1_total = 0;
-        if (data._run2_total == null) data._run2_total = 0;
       }
 
-      const ranked = rankResults(Object.values(athleteRuns), event.discipline);
+      const ranked = rankResults(classified, event.discipline);
 
-      // Warnings: athletes missing USSS number
-      const missingUsss = ranked.filter(r => !r.ussa_num && !r.run_status);
+      // Warnings: athletes missing USSS number (across both groups)
+      const allAthletes = [...ranked, ...notClassified];
+      const missingUsss = allAthletes.filter(r => !r.ussa_num);
       if (missingUsss.length > 0) {
         const list = missingUsss.map(r => `${r.first_name} ${r.last_name} (bib ${r.bib_number})`).join(', ');
         warnings.push(`${event.name}: Athletes missing USSS#: ${list}`);
       }
 
       const xml = generateSingleMogulXml({
-        meet, event, ranked, judges, officials,
+        meet, event, ranked, notClassified, judges, officials,
         natCode, category, tdInfo,
       });
 

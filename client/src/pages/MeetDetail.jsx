@@ -1188,6 +1188,9 @@ export default function MeetDetail() {
           <button onClick={downloadTdReport} className="btn-secondary text-sm">
             TD Report
           </button>
+          <button onClick={() => navigate(`/dashboard/meets/${meetId}/training`)} className="btn-secondary text-sm">
+            Training Days
+          </button>
           {meet.status === 'active' && (
             <button onClick={() => setShowCloseExport(true)} className="btn-ghost text-sm text-orange-400 border-orange-800 hover:bg-orange-900/30">
               Close Meet and Export to USSS

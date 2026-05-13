@@ -15,6 +15,8 @@ import Home from './pages/Home'
 import LiveScores from './pages/LiveScores'
 import Admin from './pages/Admin'
 import HelpPage from './pages/HelpPage'
+import TrainingDays from './pages/TrainingDays'
+import UsssDatabase from './pages/UsssDatabase'
 import './index.css'
 
 export default function App() {
@@ -36,8 +38,10 @@ export default function App() {
         <Route path="/dashboard" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="meets/:meetId" element={<MeetDetail />} />
+          <Route path="meets/:meetId/training" element={<TrainingDays />} />
           <Route path="meets/:meetId/events/:eventId" element={<EventDetail />} />
           <Route path="athletes" element={<Athletes />} />
+          <Route path="usss" element={<UsssDatabase />} />
           <Route path="audit" element={<Navigate to="/admin/audit" replace />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

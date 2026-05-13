@@ -29,7 +29,7 @@ A small inline `<script>` in `client/index.html` runs before React mounts and pa
 
 ### Version display
 
-The footer fetches `/api/version` and shows the current version (e.g., `v1.21.00`) below the copyright. Updates automatically on deploy.
+The footer fetches `/api/version` and shows the current version below the copyright. Updates automatically on deploy.
 
 ### Branding
 

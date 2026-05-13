@@ -201,6 +201,13 @@ async function deleteMeetCascade(meetId) {
   await execute('DELETE FROM officials WHERE meet_id = ?', [meetId]);
   await execute('DELETE FROM course_specs WHERE meet_id = ?', [meetId]);
 
+  // Training days + per-day exclusions
+  const trainingDays = await queryAll('SELECT id FROM training_days WHERE meet_id = ?', [meetId]);
+  for (const td of trainingDays) {
+    await execute('DELETE FROM training_day_exclusions WHERE training_day_id = ?', [td.id]);
+  }
+  await execute('DELETE FROM training_days WHERE meet_id = ?', [meetId]);
+
   // Delete meet logo if present
   for (const ext of ['.png', '.jpg', '.jpeg']) {
     const logoPath = path.join(MEET_LOGOS_DIR, `meet_${meetId}${ext}`);

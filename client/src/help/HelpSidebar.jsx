@@ -1,8 +1,22 @@
 import { useState, useEffect, useMemo } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { GROUPS, topicsInGroup, searchTopics } from './topicsIndex'
 
+function readHelpReferrer() {
+  try {
+    const v = sessionStorage.getItem('stickit.help.referrer')
+    if (!v) return '/'
+    // Never loop back into /help
+    if (v.startsWith('/help')) return '/'
+    return v
+  } catch {
+    return '/'
+  }
+}
+
 export default function HelpSidebar({ activeSlug, searchQuery, onNavigate }) {
+  const navigate = useNavigate()
+  const backTarget = readHelpReferrer()
   const matchingSlugs = useMemo(() => {
     if (!searchQuery.trim()) return null
     const matches = searchTopics(searchQuery)
@@ -44,6 +58,17 @@ export default function HelpSidebar({ activeSlug, searchQuery, onNavigate }) {
 
   return (
     <nav className="help-sidebar-nav">
+      <button
+        type="button"
+        className="help-sidebar-back"
+        onClick={() => {
+          if (onNavigate) onNavigate()
+          navigate(backTarget)
+        }}
+      >
+        <span className="help-sidebar-back-arrow">←</span>
+        <span>Back</span>
+      </button>
       {GROUPS.map(group => {
         const topics = topicsInGroup(group.id)
         const visible = matchingSlugs

@@ -6,6 +6,7 @@ const path = require('path');
 const { initSchema, queryOne, execute } = require('./db/schema');
 const { recordWrite, listBackups, getWriteCount, startAutoBackup } = require('./db/autosave');
 const { startScheduledSync } = require('./usss/sync');
+const { VERSION } = require('./version');
 
 const app = express();
 const server = http.createServer(app);
@@ -116,9 +117,10 @@ app.use('/api/pdf',   require('./routes/pdf'));
 app.use('/api/jump-dds', require('./routes/jumpdds'));
 app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
+app.use('/api', require('./routes/training'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.21.00' }));
+app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -209,7 +211,7 @@ initSchema().then(async () => {
   } catch (e) {
     console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
   }
-  server.listen(PORT, () => console.log(`StickIt v1.21.00 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt ${VERSION} ready on port ${PORT}`));
   startScheduledSync();
   startAutoBackup((err, ctx) => {
     app.errorLog.push({

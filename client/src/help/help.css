@@ -175,6 +175,36 @@
   gap: 4px;
 }
 
+.help-sidebar-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--help-panel-2);
+  border: 1px solid var(--help-border);
+  color: var(--help-fg);
+  padding: 8px 10px;
+  cursor: pointer;
+  width: 100%;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 6px;
+  text-align: left;
+  margin-bottom: 8px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.help-sidebar-back:hover {
+  background: var(--help-panel-3, var(--help-panel-2));
+  border-color: var(--help-link);
+  color: var(--help-link);
+}
+.help-sidebar-back-arrow {
+  font-size: 16px;
+  line-height: 1;
+}
+
 .help-sidebar-group {
   display: flex;
   flex-direction: column;
