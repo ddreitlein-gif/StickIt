@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.20.00
+**Current version:** v1.21.00
 
 ## Commands
 
@@ -175,6 +175,53 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.21.00 Feature Notes
+
+### Comprehensive In-App User Guide (v1.21.00)
+
+Adds a self-contained, public help system at `/help` covering every user-facing feature across all four StickIt audiences (Officials, Judges, Admins, Public). Replaces the v1.20.00 "User Guide" placeholder modal in the officials sidebar.
+
+**Scope.** 61 topics totaling ~25,000 words, organized into 11 sidebar groups: Getting Started (3), Officials — Meets (6), Officials — Events (7), Officials — Athletes & Registration (9), Officials — Judges (3), Officials — Scoring (6), Officials — Results & Reports (6), Judges (Tablets) (7), Admin Panel (7), Public Surfaces (4), Reference (3). Every workflow that exists in StickIt v1.20.x is documented end-to-end.
+
+**Architecture.**
+- New route `/help` and `/help/:topicSlug` registered in `client/src/App.jsx` (public, accessible without login). Slug = topic filename without `.md`.
+- New page component `client/src/pages/HelpPage.jsx` reads the route param, looks up the topic in `TOPICS_BY_SLUG`, and renders via the `HelpLayout` shell.
+- `client/src/help/HelpLayout.jsx` — top bar (logo + search + version + Officials/Live-Scores nav) + two-pane shell (left sidebar 300px + right content area, max-width 880px reading column).
+- `client/src/help/HelpSidebar.jsx` — collapsible groups with NavLink topics. Search-filtered (matches title, group label, body text). Auto-expands the group containing the active topic.
+- `client/src/help/HelpContent.jsx` — breadcrumb + article body + Previous/Next nav. Falls back to a "Topic not found" banner + landing grid for unknown slugs.
+- `client/src/help/MarkdownRenderer.jsx` — ~280-line custom renderer. Supports h1–h4, paragraphs, ordered/unordered lists, bold, italic, inline code, fenced code blocks, blockquotes, horizontal rules, pipe tables, and inline links (internal `./slug` and `/help/slug` rewrite to React-Router Links; external links open in new tab). **No new npm dependency.**
+- `client/src/help/topicsIndex.js` — single source of truth. Loads every `topics/*.md` file at build time via `import.meta.glob('./topics/*.md', { query: '?raw', import: 'default', eager: true })`. Exports `GROUPS`, `TOPICS`, `TOPICS_BY_SLUG`, `topicsInGroup`, `neighbors`, `searchTopics`.
+- `client/src/help/help.css` — self-contained styles. Scoped under `.help-root` so they can't bleed into Officials/Admin pages. Includes responsive breakpoint at 720px (sidebar collapses to a toggle button, prev/next stacks vertically).
+- `client/src/help/topics/*.md` — 61 plain-text markdown files. Each starts with an H2 title, opens with a short context paragraph, then walks the feature with numbered procedures and pipe tables. Cross-references use `[Label](./other-slug)` syntax that the renderer rewrites to React-Router links.
+
+**Entry points.**
+- **Officials sidebar:** The User Guide button in the Information section ([Layout.jsx:243-249](client/src/components/Layout.jsx)) now calls `navigate('/help')` instead of opening the placeholder modal. The `UserGuidePanel` component is removed from `Layout.jsx` (along with the `showGuide` state).
+- **Admin sidebar:** New `{ to: '/help', label: 'Help', icon: '📖' }` entry appended to `ADMIN_NAV` in [AdminLayout.jsx](client/src/components/AdminLayout.jsx).
+- **Public Home page:** New "Help & User Guide" link added below the Officials/Admin secondary-button grid in [Home.jsx](client/src/pages/Home.jsx).
+
+**Topic content style.** Operator-focused, direct, no marketing copy. Procedures as numbered lists; UI elements bolded; button labels and file paths in `` `code` ``. Each topic ~300–500 words, designed to be self-contained — a teammate can deep-link directly to any slug and pick up the workflow cold.
+
+**Search.** Client-side, runs against title + group label + full body. Filters the sidebar live. Forces all matching groups open. Clears on navigation.
+
+**Sun Mode / HC mode.** Help page does not inherit the public Sun Mode toggle. Its own palette (dark navy with sky-blue accents, JetBrains Mono for code, Barlow Condensed for headings) is fixed. Future enhancement could add a high-contrast toggle if outdoor reading is needed.
+
+**Version bumps.** `server/index.js` lines 121 + 212, `client/src/components/Layout.jsx` line 189 (sidebar version display) and AboutPanel default state, `client/package.json`, `server/package.json` — all bumped to `v1.21.00` / `1.21.00`.
+
+**Files created:** `client/src/pages/HelpPage.jsx`, `client/src/help/HelpLayout.jsx`, `client/src/help/HelpSidebar.jsx`, `client/src/help/HelpContent.jsx`, `client/src/help/MarkdownRenderer.jsx`, `client/src/help/topicsIndex.js`, `client/src/help/help.css`, `client/src/help/topics/*.md` (61 files).
+
+**Files modified:** `client/src/App.jsx` (route registration + import), `client/src/components/Layout.jsx` (User Guide button → navigate + placeholder modal removed + version bump), `client/src/components/AdminLayout.jsx` (Help entry), `client/src/pages/Home.jsx` (Help link), `server/index.js` (version strings), `client/package.json`, `server/package.json`, `CLAUDE.md`, `README.md`.
+
+**Verification.** Run `cd client && npm run dev` and visit `http://localhost:3000/help`. Confirm sidebar groups expand/collapse, search filters live, every topic loads without 404, Previous/Next walks the full sequence, browser back/forward updates the visible topic, `/help/does-not-exist` shows the not-found banner. From `/dashboard`, clicking **Information → User Guide** navigates to `/help` (no modal). From `/` (home), the new **HELP & USER GUIDE** link navigates. From `/admin/dashboard`, the Help sidebar entry navigates.
+
+**Out of scope.**
+- No screenshots or video embeds (text only — image syntax already supported by the renderer for a future authoring pass).
+- No "Was this helpful?" feedback widget.
+- No localization (English only).
+- No `?` icon on individual tablet pages (full-screen scoring surfaces; tap collision risk).
+- No server-side rendering — fully client-side bundle.
 
 ---
 

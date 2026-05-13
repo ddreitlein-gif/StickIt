@@ -108,7 +108,7 @@ export default function Home() {
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, width: '100%', maxWidth: 380, marginBottom: 56 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, width: '100%', maxWidth: 380, marginBottom: 12 }}>
             <SecondaryButton to="/dashboard" label="Officials" icon={
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -124,6 +124,47 @@ export default function Home() {
               </svg>
             } />
           </div>
+
+          <Link
+            to="/help"
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              padding: '14px 18px',
+              background: 'var(--bg-panel)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              color: 'var(--fg)',
+              textDecoration: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 56,
+              transition: 'border-color 150ms, background 150ms'
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'var(--red)';
+              e.currentTarget.style.background = 'var(--bg-elev)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+              e.currentTarget.style.background = 'var(--bg-panel)';
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--fg-muted)' }}>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            <div style={{ flex: 1 }}>
+              <div className="sk-display" style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.1em' }}>
+                HELP &amp; USER GUIDE
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--fg-dim)', marginTop: 2 }}>
+                Learn how to use every part of StickIt
+              </div>
+            </div>
+            <span style={{ fontSize: 18, color: 'var(--fg-dim)' }}>→</span>
+          </Link>
 
           <div style={{ flex: 1 }} />
 

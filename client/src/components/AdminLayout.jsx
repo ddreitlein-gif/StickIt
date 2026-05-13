@@ -8,6 +8,7 @@ const ADMIN_NAV = [
   { to: '/admin/athletes', label: 'Athletes', icon: '\uD83C\uDFC3' },
   { to: '/admin/backups', label: 'Backups', icon: '\uD83D\uDCBE' },
   { to: '/admin/audit', label: 'Audit Log', icon: '\uD83D\uDCCB' },
+  { to: '/help', label: 'Help', icon: '\uD83D\uDCD6' },
 ]
 
 export default function AdminLayout() {

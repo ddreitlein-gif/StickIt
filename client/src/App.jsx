@@ -14,6 +14,7 @@ import AuditLog from './pages/AuditLog'
 import Home from './pages/Home'
 import LiveScores from './pages/LiveScores'
 import Admin from './pages/Admin'
+import HelpPage from './pages/HelpPage'
 import './index.css'
 
 export default function App() {
@@ -22,6 +23,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/livescores" element={<LiveScores />} />
+        <Route path="/help" element={<HelpPage />} />
+        <Route path="/help/:topicSlug" element={<HelpPage />} />
         <Route path="/admin/*" element={<Admin />} />
         <Route path="/judge/:eventId" element={<JudgeTablet />} />
         <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />

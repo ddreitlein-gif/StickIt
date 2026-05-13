@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 
 const NAV = [
@@ -76,7 +76,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v1.20.00')
+  const [version, setVersion] = useState('v1.21.00')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])
@@ -105,35 +105,17 @@ function AboutPanel({ onClose }) {
   )
 }
 
-// ── User Guide Panel (placeholder) ──────────────────────────────────────────
-function UserGuidePanel({ onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-          <h3 className="font-display text-lg text-white">User Guide</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-lg">&#10005;</button>
-        </div>
-        <div className="px-5 py-6 text-center space-y-3">
-          <p className="text-slate-400 text-sm">The user guide is under development and will be available in a future release.</p>
-          <p className="text-slate-500 text-xs">For questions, contact the StickIt development team.</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [infoOpen, setInfoOpen] = useState(false)
   const [showDDs, setShowDDs] = useState(false)
   const [showAbout, setShowAbout] = useState(false)
-  const [showGuide, setShowGuide] = useState(false)
   const [usssStatus, setUsssStatus] = useState(null)
   const [usssSyncing, setUsssSyncing] = useState(false)
   const [usssUploading, setUsssUploading] = useState(false)
   const [usssMsg, setUsssMsg] = useState('')
   const location = useLocation()
+  const navigate = useNavigate()
 
   const loadUsssStatus = () => {
     fetch('/api/usss/status').then(r => r.json()).then(setUsssStatus).catch(() => {})
@@ -186,7 +168,7 @@ export default function Layout() {
               <p className="font-display text-3xl font-bold leading-none tracking-wide">
                 <span className="text-white">Stick</span><span style={{ color: '#EF4444' }}>It</span>
               </p>
-              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.20.00</p>
+              <p className="text-[10px] text-slate-500 tracking-widest uppercase mt-1">v1.21.00</p>
             </div>
           )}
         </div>
@@ -241,7 +223,7 @@ export default function Layout() {
                   <span>Jump DDs</span>
                 </button>
                 <button
-                  onClick={() => setShowGuide(true)}
+                  onClick={() => navigate('/help')}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-white hover:bg-slate-800 transition-colors w-full text-left"
                 >
                   <span className="text-sm">&#128214;</span>
@@ -307,7 +289,6 @@ export default function Layout() {
       {/* Modal panels */}
       {showDDs && <JumpDDReference onClose={() => setShowDDs(false)} />}
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
-      {showGuide && <UserGuidePanel onClose={() => setShowGuide(false)} />}
     </div>
   )
 }
