@@ -45,10 +45,19 @@ Then create the zip directly from the `StickIt/` parent (never use a staging fol
 
 ```bash
 cd /Users/daviddreitlein/Desktop/StickIt
-zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md --exclude "*/node_modules/*"
+zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
+  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*"
+
+# Why each exclusion:
+#   */node_modules/*  → installed deps (~100MB)
+#   */.claude/*       → Claude Code worktrees + chat artifacts (can balloon zip to 15M+)
+#   */data/*          → runtime DB + uploaded logos + backups (production has its own)
+#   client/dist/*     → Vite build intermediate (final assets already in server/public/assets)
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
+# Verify size — should be ~2MB. If it's >5MB, an exclusion is missing.
+ls -lh /tmp/StickIt_X_X_XX.zip
 
 # Deliver
 cp "/tmp/StickIt_X_X_XX.zip" "/Users/daviddreitlein/Desktop/Scoring Server/Scoring Zip Files/"
