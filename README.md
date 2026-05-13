@@ -1,6 +1,6 @@
 # StickIt — Freestyle Scoring System
 
-**v1.21.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
+**v1.22.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
 
 ---
 
@@ -20,9 +20,11 @@ StickIt is licensed under the Creative Commons Attribution-NonCommercial-ShareAl
 - Dual mogul bracket management (up to 32 competitors)
 - Aerials scoring path
 - Manual score entry and score editing
+- Voice manual score entry (Deepgram-powered wizard for chief-of-score)
 - PDF results, CSV/Excel export
 - SkiReg and USSS People File CSV import
-- Auto-backup every 5 write operations
+- Per-meet Training Days with opt-out participant list and printable roster PDF
+- Auto-backup every 5 minutes (when writes have occurred)
 - Comprehensive in-app user guide at `/help` (61 topics across Officials, Judges, Admins, and Public surfaces)
 
 ---
@@ -79,6 +81,7 @@ Use a browser source pointed at:
 4. **Register athletes** in each event
 5. **Add judges** — assign role (TL1, TL2, TL3, Air1, Air2) and optional PIN
 6. **Send tablet URLs** to each judge
+7. **(Optional) Training days** — open Training Days from the meet page to create one or more pre-comp roster lists and print attendance PDFs
 
 ### During the event (moguls)
 1. Admin selects the next athlete and starts their run

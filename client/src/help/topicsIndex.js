@@ -43,6 +43,7 @@ const RAW_TOPICS = [
   { slug: 'meets-create',             group: 'meets', title: 'Creating a meet' },
   { slug: 'meets-edit',               group: 'meets', title: 'Editing meet settings' },
   { slug: 'meets-course-specs',       group: 'meets', title: 'Course specifications' },
+  { slug: 'meets-training-days',      group: 'meets', title: 'Training days' },
   { slug: 'meets-import',             group: 'meets', title: 'Importing a meet from file' },
   { slug: 'meets-export',             group: 'meets', title: 'Exporting a meet' },
   { slug: 'meets-delete',             group: 'meets', title: 'Deleting a meet' },
