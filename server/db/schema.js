@@ -259,6 +259,8 @@ async function initSchema() {
     `ALTER TABLE events ADD COLUMN aerials_reduction_method TEXT`,
     `ALTER TABLE judges ADD COLUMN judge_number INTEGER`,
     `ALTER TABLE runs ADD COLUMN aerials_model TEXT`,
+    // v1.20.00 -- voice manual score entry transcript
+    `ALTER TABLE runs ADD COLUMN voice_transcript TEXT`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

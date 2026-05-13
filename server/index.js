@@ -42,7 +42,17 @@ app.broadcast = (eventId, type, data) => {
   });
 };
 
-wss.on('connection', ws => {
+wss.on('connection', (ws, req) => {
+  // v1.20.00 -- voice bridge route: ws://server/ws/voice/<eventId>
+  // Connections to this path are handed off to the Deepgram bridge and do
+  // NOT participate in the broadcast subscribe/unsubscribe protocol.
+  const url = (req && req.url) || '';
+  if (url.startsWith('/ws/voice/')) {
+    const eventId = url.replace(/^\/ws\/voice\//, '').replace(/\?.*$/, '').replace(/\/+$/, '');
+    require('./voice/deepgram').attachVoiceBridge(ws, eventId);
+    return;
+  }
+
   ws._subscribedEvents = new Set();
   ws.send(JSON.stringify({ type: 'connected' }));
 
@@ -108,7 +118,7 @@ app.use('/api/audit', require('./routes/audit'));
 app.use('/api/usss', require('./routes/usss'));
 const { requireAuth } = require('./middleware/auth');
 app.use('/api/admin', requireAuth, require('./routes/admin'));
-app.get('/api/version', (req, res) => res.json({ version: 'v1.19.02' }));
+app.get('/api/version', (req, res) => res.json({ version: 'v1.20.00' }));
 
 // POST finalize event (mark as complete after all phases done)
 app.post('/api/events/:eventId/finalize', async (req, res) => {
@@ -199,7 +209,7 @@ initSchema().then(async () => {
   } catch (e) {
     console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
   }
-  server.listen(PORT, () => console.log(`StickIt v1.19.02 ready on port ${PORT}`));
+  server.listen(PORT, () => console.log(`StickIt v1.20.00 ready on port ${PORT}`));
   startScheduledSync();
   startAutoBackup((err, ctx) => {
     app.errorLog.push({

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.19.02
+**Current version:** v1.20.00
 
 ## Commands
 
@@ -175,6 +175,61 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.20.00 Feature Notes
+
+### Voice Manual Score Entry — Wizard Model (v1.20.00)
+
+New optional voice-driven workflow for the chief-of-score role. All existing scoring paths are byte-identical to v1.19.02 behavior — voice is purely additive. **No scoring math changes.** All formulas, DD lookup, judge roles, server routes, and API contracts are unchanged.
+
+**Speech engine.** Deepgram Nova-3 streaming. `DEEPGRAM_API_KEY` must be set in the server's environment (`~/.zshrc` for local dev, Railway service variables for production). Without it, the voice modal renders a clean "Voice service unavailable" error and the operator falls back to keyboard manual entry. Audio is never persisted — only the resulting transcript text lands in the database (new `runs.voice_transcript` column).
+
+**Two operator contexts:**
+- **Paper-entry batch flow.** A new "🎙 Voice Manual Entry" button at the top of every Scoring tab (mogul + aerials legacy; hidden on dual mogul and aerials v2) opens `VoiceManualEntryModal` in `'paper'` mode. The modal walks: bib confirmation → guided dictation → confirmation review → submit → next-bib prompt → repeat. Done button closes at any natural break.
+- **Tablet edit flow.** The existing `ManualScoreModal` (opened from per-row "Manual Entry" buttons) gains a "🎙 Voice Entry" header button. Clicking it closes the keyboard modal and opens `VoiceManualEntryModal` in `'tablet'` mode with the athlete pre-selected, skipping the bib screen.
+
+**Wizard dictation model.** The dictation screen is a guided wizard, NOT free-form. A blue-glow cursor highlights ONE field at a time. The operator speaks only the value for that field (no section keywords). Four voice commands control navigation:
+- **"Next"** — advance the wizard cursor by one field
+- **"Redo"** — clear the value of the currently active field (cursor stays)
+- **"Submit"** or **"Done"** — stop the mic and jump to the Review screen
+- **"No Time"** / **"NT"** — only meaningful when the cursor is on the Time field; sets value to -1
+
+**Speaking a value does NOT auto-advance the cursor.** This is the "stay-put" rule. Saying "six point five" while the cursor is on Carving lands 6.5 in Carving; the cursor stays on Carving. Saying another number replaces the value (self-correction by simply re-speaking). The operator must explicitly say "Next" to move on. This eliminates false advances on partial Deepgram returns.
+
+**Field sequence (auto-built from event config):** Time (when `has_speed`) · for each T&L judge: Carving / Absorption / Upper body / Deduction (component scoring on) OR Raw / Deduction (component scoring off) · Jump 1 code / Jump 2 code (per `num_jumps`) · for each Air judge: Jump 1 / Jump 2 scores. Devo, RQS-EQS, and 1-jump events skip irrelevant fields automatically.
+
+**Click-to-edit-target.** Tap any field in the script during recording to set it as a temporary "edit target" (dashed amber ring). The next spoken value lands in the clicked field — NOT in the wizard cursor's current position. After the value lands, the edit target clears and the wizard cursor visually resumes its previous position. Saying "Next" advances from the wizard cursor (its preserved position), not the clicked one. Two-cursor model: wizard position is sequential; click is random-access.
+
+**Status overrides via toolbar (not voice).** Three buttons in the modal header — DNS / DNF / DSQ — each open a confirm dialog ("Mark bib X as DNS — confirm?") and submit the run with that status, overriding any partial scores entered. Voice intentionally does NOT recognize DNS/DNF/DSQ as commands — the toolbar is the only path so a chance mishearing can never zero out an athlete's scores.
+
+**Jump code DB validation.** When the modal opens it fetches the actual jump-code list for the event's discipline + gender from `/api/jump-dds`. Every parsed jump code is validated against that set after spoken-phrase mapping. Codes not in the table flash red (`✗`) with the recognized text shown so the operator can immediately click + re-record the correct code, or type-correct on the Review screen. Submit is blocked while any jump code is invalid. The "Code" mishearing that triggered this feature ("Code" is not in any DD table) now fails closed instead of silently storing a bad value.
+
+**Spoken phrase → canonical jump code.** The same `JUMP_PHRASE_MAP` from the earlier voice build handles common mogul phrasings ("twister spread" → TS, "back full" → bF, "back position" → bp, "back pike" → bP, "back layout" → bL, etc.). Letter-by-letter pronunciations ("T S") collapse to `TS` if the canonical code exists. After mapping, the result must still appear in the DB list to validate.
+
+**Number handling.** Deepgram's `smart_format=true` converts most spoken numerics to digits ("twenty-three point two three" → "23.23"). The parser additionally handles: "point N" / "point N M" sequences (e.g., "point two three" → 0.23), bare English words ("seven" → 7), and compound tens-units ("forty five" → 45). Per-field range checks surface obvious mis-hears as amber on the live script and on the Review screen.
+
+**Confirmation Review.** After "Submit" / "Done" (voice or button), a two-column Review screen shows the raw transcript on the left and the parsed values on the right as editable inputs. Each row has a status glyph: green ✓ (ok), amber `!` (out-of-range), red ✗ (invalid jump code), or gray `·` (empty). Submit button is gated on every required field being filled AND every jump code being valid. Re-record discards everything and re-enters the wizard.
+
+**Hardware trigger.** F2 toggles record/stop while the voice modal is open. The Nuance PowerMic II/III and Philips SpeechMike Premium 3500 can be configured in their respective driver utilities to send F2 on press. AirPods or USB headsets work with the on-screen Start/Stop button or F2 directly.
+
+**Server architecture.** The browser opens `ws://server/ws/voice/<eventId>` (new path, dispatched off the existing `/ws` server by URL inspection). The server's `server/voice/deepgram.js` module opens an upstream WebSocket to `wss://api.deepgram.com/v1/listen` with the `DEEPGRAM_API_KEY` in the Authorization header, then proxies binary PCM frames (linear16, 16 kHz mono, ~250 ms chunks) from the client to Deepgram, and JSON transcript messages back. `client/src/voice/audioCapture.js` uses `AudioContext` + `AudioWorklet` (modern path) or `ScriptProcessorNode` (fallback) to capture raw PCM and downsample in JS. `client/src/voice/parser.js` runs entirely client-side and is a pure function — no server-side parsing.
+
+**Each Deepgram `is_final` chunk is processed independently** by `handleUtterance`: first as a command (`detectCommand`), and if no command matches, as a value for the active field via `extractValueForField(utterance, fieldType, { allowedJumpCodes, isAerials })`. Interim transcripts display as a live caption but don't mutate state. The transcript that gets persisted to `runs.voice_transcript` is the concatenated final-only string.
+
+**Failure modes.**
+- **Deepgram unavailable / API key missing / network outage:** voice modal shows "Voice service unavailable. Use keyboard manual entry." Operator closes the modal and uses the existing keyboard path. No partial data is written.
+- **Microphone permission denied:** clear error message in the modal.
+- **Bad parse / invalid jump code:** field shows red on the live script and on the Review screen. Operator clicks the field to retarget and re-records, or type-corrects in the Review screen.
+
+**Submit path.** On confirm, the modal calls the existing `POST /api/events/:eventId/runs/manual` (paper) or `POST /api/events/:eventId/runs/:runId/manual-score` (tablet edit) with the parsed values plus an optional `voice_transcript` field. Both endpoints store the transcript in the new `runs.voice_transcript` column for post-event audit; all other behavior is unchanged. Aerials v2 events (those with `events.aerials_panel_size IS NOT NULL`) already refuse the legacy manual-entry shape per v1.18.02; the voice toolbar buttons are hidden on those events.
+
+**Files added:** `server/voice/deepgram.js`, `client/src/voice/parser.js`, `client/src/voice/audioCapture.js`, `client/src/components/VoiceManualEntryModal.jsx`
+
+**Files modified:** `server/db/schema.js` (`voice_transcript` migration), `server/index.js` (WS path dispatch, version strings), `server/routes/runs.js` (both manual entry endpoints accept `voice_transcript`), `client/src/pages/EventDetail.jsx` (top-level Voice Manual Entry button + ManualScoreModal header Voice Entry button + modal render), `client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
+
+**Known limitations of v1.20.00:** No aerials v2 support (uses per-judge-per-jump tablets). No dual mogul support (bracket scoring is fundamentally different). No text-to-speech readback (visual confirmation only). Audio is not retained — only the final transcript text is stored. Voice cannot trigger DNS / DNF / DSQ — operator must click the toolbar buttons.
 
 ---
 

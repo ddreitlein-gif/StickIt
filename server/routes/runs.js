@@ -387,6 +387,7 @@ router.post('/manual', async (req, res) => {
       air_jump1_scores = [], air_jump2_scores = [],
       form_scores = [], landing_scores = [],
       run_time, run_status,
+      voice_transcript = null, // v1.20.00 -- populated when entered via voice; null for keyboard entry
     } = req.body;
 
     if (!registration_id) return res.status(400).json({ error: 'registration_id required' });
@@ -409,9 +410,9 @@ router.post('/manual', async (req, res) => {
     if (run_status && ['DNS', 'DNF', 'DSQ'].includes(run_status)) {
       const id = uuidv4();
       await execute(
-        `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,run_status,manually_entered)
-         VALUES (?,?,?,?,?,'complete',?,1)`,
-        [id, req.params.eventId, registration_id, run_number, round, run_status]
+        `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,run_status,manually_entered,voice_transcript)
+         VALUES (?,?,?,?,?,'complete',?,1,?)`,
+        [id, req.params.eventId, registration_id, run_number, round, run_status, voice_transcript || null]
       );
       const created = await queryOne('SELECT * FROM runs WHERE id=?', [id]);
       const dnsAgt = await getAgeGroupTransition(req.params.eventId, registration_id);
@@ -476,11 +477,12 @@ router.post('/manual', async (req, res) => {
     await execute(
       `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,hj_pending,
          jump1_code,jump1_dd,jump2_code,jump2_dd,run_time,
-         turns_score,air_score,air_score_no_dd,speed_score,total_score,manually_entered)
-       VALUES (?,?,?,?,?,'complete',0,?,?,?,?,?,?,?,?,?,?,1)`,
+         turns_score,air_score,air_score_no_dd,speed_score,total_score,manually_entered,voice_transcript)
+       VALUES (?,?,?,?,?,'complete',0,?,?,?,?,?,?,?,?,?,?,1,?)`,
       [id, req.params.eventId, registration_id, run_number, round,
        jump1_code || null, dd1, jump2_code || null, dd2, run_time || null,
-       result.turnsContrib, result.airContrib, airNoDdValue, result.speedContrib, result.total]
+       result.turnsContrib, result.airContrib, airNoDdValue, result.speedContrib, result.total,
+       voice_transcript || null]
     );
 
     // Store per-judge scores in judge_scores (if event has judges configured)
@@ -549,6 +551,7 @@ router.post('/:runId/manual-score', async (req, res) => {
       air_jump1_scores = [], air_jump2_scores = [],
       form_scores = [], landing_scores = [],
       run_time, run_status,
+      voice_transcript = null, // v1.20.00 -- populated when entered via voice; null for keyboard edits
     } = req.body;
 
     const disc        = event.discipline === 'aerials' ? 'aerials' : 'mogul';
@@ -559,8 +562,8 @@ router.post('/:runId/manual-score', async (req, res) => {
       await execute(
         `UPDATE runs SET run_status=?, status='complete', hj_pending=0, manually_entered=1,
            turns_score=NULL, air_score=NULL, air_score_no_dd=NULL, speed_score=NULL, total_score=NULL,
-           updated_at=datetime('now') WHERE id=?`,
-        [run_status, run.id]
+           voice_transcript=?, updated_at=datetime('now') WHERE id=?`,
+        [run_status, voice_transcript || null, run.id]
       );
       const updated = await queryOne('SELECT * FROM runs WHERE id=?', [run.id]);
       if (req.app.broadcast) {
@@ -634,12 +637,12 @@ router.post('/:runId/manual-score', async (req, res) => {
          run_time=?, run_status=NULL,
          turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?,
          status='complete', hj_pending=0, manually_entered=1,
-         updated_at=datetime('now')
+         voice_transcript=?, updated_at=datetime('now')
        WHERE id=?`,
       [code1 || null, dd1, code2 || null, dd2,
        finalTime || null,
        result.turnsContrib, result.airContrib, airNoDdValueEdit, result.speedContrib, result.total,
-       run.id]
+       voice_transcript || null, run.id]
     );
 
     // Overwrite judge_scores with fresh per-judge data for this run

@@ -5,6 +5,7 @@ import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
 import BibAssignModal from '../components/BibAssignModal'
+import VoiceManualEntryModal from '../components/VoiceManualEntryModal'
 
 const ROLE_LABELS = {
   TL1:'T&L 1', TL2:'T&L 2', TL3:'T&L 3',
@@ -2961,6 +2962,7 @@ function ScoringPanel({ event, registrations }) {
   const [canceling, setCanceling]               = useState(false)
   const [alreadyExpanded, setAlreadyExpanded]   = useState(false)
   const [manualModal, setManualModal]           = useState(null)
+  const [voiceModal,  setVoiceModal]            = useState(null) // v1.20.00 -- { mode:'paper'|'tablet', registration?, run?, runNumber }
   const [phases,    setPhases]                  = useState([])
   const [phaseEligible, setPhaseEligible]       = useState(null)
   const [activePhase, setActivePhase]           = useState(null)
@@ -3119,6 +3121,19 @@ function ScoringPanel({ event, registrations }) {
 
   return (
     <div className="space-y-6">
+
+      {/* v1.20.00 -- Voice Manual Entry batch trigger (paper-mode-friendly bib confirmation flow) */}
+      {event.discipline !== 'dual_mogul' && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setVoiceModal({ mode: 'paper', runNumber: currentRunNumber })}
+            className="text-xs px-3 py-1.5 rounded-lg bg-mountain-600 hover:bg-mountain-500 text-white font-semibold shadow"
+            title="Open voice-driven manual entry with bib confirmation"
+          >
+            🎙 Voice Manual Entry
+          </button>
+        </div>
+      )}
 
       {/* Active run */}
       {activeRun && (
@@ -3616,6 +3631,22 @@ function ScoringPanel({ event, registrations }) {
           runNumber={manualModal.runNumber || 1}
           onClose={() => setManualModal(null)}
           onSuccess={() => { setManualModal(null); loadAll() }}
+          onSwitchToVoice={(spec) => {
+            // v1.20.00 -- hand off from keyboard modal to voice modal in tablet mode.
+            setManualModal(null);
+            setVoiceModal({ mode: 'tablet', ...spec });
+          }}
+        />
+      )}
+      {voiceModal && (
+        <VoiceManualEntryModal
+          event={event}
+          mode={voiceModal.mode}
+          registration={voiceModal.registration || null}
+          run={voiceModal.run || null}
+          runNumber={voiceModal.runNumber || 1}
+          onClose={() => setVoiceModal(null)}
+          onSuccess={() => { loadAll() }}
         />
       )}
     </div>
@@ -5237,7 +5268,7 @@ function PdfReportsPanel({ event }) {
 }
 
 // ── ManualScoreModal ──────────────────────────────────────────────────────────
-function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClose, onSuccess }) {
+function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClose, onSuccess, onSwitchToVoice }) {
   const isMogul   = event.discipline !== 'aerials'
   const numTL     = event.num_tl_judges  || 3
   const numAir    = event.num_air_judges || 2
@@ -5483,7 +5514,19 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
                 <span className="text-white font-semibold">{athleteName}</span>
               </div>
             </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            <div className="flex items-center gap-2">
+              {/* v1.20.00 -- switch to voice dictation for this same athlete */}
+              {onSwitchToVoice && event.discipline !== 'aerials' && (
+                <button
+                  onClick={() => onSwitchToVoice({ registration, run, runNumber })}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-mountain-600 hover:bg-mountain-500 text-white font-semibold"
+                  title="Switch to voice dictation for this athlete"
+                >
+                  🎙 Voice Entry
+                </button>
+              )}
+              <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
+            </div>
           </div>
 
           {/* 1. Time — mogul only, at top */}
