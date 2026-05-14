@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { logAudit } = require('./audit');
+const { requireAuth } = require('../middleware/auth');
 
 // Convert ALL-CAPS names to standard name case: "ANDERSON" → "Anderson"
 // Handles multi-word names: "DE LA CRUZ" → "De La Cruz"
@@ -68,7 +69,7 @@ async function checkDuplicates(body, excludeId) {
   return null;
 }
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { first_name, last_name, ussa_num, fis_id, birth_year, gender, club, division } = req.body;
     if (!first_name || !last_name) return res.status(400).json({ error: 'first_name and last_name required' });
@@ -94,7 +95,7 @@ router.post('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   try {
     const { ussa_num, fis_id, first_name, last_name } = req.body;
 
@@ -140,7 +141,7 @@ router.put('/:id', async (req, res) => {
 // it.  Otherwise create a new athlete record from the USSS data.
 // Returns: { athletes: [{ athlete_id, ussa_id, created, first_name, last_name }] }
 // ---------------------------------------------------------------------------
-router.post('/from-usss', async (req, res) => {
+router.post('/from-usss', requireAuth, async (req, res) => {
   try {
     const { ussa_ids } = req.body;
     if (!Array.isArray(ussa_ids) || !ussa_ids.length) {
@@ -184,7 +185,7 @@ router.post('/from-usss', async (req, res) => {
 // Body: CSV text (Content-Type: text/plain)
 // Returns: { toAdd[], toUpdate[], notInFile[] } -- no writes.
 // ---------------------------------------------------------------------------
-router.post('/reconcile', async (req, res) => {
+router.post('/reconcile', requireAuth, async (req, res) => {
   try {
     let text = '';
     await new Promise((resolve, reject) => {
@@ -252,7 +253,7 @@ router.post('/reconcile', async (req, res) => {
 // Body: { add: [athleteData], update: [{ id, fields: { field: newValue } }] }
 // Returns: { added, updated }
 // ---------------------------------------------------------------------------
-router.post('/reconcile/apply', async (req, res) => {
+router.post('/reconcile/apply', requireAuth, async (req, res) => {
   try {
     const { add = [], update = [] } = req.body;
     let added = 0, updated = 0;
@@ -293,7 +294,7 @@ router.post('/reconcile/apply', async (req, res) => {
 // Updates athlete master records from usss_people for athletes with a ussa_num.
 // Does NOT add new athletes or modify registrations/scores/run data.
 // ---------------------------------------------------------------------------
-router.post('/usss-sync', async (req, res) => {
+router.post('/usss-sync', requireAuth, async (req, res) => {
   try {
     const athletes = await queryAll("SELECT * FROM athletes WHERE deleted_at IS NULL AND ussa_num IS NOT NULL AND ussa_num != ''");
     let matched = 0, updated = 0, not_found = 0;

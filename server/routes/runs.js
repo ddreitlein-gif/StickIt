@@ -3,6 +3,7 @@ const { queryAll, queryOne, execute, uuidv4, getClient } = require('../db/schema
 const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats, applyRepeatJumpRule } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
+const { requireAuth } = require('../middleware/auth');
 const lockCheck = requireUnlocked();
 
 // Age group helpers for transition messages
@@ -375,7 +376,7 @@ router.get('/:runId/scores', async (req, res) => {
 
 // POST /manual -- Create + immediately complete a run without entering 'scoring' state.
 // No run_started broadcast; overlay never shows "Now Scoring..." for this run.
-router.post('/manual', async (req, res) => {
+router.post('/manual', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -536,7 +537,7 @@ router.post('/manual', async (req, res) => {
 });
 
 // POST /:runId/manual-score -- Re-score or update status of an existing run (Edit Score)
-router.post('/:runId/manual-score', async (req, res) => {
+router.post('/:runId/manual-score', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?',
       [req.params.runId, req.params.eventId]);
@@ -694,7 +695,7 @@ router.post('/:runId/manual-score', async (req, res) => {
 });
 
 // POST /forerunner -- start a forerunner (judge test) run
-router.post('/forerunner', async (req, res) => {
+router.post('/forerunner', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -883,7 +884,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update run (jump codes, time, status)
-router.put('/:runId', async (req, res) => {
+router.put('/:runId', requireAuth, async (req, res) => {
   try {
     const { jump1_code, jump2_code, run_time, status, clear_jump_codes } = req.body;
 
@@ -1366,7 +1367,7 @@ router.post('/:runId/approve', async (req, res) => {
 });
 
 // DELETE /:runId -- Cancel/delete a run (only if no scores submitted yet)
-router.delete('/:runId', async (req, res) => {
+router.delete('/:runId', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1392,7 +1393,7 @@ router.delete('/:runId', async (req, res) => {
 });
 
 // POST /:runId/reopen -- Reopen a completed run for rescoring
-router.post('/:runId/reopen', async (req, res) => {
+router.post('/:runId/reopen', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1423,7 +1424,7 @@ router.post('/:runId/reopen', async (req, res) => {
 });
 
 // DELETE /:runId/scores/last -- Undo the most recently submitted judge score for the active run
-router.delete('/:runId/scores/last', async (req, res) => {
+router.delete('/:runId/scores/last', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1452,7 +1453,7 @@ router.delete('/:runId/scores/last', async (req, res) => {
 });
 
 // POST /:runId/scores/:judgeScoreId/reject -- Head Judge rejects a specific judge score
-router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
+router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1586,7 +1587,7 @@ router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
 });
 
 // DELETE /:runId/time -- Head Judge rejects/clears the submitted time
-router.delete('/:runId/time', async (req, res) => {
+router.delete('/:runId/time', requireAuth, async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });

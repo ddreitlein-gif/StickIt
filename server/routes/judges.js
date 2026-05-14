@@ -1,5 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
+const { requireAuth } = require('../middleware/auth');
 
 const VALID_ROLES = ['TL1','TL2','TL3','Air1','Air2','HJ',
   // Aerials v2 (v1.18.00) — single role, numbered 1..N via judge_number
@@ -23,7 +24,7 @@ router.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { name, role, pin, ussa_id, judge_number } = req.body;
     if (!name || !role) return res.status(400).json({ error: 'name and role required' });
@@ -40,7 +41,7 @@ router.post('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   try {
     const j = await queryOne('SELECT * FROM judges WHERE id=? AND event_id=?', [req.params.id, req.params.eventId]);
     if (!j) return res.status(404).json({ error: 'Judge not found' });
@@ -56,7 +57,7 @@ router.put('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     await execute('DELETE FROM judges WHERE id=? AND event_id=?', [req.params.id, req.params.eventId]);
     res.json({ ok: true });
@@ -67,7 +68,7 @@ router.delete('/:id', async (req, res) => {
 // Wipes existing aerials judges (any aerials role) and creates N AeJudgeK rows
 // with judge_number 1..N. Adds an HJ row if hjScoring is requested (mapped to a
 // numbered scoring slot for USA Regional). Existing HJ rows are left in place.
-router.post('/seed-aerials', async (req, res) => {
+router.post('/seed-aerials', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });

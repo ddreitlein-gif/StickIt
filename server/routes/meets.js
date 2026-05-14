@@ -5,6 +5,7 @@ const fs = require('fs');
 const AdmZip = require('adm-zip');
 const multer = require('multer');
 const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
+const { requireAuth } = require('../middleware/auth');
 
 const MEET_LOGOS_DIR = path.join(__dirname, '..', 'data', 'logos');
 const importUpload = multer({ dest: path.join(__dirname, '..', 'data', 'tmp'), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -79,7 +80,7 @@ router.get('/livescores', async (req, res) => {
 
 // GET /export-all — bundle all currently-visible meets into a zip-of-zips
 // Must be registered before /:id so Express doesn't treat "export-all" as a meet ID.
-router.get('/export-all', async (req, res) => {
+router.get('/export-all', requireAuth, async (req, res) => {
   try {
     const meets = await queryAll(
       `SELECT m.* FROM meets m
@@ -135,7 +136,7 @@ router.get('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { name, location, date, meet_ranking } = req.body;
     if (!name || !location || !date || !meet_ranking) return res.status(400).json({ error: 'name, location, date, and meet_ranking are required' });
@@ -146,7 +147,7 @@ router.post('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   try {
     const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
     if (!meet) return res.status(404).json({ error: 'Meet not found' });
@@ -217,7 +218,7 @@ async function deleteMeetCascade(meetId) {
   await execute('DELETE FROM meets WHERE id = ?', [meetId]);
 }
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     await deleteMeetCascade(req.params.id);
     res.json({ success: true });
@@ -312,7 +313,7 @@ router.get('/:id/status', async (req, res) => {
 });
 
 // POST /api/meets/:id/clone -- create a new meet copying events and optionally registrations
-router.post('/:id/clone', async (req, res) => {
+router.post('/:id/clone', requireAuth, async (req, res) => {
   try {
     const source = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
     if (!source) return res.status(404).json({ error: 'Meet not found' });
@@ -486,7 +487,7 @@ router.get('/:id/close-validation', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/reopen', async (req, res) => {
+router.post('/:id/reopen', requireAuth, async (req, res) => {
   try {
     const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.id]);
     if (!meet) return res.status(404).json({ error: 'Meet not found' });
@@ -497,7 +498,7 @@ router.post('/:id/reopen', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/:id/close', async (req, res) => {
+router.post('/:id/close', requireAuth, async (req, res) => {
   try {
     const force = req.query.force === 'true';
     const v = await buildCloseValidation(req.params.id);
@@ -728,7 +729,7 @@ async function buildMeetExportZip(meetId) {
   };
 }
 
-router.get('/:id/export', async (req, res) => {
+router.get('/:id/export', requireAuth, async (req, res) => {
   try {
     const result = await buildMeetExportZip(req.params.id);
     if (!result) return res.status(404).json({ error: 'Meet not found' });
@@ -1460,7 +1461,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
 // ---------------------------------------------------------------------------
 // POST /import — import a meet from ZIP (with duplicate detection)
 // ---------------------------------------------------------------------------
-router.post('/import', importUpload.single('file'), async (req, res) => {
+router.post('/import', requireAuth, importUpload.single('file'), async (req, res) => {
   try {
     const pendingId = req.query.pending_import_id;
     const conflictAction = req.query.conflict_action;
