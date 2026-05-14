@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import api, { createWebSocket, authHeaders } from '../utils/api'
 import { useAuth } from '../auth/AuthContext'
-import { QRCodeSVG } from 'qrcode.react'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
@@ -555,8 +554,6 @@ function LinksPanel({ event, judges }) {
   const overlayUrl    = `http://${appHost()}/overlay/${ec}`
   const hjJudge       = judges.find(j => j.role === 'HJ')
 
-  const [qrUrl, setQrUrl] = useState(null)
-
   const LinkRow = ({ label, url, path, note }) => (
     <div className="flex items-center gap-3 py-3 border-b border-slate-800 last:border-0">
       <div className="w-32 shrink-0">
@@ -564,36 +561,13 @@ function LinksPanel({ event, judges }) {
         {note && <div className="text-xs text-slate-500">{note}</div>}
       </div>
       <code className="text-xs text-slate-400 bg-slate-800 px-2 py-1.5 rounded flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{url}</code>
-      <button onClick={() => setQrUrl(url)} className="btn-ghost text-xs shrink-0" title="Show QR code">QR</button>
       <button onClick={() => copyText(url)} className="btn-ghost text-xs shrink-0">Copy</button>
       <a href={path || url} target="_blank" rel="noreferrer" className="btn-primary text-xs shrink-0">Open</a>
     </div>
   )
 
-  const QRModal = () => qrUrl ? (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
-      onClick={() => setQrUrl(null)}
-    >
-      <div
-        className="bg-white rounded-2xl p-6 flex flex-col items-center gap-4 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <QRCodeSVG value={qrUrl} size={240} />
-        <p className="text-xs text-slate-500 max-w-xs text-center break-all">{qrUrl}</p>
-        <button
-          onClick={() => setQrUrl(null)}
-          className="text-sm text-slate-600 hover:text-slate-900 font-medium"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-  ) : null
-
   return (
     <div className="space-y-6">
-      <QRModal />
       {/* Judge tablets */}
       <div className="card">
         <h3 className="font-display text-lg text-white mb-4">Judge Tablets</h3>
