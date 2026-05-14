@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.22.01
+**Current version:** v1.22.02
 
 ## Commands
 
@@ -184,6 +184,36 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.22.02 Feature Notes
+
+### SpeechMike — Ctrl+Key Aliases for macOS F-Key Conflicts (v1.22.02)
+
+macOS intercepts all four bare function keys (F1 = brightness down, F2 = brightness up,
+F3 = Mission Control, F4 = Launchpad) at the OS level before the browser receives them.
+`e.preventDefault()` cannot stop OS-level key grabs, so the v1.22.01 F-key navigation in the
+voice wizard was non-functional on Mac.
+
+**Fix.** The `VoiceManualEntryModal.jsx` keydown handler now recognises Ctrl+key combos as
+aliases for the four function keys:
+
+| Logical action | Original key | macOS-safe alias |
+|---|---|---|
+| Previous field / Re-record | F1 | `Ctrl+[` |
+| Toggle microphone | F2 | `Ctrl+,` |
+| Next field / Enter Review / Submit | F3 | `Ctrl+]` |
+| Next blank field / Enter Review | F4 | `Ctrl+\` |
+
+The original F-key bindings are preserved for Windows machines or Macs where system shortcuts
+have been disabled in System Settings → Keyboard → Keyboard Shortcuts.
+
+**SpeechMike reconfiguration required.** In Philips Device Control Center, open the Custom
+profile and reassign Function keys 1–4 to the Ctrl+key combos above using the Hotkey option.
+Reference: `Scoring Server/Claude Output/SpeechMike_Hotkey_Setup.md`.
+
+**Files modified:** `client/src/components/VoiceManualEntryModal.jsx`
 
 ---
 

@@ -256,16 +256,31 @@ export default function VoiceManualEntryModal({
   // (below, after all component functions are defined) to avoid stale closures.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'F1' || e.key === 'F3' || e.key === 'F4') {
+      // Bare F-keys (Windows / Mac with system shortcuts disabled) OR
+      // Ctrl+[/]/\/, aliases for Macs where F1–F4 are grabbed by the OS.
+      let logicalKey = null;
+      if      (e.key === 'F1' || (e.ctrlKey && e.key === '['))  logicalKey = 'F1';
+      else if (e.key === 'F3' || (e.ctrlKey && e.key === ']'))  logicalKey = 'F3';
+      else if (e.key === 'F4' || (e.ctrlKey && e.key === '\\')) logicalKey = 'F4';
+
+      if (logicalKey) {
         e.preventDefault();
-        fKeyHandlerRef.current?.(e.key);
-      } else if (e.key === 'F2') {
+        fKeyHandlerRef.current?.(logicalKey);
+        return;
+      }
+
+      // F2 / Ctrl+, → toggle recording
+      const isF2 = e.key === 'F2' || (e.ctrlKey && e.key === ',');
+      if (isF2) {
         const s = screenRef.current;
         if (s === SCREEN.BIB || s === SCREEN.DICTATION || s === SCREEN.NEXT) {
           e.preventDefault();
           toggleRecording();
         }
-      } else if (e.key === 'Escape') {
+        return;
+      }
+
+      if (e.key === 'Escape') {
         if (recordingRef.current) return;
         onClose && onClose();
       }
