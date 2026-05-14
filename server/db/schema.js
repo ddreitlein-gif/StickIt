@@ -99,6 +99,14 @@ async function initSchema() {
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
+  // App settings table (v1.23.00)
+  await c.execute(`CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await c.execute(`INSERT OR IGNORE INTO app_settings (key, value) VALUES ('auth_enabled', '0')`);
+
   // Phase 5 migrations -- add columns if they do not already exist
   const migrations = [
     `ALTER TABLE registrations ADD COLUMN run_order INTEGER`,
