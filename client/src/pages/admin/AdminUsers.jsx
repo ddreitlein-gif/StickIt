@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { authHeaders, checkApiResponse } from '../../utils/api'
 
-const ROLES = ['official', 'event_admin', 'system_admin']
-const ROLE_LABELS = { official: 'Official', event_admin: 'Event Admin', system_admin: 'System Admin' }
+const ROLES = ['official', 'judge', 'system_admin']
+const ROLE_LABELS = { official: 'Official', judge: 'Judge', system_admin: 'System Admin' }
 
 function UserModal({ user, onClose, onSave }) {
   const [form, setForm] = useState({

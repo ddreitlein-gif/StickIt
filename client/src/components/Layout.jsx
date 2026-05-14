@@ -3,10 +3,13 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import ChangePasswordModal from './ChangePasswordModal'
 
-const NAV = [
+const NAV_ALL = [
   { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
   { to: '/dashboard/athletes', label: 'Athletes', icon: '&#9975;' },
   { to: '/dashboard/usss', label: 'USSS Database', icon: '&#128203;' },
+]
+const NAV_JUDGE = [
+  { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
 ]
 
 // ── Jump DD Reference Panel ──────────────────────────────────────────────────
@@ -117,6 +120,7 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, authEnabled, logout } = useAuth()
+  const NAV = user?.role === 'judge' ? NAV_JUDGE : NAV_ALL
 
   useEffect(() => {
     fetch('/api/version')

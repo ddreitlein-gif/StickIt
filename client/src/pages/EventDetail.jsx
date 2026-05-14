@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import api, { createWebSocket, authHeaders } from '../utils/api'
+import { useAuth } from '../auth/AuthContext'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
@@ -5741,10 +5742,12 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function EventDetail() {
   const { meetId, eventId } = useParams()
+  const { user } = useAuth()
+  const isJudge = user?.role === 'judge'
   const [event,         setEvent]         = useState(null)
   const [registrations, setRegistrations] = useState([])
   const [judges,        setJudges]        = useState([])
-  const [activeTab,     setActiveTab]     = useState('Registrations')
+  const [activeTab,     setActiveTab]     = useState(isJudge ? 'Links' : 'Registrations')
   const [loading,       setLoading]       = useState(true)
 
   const refresh = async () => {
@@ -5757,9 +5760,11 @@ export default function EventDetail() {
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!event)  return null
 
-  const tabsToShow = event.discipline === 'dual_mogul'
-    ? TABS.filter(t => !['Phases'].includes(t))
-    : TABS.filter(t => t !== 'Dual Bracket')
+  const tabsToShow = isJudge
+    ? ['Links']
+    : event.discipline === 'dual_mogul'
+      ? TABS.filter(t => !['Phases'].includes(t))
+      : TABS.filter(t => t !== 'Dual Bracket')
 
   return (
     <div className="p-8 max-w-6xl mx-auto">

@@ -45,7 +45,7 @@ async function requireAuth(req, res, next) {
   }
 }
 
-const ROLE_RANK = { official: 1, event_admin: 2, system_admin: 3 };
+const ROLE_RANK = { official: 1, judge: 2, event_admin: 3, system_admin: 3 };
 
 function requireRole(role) {
   return async (req, res, next) => {

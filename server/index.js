@@ -127,7 +127,7 @@ app.use('/api', require('./routes/training'));
 // Public
 app.use('/api/jump-dds', require('./routes/jumpdds'));
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/admin', requireAuth, requireRole('event_admin'), require('./routes/admin'));
+app.use('/api/admin', requireAuth, requireRole('system_admin'), require('./routes/admin'));
 app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 
 // POST finalize event (mark as complete after all phases done)
