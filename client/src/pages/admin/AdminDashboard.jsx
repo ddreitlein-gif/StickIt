@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 function fmtUptime(secs) {
   const d = Math.floor(secs / 86400)
@@ -36,7 +36,7 @@ export default function AdminDashboard() {
 
   const load = () => {
     fetch('/api/admin/dashboard', { headers: authHeaders() })
-      .then(r => r.json())
+      .then(checkApiResponse)
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false))
@@ -227,13 +227,13 @@ export default function AdminDashboard() {
                   <tbody>
                     {data.audit_log.map((a, i) => (
                       <tr key={i} className="border-b border-slate-800 text-slate-400">
-                        <td className="py-1.5 pr-4 whitespace-nowrap text-xs">{fmtTime(a.created_at)}</td>
+                        <td className="py-1.5 pr-4 whitespace-nowrap text-xs">{fmtTime(a.timestamp)}</td>
                         <td className="py-1.5 pr-4 text-xs">
                           <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">{a.action}</span>
                         </td>
-                        <td className="py-1.5 pr-4 text-xs text-slate-500">{a.entity_type}</td>
+                        <td className="py-1.5 pr-4 text-xs text-slate-500">{a.entity}</td>
                         <td className="py-1.5 text-xs text-slate-500 max-w-[300px] truncate">
-                          {a.changes ? (typeof a.changes === 'string' ? a.changes : JSON.stringify(a.changes)) : '—'}
+                          {a.new_value ? (typeof a.new_value === 'string' ? a.new_value : JSON.stringify(a.new_value)) : '—'}
                         </td>
                       </tr>
                     ))}

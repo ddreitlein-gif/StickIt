@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 function AuthStatus() {
   const [status, setStatus] = useState(null)
@@ -29,7 +29,7 @@ export default function AdminSystem() {
 
   useEffect(() => {
     fetch('/api/admin/system', { headers: authHeaders() })
-      .then(r => r.json())
+      .then(checkApiResponse)
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false))

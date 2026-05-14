@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
+const { requireAuth } = require('../middleware/auth');
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ async function buildParticipantList(trainingDayId) {
 // ── Meet-scoped CRUD ────────────────────────────────────────────────────────
 
 // GET /api/meets/:meetId/training-days
-router.get('/meets/:meetId/training-days', async (req, res) => {
+router.get('/meets/:meetId/training-days', requireAuth, async (req, res) => {
   try {
     const rows = await queryAll(
       `SELECT * FROM training_days WHERE meet_id=? ORDER BY date ASC, created_at ASC`,
@@ -85,7 +86,7 @@ router.get('/meets/:meetId/training-days', async (req, res) => {
 });
 
 // POST /api/meets/:meetId/training-days   body: { name, date? }
-router.post('/meets/:meetId/training-days', async (req, res) => {
+router.post('/meets/:meetId/training-days', requireAuth, async (req, res) => {
   try {
     const { meetId } = req.params;
     const meet = await queryOne('SELECT id FROM meets WHERE id=?', [meetId]);
@@ -106,7 +107,7 @@ router.post('/meets/:meetId/training-days', async (req, res) => {
 });
 
 // PUT /api/meets/:meetId/training-days/:id   body: { name?, date? }
-router.put('/meets/:meetId/training-days/:id', async (req, res) => {
+router.put('/meets/:meetId/training-days/:id', requireAuth, async (req, res) => {
   try {
     const { meetId, id } = req.params;
     const existing = await queryOne(
@@ -129,7 +130,7 @@ router.put('/meets/:meetId/training-days/:id', async (req, res) => {
 });
 
 // DELETE /api/meets/:meetId/training-days/:id
-router.delete('/meets/:meetId/training-days/:id', async (req, res) => {
+router.delete('/meets/:meetId/training-days/:id', requireAuth, async (req, res) => {
   try {
     const { meetId, id } = req.params;
     const existing = await queryOne(
@@ -147,7 +148,7 @@ router.delete('/meets/:meetId/training-days/:id', async (req, res) => {
 // ── Per-training-day participant + exclusion endpoints ──────────────────────
 
 // GET /api/training-days/:id/participants
-router.get('/training-days/:id/participants', async (req, res) => {
+router.get('/training-days/:id/participants', requireAuth, async (req, res) => {
   try {
     const result = await buildParticipantList(req.params.id);
     if (!result) return res.status(404).json({ error: 'Training day not found' });
@@ -156,7 +157,7 @@ router.get('/training-days/:id/participants', async (req, res) => {
 });
 
 // POST /api/training-days/:id/exclusions   body: { athlete_id, exclude: boolean }
-router.post('/training-days/:id/exclusions', async (req, res) => {
+router.post('/training-days/:id/exclusions', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { athlete_id, exclude } = req.body || {};
@@ -185,7 +186,7 @@ router.post('/training-days/:id/exclusions', async (req, res) => {
 });
 
 // POST /api/training-days/:id/reset — clear all exclusions
-router.post('/training-days/:id/reset', async (req, res) => {
+router.post('/training-days/:id/reset', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const td = await queryOne('SELECT id FROM training_days WHERE id=?', [id]);

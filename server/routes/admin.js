@@ -40,7 +40,7 @@ router.post('/users', async (req, res) => {
     );
     if (hash) {
       await execute(
-        `INSERT INTO audit_log (id, action, entity_type, entity_id, new_value) VALUES (?,?,?,?,?)`,
+        `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
         [uuidv4(), 'password_set', 'user', id, JSON.stringify({ username: username.trim().toLowerCase() })]
       );
     }
@@ -66,7 +66,7 @@ router.put('/users/:id', async (req, res) => {
         [hash, req.params.id]
       );
       await execute(
-        `INSERT INTO audit_log (id, action, entity_type, entity_id, new_value) VALUES (?,?,?,?,?)`,
+        `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
         [uuidv4(), 'password_set', 'user', req.params.id, JSON.stringify({ username: user.username })]
       );
     }
@@ -116,7 +116,7 @@ router.put('/auth-settings', async (req, res) => {
       [val]
     );
     await execute(
-      `INSERT INTO audit_log (id, action, entity_type, entity_id, new_value) VALUES (?,?,?,?,?)`,
+      `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
       [uuidv4(), 'auth_settings_changed', 'app_settings', 'auth_enabled', JSON.stringify({ auth_enabled: val })]
     );
     res.json({ enabled: val === '1' });
@@ -235,7 +235,7 @@ router.get('/dashboard', async (req, res) => {
     // Audit log
     let auditLog = [];
     try {
-      auditLog = await queryAll(`SELECT action, entity_type, entity_id, created_at, changes FROM audit_log ORDER BY created_at DESC LIMIT 20`);
+      auditLog = await queryAll(`SELECT action, entity, entity_id, timestamp, new_value FROM audit_log ORDER BY timestamp DESC LIMIT 20`);
     } catch (_) {}
 
     const PORT = process.env.PORT || 3001;

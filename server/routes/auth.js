@@ -78,7 +78,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
       [hash, req.user.id]
     );
     await execute(
-      `INSERT INTO audit_log (id, action, entity_type, entity_id, new_value) VALUES (?,?,?,?,?)`,
+      `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
       [require('uuid').v4(), 'password_changed', 'user', req.user.id, JSON.stringify({ username: req.user.username })]
     );
     res.json({ ok: true });

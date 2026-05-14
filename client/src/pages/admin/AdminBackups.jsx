@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 const fmtBytes = b => {
   if (b == null) return '—'
@@ -36,7 +36,7 @@ export default function AdminBackups() {
   const load = () => {
     setLoading(true)
     fetch('/api/admin/backups', { headers: authHeaders() })
-      .then(r => r.ok ? r.json() : { backups: [], stats: {} })
+      .then(checkApiResponse)
       .then(setData)
       .catch(() => setData({ backups: [], stats: {} }))
       .finally(() => setLoading(false))

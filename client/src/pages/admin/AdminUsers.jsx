@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 const ROLES = ['official', 'event_admin', 'system_admin']
 const ROLE_LABELS = { official: 'Official', event_admin: 'Event Admin', system_admin: 'System Admin' }
@@ -115,7 +115,7 @@ export default function AdminUsers() {
   const fetchUsers = () => {
     setLoading(true)
     fetch('/api/admin/users', { headers: authHeaders() })
-      .then(r => r.json())
+      .then(checkApiResponse)
       .then(setUsers)
       .catch(() => setUsers([]))
       .finally(() => setLoading(false))

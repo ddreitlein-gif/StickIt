@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { authHeaders } from '../../utils/api';
+import { authHeaders, checkApiResponse } from '../../utils/api';
+import { useAuth } from '../../auth/AuthContext';
 
 export default function AdminSecurity() {
+  const auth = useAuth();
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -11,8 +13,7 @@ export default function AdminSecurity() {
 
   async function load() {
     try {
-      const r = await fetch('/api/admin/auth-settings', { headers: authHeaders() });
-      const data = await r.json();
+      const data = await fetch('/api/admin/auth-settings', { headers: authHeaders() }).then(checkApiResponse);
       setSettings(data);
     } catch (_) {}
     setLoading(false);
@@ -36,6 +37,7 @@ export default function AdminSecurity() {
       } else {
         setSuccess(data.enabled ? 'Password protection enabled.' : 'Password protection disabled.');
         await load();
+        await auth.refresh();
       }
     } catch (e) {
       setError(e.message || 'Request failed');

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 function disciplineLabel(d) {
   if (d === 'dual_mogul') return 'Dual Moguls'
@@ -15,7 +15,7 @@ export default function AdminEvents() {
   const fetchEvents = () => {
     setLoading(true)
     fetch('/api/admin/events', { headers: authHeaders() })
-      .then(r => r.json())
+      .then(checkApiResponse)
       .then(setEvents)
       .catch(() => setEvents([]))
       .finally(() => setLoading(false))

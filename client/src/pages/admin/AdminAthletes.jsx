@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { authHeaders } from '../../utils/api'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 const PAGE_SIZE = 100
 
@@ -21,7 +21,7 @@ export default function AdminAthletes() {
 
   const fetchDivisions = () => {
     fetch('/api/admin/athletes/divisions', { headers: authHeaders() })
-      .then(r => r.ok ? r.json() : { divisions: [] })
+      .then(checkApiResponse)
       .then(d => setDivisions(d.divisions || []))
       .catch(() => setDivisions([]))
   }
@@ -34,7 +34,7 @@ export default function AdminAthletes() {
     params.set('page', String(pageVal))
     params.set('limit', String(PAGE_SIZE))
     fetch(`/api/admin/athletes?${params.toString()}`, { headers: authHeaders() })
-      .then(r => r.ok ? r.json() : { rows: [], total: 0 })
+      .then(checkApiResponse)
       .then(data => {
         setRows(data.rows || [])
         setTotal(data.total || 0)
