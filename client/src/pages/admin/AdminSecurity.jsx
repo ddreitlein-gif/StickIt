@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { authHeaders, checkApiResponse } from '../../utils/api';
 import { useAuth } from '../../auth/AuthContext';
 
+// Set to true to make the toggle functional — "make enable password button active"
+const AUTH_TOGGLE_ENABLED = false;
+
 export default function AdminSecurity() {
   const auth = useAuth();
   const [settings, setSettings] = useState(null);
@@ -133,18 +136,20 @@ export default function AdminSecurity() {
           </div>
         ) : (
           <button
-            onClick={toggle}
-            disabled={toggling}
+            onClick={AUTH_TOGGLE_ENABLED ? toggle : undefined}
+            disabled={toggling || !AUTH_TOGGLE_ENABLED}
+            title={AUTH_TOGGLE_ENABLED ? undefined : 'Coming soon'}
             style={{
-              background: isEnabled ? 'rgba(220,38,38,0.2)' : 'rgba(37,99,235,0.8)',
-              border: isEnabled ? '1px solid rgba(220,38,38,0.5)' : '1px solid rgba(37,99,235,0.5)',
+              background: !AUTH_TOGGLE_ENABLED ? 'rgba(100,116,139,0.3)' : isEnabled ? 'rgba(220,38,38,0.2)' : 'rgba(37,99,235,0.8)',
+              border: !AUTH_TOGGLE_ENABLED ? '1px solid rgba(100,116,139,0.3)' : isEnabled ? '1px solid rgba(220,38,38,0.5)' : '1px solid rgba(37,99,235,0.5)',
               borderRadius: 6,
               padding: '10px 20px',
-              color: isEnabled ? '#fca5a5' : '#fff',
+              color: !AUTH_TOGGLE_ENABLED ? '#475569' : isEnabled ? '#fca5a5' : '#fff',
               fontFamily: 'Bebas Neue, sans-serif',
               fontSize: 16,
               letterSpacing: '0.06em',
-              cursor: toggling ? 'wait' : 'pointer',
+              cursor: !AUTH_TOGGLE_ENABLED ? 'not-allowed' : toggling ? 'wait' : 'pointer',
+              opacity: AUTH_TOGGLE_ENABLED ? 1 : 0.6,
             }}
           >
             {toggling ? '…' : isEnabled ? 'DISABLE PASSWORD PROTECTION' : 'ENABLE PASSWORD PROTECTION'}
