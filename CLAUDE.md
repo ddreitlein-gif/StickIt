@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.22.00
+**Current version:** v1.22.01
 
 ## Commands
 
@@ -184,6 +184,38 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.22.01 Feature Notes
+
+### SpeechMike F1–F4 Hardware Key Navigation — Voice Manual Entry (v1.22.01)
+
+Extends the voice manual entry wizard with F1–F4 hardware key navigation so the operator can drive all field traversal from the Philips SpeechMike Premium buttons (or keyboard) without relying on voice commands for navigation.
+
+**Button mapping (SpeechMike Event mode).** Multiple physical buttons are configured to emit the same key event, giving ergonomic alternatives:
+- Rewind (◄◄) + Function key 1 → F1 (prior field)
+- Record (●) + Function key 2 → F2 (start/stop mic — existing)
+- Forward (▶▶) + Rear button 1 + Function key 3 → F3 (next field)
+- EOL + Insert/Overwrite + Function key 4 → F4 (next open field)
+- Play → Disabled (no accidental events)
+
+**Dictation screen key actions:**
+- **F1** — move wizard cursor back one field; no-op on field 0 (no wrap)
+- **F2** — toggle record/stop (existing, unchanged)
+- **F3** — advance cursor exactly one field forward; on last field → stop mic + enter Review
+- **F4** — advance cursor to next blank/unfilled field (uses existing `findNextBlank` logic); on last field → stop mic + enter Review
+
+**Review screen key actions:**
+- **F1** — re-record: discard all values, return to Dictation screen
+- **F2** — no-op (mic already stopped on Review)
+- **F3** — submit the run if all fields are valid and jump codes pass DB validation
+
+**Voice commands preserved.** Saying "Next", "Redo", "Submit"/"Done" continues to work alongside the F-keys — operators can mix hardware buttons and voice in the same run.
+
+**Implementation pattern.** A `fKeyHandlerRef` (useRef) is re-assigned on every render to an arrow function that captures fresh component closures for all state setters and functions. The static keydown `useEffect` dispatches F1/F3/F4 through `fKeyHandlerRef.current?.(key)`, eliminating stale-closure risk without adding new effect dependencies. A new component-level `goToReviewFromKey()` mirrors the inner `flushAndGoToReview()` in `handleUtterance` but operates on already-current state (no local utterance variables to commit).
+
+**Files modified:** `client/src/components/VoiceManualEntryModal.jsx`
 
 ---
 

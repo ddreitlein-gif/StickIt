@@ -1,4 +1,4 @@
-// v1.20.00 -- Voice Manual Entry modal (wizard flow).
+// v1.22.00 -- Voice Manual Entry modal (wizard flow).
 //
 // Wizard model: a cursor highlights ONE field at a time. The operator speaks
 // only the value (no section keywords). Voice commands:
@@ -6,6 +6,16 @@
 //   - "Redo"              -> clear the value of the active field
 //   - "Submit" / "Done"   -> stop mic, jump to Review screen
 //   - "No Time" / "NT"    -> sets the Time field to -1 (only meaningful there)
+//
+// Hardware hotkeys (SpeechMike F1–F4 or keyboard):
+//   Dictation screen:
+//   - F1  -> prior field (stays on field 0 — no wrap)
+//   - F2  -> toggle record / stop mic
+//   - F3  -> next field (+1); on last field -> Done (go to Review)
+//   - F4  -> next open/blank field; on last field -> Done
+//   Review screen:
+//   - F1  -> re-record (discard and return to Dictation)
+//   - F3  -> submit (if all fields valid)
 //
 // Click any field to set a temporary "edit target": the next spoken value
 // lands in that clicked field, then the edit target clears (so the wizard
@@ -210,6 +220,7 @@ export default function VoiceManualEntryModal({
   useEffect(() => { editableRef.current = editable; }, [editable]);
   const statusesRef = useRef(statuses);
   useEffect(() => { statusesRef.current = statuses; }, [statuses]);
+  const fKeyHandlerRef = useRef(null);
 
   // Fetch the event's jump-code list once on mount so we can validate codes.
   useEffect(() => {
@@ -241,10 +252,14 @@ export default function VoiceManualEntryModal({
     return () => { cancelled = true; };
   }, [isPaper, event?.id, runNumber, lastSavedName]);
 
-  // F2 hotkey: toggle recording on bib/dictation/next screens.
+  // F1/F2/F3/F4/Escape hotkeys. fKeyHandlerRef.current is assigned each render
+  // (below, after all component functions are defined) to avoid stale closures.
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'F2') {
+      if (e.key === 'F1' || e.key === 'F3' || e.key === 'F4') {
+        e.preventDefault();
+        fKeyHandlerRef.current?.(e.key);
+      } else if (e.key === 'F2') {
         const s = screenRef.current;
         if (s === SCREEN.BIB || s === SCREEN.DICTATION || s === SCREEN.NEXT) {
           e.preventDefault();
@@ -585,6 +600,67 @@ export default function VoiceManualEntryModal({
     setInterimTranscript('');
     setScreen(SCREEN.DICTATION);
   }
+
+  // Component-level "go to review" used by F3/F4 key handler (no local
+  // utterance variables to commit — state is already current via refs).
+  function goToReviewFromKey() {
+    if (captureRef.current && captureRef.current.isActive()) {
+      captureRef.current.stop().then(() => {
+        setRecording(false);
+        setVoiceReady(false);
+        captureRef.current = null;
+        setScreen(SCREEN.REVIEW);
+      });
+    } else {
+      setScreen(SCREEN.REVIEW);
+    }
+  }
+
+  // F1/F3/F4 dispatch — re-assigned every render so closures are always fresh.
+  fKeyHandlerRef.current = (key) => {
+    const s = screenRef.current;
+    const pos = wizardPosRef.current;
+    const flds = fieldsRef.current;
+    const edbl = editableRef.current;
+
+    if (s === SCREEN.DICTATION) {
+      if (key === 'F1') {
+        const prev = Math.max(0, pos - 1);
+        wizardPosRef.current = prev;
+        editTargetRef.current = null;
+        setWizardPos(prev);
+        setEditTarget(null);
+      } else if (key === 'F3') {
+        if (pos >= flds.length - 1) {
+          goToReviewFromKey();
+        } else {
+          const next = pos + 1;
+          wizardPosRef.current = next;
+          editTargetRef.current = null;
+          setWizardPos(next);
+          setEditTarget(null);
+        }
+      } else if (key === 'F4') {
+        if (pos >= flds.length - 1) {
+          goToReviewFromKey();
+        } else {
+          const next = findNextBlank(pos, flds, edbl);
+          wizardPosRef.current = next;
+          editTargetRef.current = null;
+          setWizardPos(next);
+          setEditTarget(null);
+        }
+      }
+    } else if (s === SCREEN.REVIEW) {
+      if (key === 'F1') {
+        reRecord();
+      } else if (key === 'F3') {
+        if (isReadyToSubmit(edbl, event, allowedJumpCodes)) {
+          submit();
+        }
+      }
+    }
+  };
 
   // ---------- Rendering ----------
 
