@@ -240,6 +240,9 @@ router.get('/dashboard', async (req, res) => {
 
     const PORT = process.env.PORT || 3001;
 
+    const authEnabled = await isAuthEnabled();
+    const envForced = process.env.STICKIT_AUTH === 'off';
+
     res.json({
       version: VERSION,
       uptime_seconds: Math.floor((Date.now() - (req.app.startedAt || Date.now())) / 1000),
@@ -256,6 +259,7 @@ router.get('/dashboard', async (req, res) => {
       disk,
       errors: (req.app.errorLog || []).slice(-50).reverse(),
       audit_log: auditLog,
+      auth: { enabled: authEnabled, env_forced: envForced },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -245,16 +245,18 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Auth Notice */}
+      {/* Auth Status */}
       <div className="mt-6 rounded-xl border border-slate-700/50 bg-slate-800/30 p-5">
         <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Authentication Status</div>
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span className="text-sm text-amber-400">Not Implemented</span>
+          <span className={`w-2 h-2 rounded-full ${data.auth.enabled ? 'bg-green-400' : 'bg-slate-500'}`} />
+          <span className={`text-sm ${data.auth.enabled ? 'text-green-400' : 'text-slate-400'}`}>
+            {data.auth.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+          {data.auth.env_forced && (
+            <span className="text-xs text-yellow-400 ml-1">(STICKIT_AUTH=off env override active)</span>
+          )}
         </div>
-        <p className="text-xs text-slate-500 mt-2">
-          Authentication and role-based access control will be added in a future build.
-        </p>
       </div>
     </div>
   )
