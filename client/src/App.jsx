@@ -17,35 +17,41 @@ import Admin from './pages/Admin'
 import HelpPage from './pages/HelpPage'
 import TrainingDays from './pages/TrainingDays'
 import UsssDatabase from './pages/UsssDatabase'
+import Login from './pages/Login'
+import { AuthProvider } from './auth/AuthContext'
+import RequireAuth from './auth/RequireAuth'
 import './index.css'
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/livescores" element={<LiveScores />} />
-        <Route path="/help" element={<HelpPage />} />
-        <Route path="/help/:topicSlug" element={<HelpPage />} />
-        <Route path="/admin/*" element={<Admin />} />
-        <Route path="/judge/:eventId" element={<JudgeTablet />} />
-        <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />
-        <Route path="/aerials-judge/:eventId/:judgeId" element={<AerialsJudgeTablet />} />
-        <Route path="/timekeeper/:eventId" element={<TimekeeperTablet />} />
-        <Route path="/scoreboard/:eventId" element={<Scoreboard />} />
-        <Route path="/headjudge/:meetId/:eventId" element={<HeadJudgeTablet />} />
-        <Route path="/overlay/:eventId" element={<Overlay />} />
-        <Route path="/dashboard" element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="meets/:meetId" element={<MeetDetail />} />
-          <Route path="meets/:meetId/training" element={<TrainingDays />} />
-          <Route path="meets/:meetId/events/:eventId" element={<EventDetail />} />
-          <Route path="athletes" element={<Athletes />} />
-          <Route path="usss" element={<UsssDatabase />} />
-          <Route path="audit" element={<Navigate to="/admin/audit" replace />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/livescores" element={<LiveScores />} />
+          <Route path="/help" element={<HelpPage />} />
+          <Route path="/help/:topicSlug" element={<HelpPage />} />
+          <Route path="/admin/*" element={<RequireAuth role="event_admin"><Admin /></RequireAuth>} />
+          <Route path="/judge/:eventId" element={<JudgeTablet />} />
+          <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />
+          <Route path="/aerials-judge/:eventId/:judgeId" element={<AerialsJudgeTablet />} />
+          <Route path="/timekeeper/:eventId" element={<TimekeeperTablet />} />
+          <Route path="/scoreboard/:eventId" element={<Scoreboard />} />
+          <Route path="/headjudge/:meetId/:eventId" element={<HeadJudgeTablet />} />
+          <Route path="/overlay/:eventId" element={<Overlay />} />
+          <Route path="/dashboard" element={<RequireAuth><Layout /></RequireAuth>}>
+            <Route index element={<Dashboard />} />
+            <Route path="meets/:meetId" element={<MeetDetail />} />
+            <Route path="meets/:meetId/training" element={<TrainingDays />} />
+            <Route path="meets/:meetId/events/:eventId" element={<EventDetail />} />
+            <Route path="athletes" element={<Athletes />} />
+            <Route path="usss" element={<UsssDatabase />} />
+            <Route path="audit" element={<Navigate to="/admin/audit" replace />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   )
 }

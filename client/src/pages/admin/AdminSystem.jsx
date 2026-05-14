@@ -1,11 +1,34 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
+import { authHeaders } from '../../utils/api'
+
+function AuthStatus() {
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    fetch('/api/auth/status').then(r => r.json()).then(setStatus).catch(() => {})
+  }, [])
+  if (!status) return null
+  return (
+    <div className="mt-8 rounded-xl border border-slate-700/50 bg-slate-800/30 p-5">
+      <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Password Protection</div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`w-2 h-2 rounded-full ${status.enabled ? 'bg-green-400' : 'bg-slate-500'}`} />
+        <span className={`text-sm ${status.enabled ? 'text-green-400' : 'text-slate-400'}`}>
+          {status.enabled ? 'ON' : 'OFF'}
+        </span>
+        {status.envForced && <span className="text-xs text-yellow-400 ml-2">(STICKIT_AUTH=off env override active)</span>}
+      </div>
+      <Link to="/admin/security" className="text-xs text-blue-400 hover:underline">Manage in Security settings →</Link>
+    </div>
+  )
+}
 
 export default function AdminSystem() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/admin/system')
+    fetch('/api/admin/system', { headers: authHeaders() })
       .then(r => r.json())
       .then(setData)
       .catch(() => setData(null))
@@ -50,17 +73,7 @@ export default function AdminSystem() {
       </div>
 
       {/* Auth Notice */}
-      <div className="mt-8 rounded-xl border border-slate-700/50 bg-slate-800/30 p-5">
-        <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Authentication Status</div>
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span className="text-sm text-amber-400">Not Implemented</span>
-        </div>
-        <p className="text-xs text-slate-500 mt-2">
-          Authentication and role-based access control will be added in a future build.
-          The users table is ready; password hashing and login endpoints need to be implemented.
-        </p>
-      </div>
+      <AuthStatus />
     </div>
   )
 }
