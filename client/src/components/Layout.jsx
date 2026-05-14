@@ -1,10 +1,15 @@
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { useAuth } from '../auth/AuthContext'
+import ChangePasswordModal from './ChangePasswordModal'
 
-const NAV = [
+const NAV_ALL = [
   { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
   { to: '/dashboard/athletes', label: 'Athletes', icon: '&#9975;' },
   { to: '/dashboard/usss', label: 'USSS Database', icon: '&#128203;' },
+]
+const NAV_JUDGE = [
+  { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
 ]
 
 // ── Jump DD Reference Panel ──────────────────────────────────────────────────
@@ -110,9 +115,12 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showDDs, setShowDDs] = useState(false)
   const [showAbout, setShowAbout] = useState(false)
+  const [showChangePw, setShowChangePw] = useState(false)
   const [version, setVersion] = useState('')
   const location = useLocation()
   const navigate = useNavigate()
+  const { user, authEnabled, logout } = useAuth()
+  const NAV = user?.role === 'judge' ? NAV_JUDGE : NAV_ALL
 
   useEffect(() => {
     fetch('/api/version')
@@ -201,6 +209,27 @@ export default function Layout() {
           </div>
         </nav>
 
+        {/* Account block — shown only when auth is enabled and user is logged in */}
+        {authEnabled && user && sidebarOpen && (
+          <div className="px-3 pb-2 border-t border-slate-800 pt-2">
+            <div className="text-xs text-slate-400 truncate mb-1">{user.display_name}</div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setShowChangePw(true)}
+                className="flex-1 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              >
+                Password
+              </button>
+              <button
+                onClick={async () => { await logout(); navigate('/'); }}
+                className="flex-1 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-300 hover:bg-red-900/20 transition-colors"
+              >
+                Log Out
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Toggle */}
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -218,6 +247,7 @@ export default function Layout() {
       {/* Modal panels */}
       {showDDs && <JumpDDReference onClose={() => setShowDDs(false)} />}
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
     </div>
   )
 }

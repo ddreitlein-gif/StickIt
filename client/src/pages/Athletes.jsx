@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import api from '../utils/api'
+import api, { authHeaders } from '../utils/api'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 
 // ── Roster Reconciliation Panel ───────────────────────────────────────────────
@@ -26,7 +26,7 @@ function ReconcilePanel({ onDone }) {
     try {
       const r = await fetch('/api/athletes/reconcile', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
+        headers: { 'Content-Type': 'text/plain', ...authHeaders() },
         body: text,
       })
       const data = await r.json()
@@ -58,7 +58,7 @@ function ReconcilePanel({ onDone }) {
 
       const r = await fetch('/api/athletes/reconcile/apply', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ add, update }),
       })
       const data = await r.json()
@@ -242,7 +242,7 @@ function ImportPanel({ onImported }) {
     try {
       const res = await fetch('/api/import/athletes/csv', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
+        headers: { 'Content-Type': 'text/plain', ...authHeaders() },
         body: text,
       })
       const data = await res.json()

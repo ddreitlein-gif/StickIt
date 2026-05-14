@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
 const { queryAll, queryOne, execute } = require('../db/schema');
 const { VERSION } = require('../version');
+const { isAuthEnabled } = require('../middleware/auth');
 
 const VALID_ROLES = ['official', 'event_admin', 'system_admin'];
 
@@ -25,16 +27,23 @@ router.get('/users/:id', async (req, res) => {
 
 router.post('/users', async (req, res) => {
   try {
-    const { username, display_name, role } = req.body;
+    const { username, display_name, role, password } = req.body;
     if (!username || !display_name) return res.status(400).json({ error: 'username and display_name are required' });
     if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
     const existing = await queryOne('SELECT id FROM users WHERE username=?', [username.trim().toLowerCase()]);
     if (existing) return res.status(409).json({ error: 'Username already exists' });
     const id = uuidv4();
+    const hash = password ? await bcrypt.hash(password, 10) : null;
     await execute(
-      'INSERT INTO users (id, username, display_name, role) VALUES (?, ?, ?, ?)',
-      [id, username.trim().toLowerCase(), display_name.trim(), role || 'official']
+      'INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)',
+      [id, username.trim().toLowerCase(), hash, display_name.trim(), role || 'official']
     );
+    if (hash) {
+      await execute(
+        `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
+        [uuidv4(), 'password_set', 'user', id, JSON.stringify({ username: username.trim().toLowerCase() })]
+      );
+    }
     const user = await queryOne('SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users WHERE id=?', [id]);
     res.status(201).json(user);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -44,12 +53,23 @@ router.put('/users/:id', async (req, res) => {
   try {
     const user = await queryOne('SELECT * FROM users WHERE id=?', [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const { display_name, role, is_active } = req.body;
+    const { display_name, role, is_active, password } = req.body;
     if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
     await execute(
       `UPDATE users SET display_name=COALESCE(?,display_name), role=COALESCE(?,role), is_active=COALESCE(?,is_active), updated_at=datetime('now') WHERE id=?`,
       [display_name || null, role || null, is_active !== undefined ? is_active : null, req.params.id]
     );
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      await execute(
+        `UPDATE users SET password_hash=?, updated_at=datetime('now') WHERE id=?`,
+        [hash, req.params.id]
+      );
+      await execute(
+        `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
+        [uuidv4(), 'password_set', 'user', req.params.id, JSON.stringify({ username: user.username })]
+      );
+    }
     const updated = await queryOne('SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users WHERE id=?', [req.params.id]);
     res.json(updated);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -61,6 +81,45 @@ router.delete('/users/:id', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     await execute(`UPDATE users SET is_active=0, updated_at=datetime('now') WHERE id=?`, [req.params.id]);
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Auth Settings ───────────────────────────────────────────────────────────
+
+router.get('/auth-settings', async (req, res) => {
+  try {
+    const envForced = process.env.STICKIT_AUTH === 'off';
+    const enabled = await isAuthEnabled();
+    const adminRow = await queryOne(
+      `SELECT COUNT(*) AS cnt FROM users WHERE is_active=1 AND role IN ('event_admin','system_admin') AND password_hash IS NOT NULL`
+    );
+    const hasAdminPassword = adminRow && parseInt(adminRow.cnt) > 0;
+    res.json({ enabled, envForced, hasAdminPassword });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/auth-settings', async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    if (enabled === true || enabled === 1) {
+      const adminRow = await queryOne(
+        `SELECT COUNT(*) AS cnt FROM users WHERE is_active=1 AND role IN ('event_admin','system_admin') AND password_hash IS NOT NULL`
+      );
+      const hasAdminPassword = adminRow && parseInt(adminRow.cnt) > 0;
+      if (!hasAdminPassword) {
+        return res.status(400).json({ error: 'Set an admin password before enabling protection.' });
+      }
+    }
+    const val = (enabled === true || enabled === 1) ? '1' : '0';
+    await execute(
+      `INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES ('auth_enabled', ?, datetime('now'))`,
+      [val]
+    );
+    await execute(
+      `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
+      [uuidv4(), 'auth_settings_changed', 'app_settings', 'auth_enabled', JSON.stringify({ auth_enabled: val })]
+    );
+    res.json({ enabled: val === '1' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -176,10 +235,13 @@ router.get('/dashboard', async (req, res) => {
     // Audit log
     let auditLog = [];
     try {
-      auditLog = await queryAll(`SELECT action, entity_type, entity_id, created_at, changes FROM audit_log ORDER BY created_at DESC LIMIT 20`);
+      auditLog = await queryAll(`SELECT action, entity, entity_id, timestamp, new_value FROM audit_log ORDER BY timestamp DESC LIMIT 20`);
     } catch (_) {}
 
     const PORT = process.env.PORT || 3001;
+
+    const authEnabled = await isAuthEnabled();
+    const envForced = process.env.STICKIT_AUTH === 'off';
 
     res.json({
       version: VERSION,
@@ -197,6 +259,7 @@ router.get('/dashboard', async (req, res) => {
       disk,
       errors: (req.app.errorLog || []).slice(-50).reverse(),
       audit_log: auditLog,
+      auth: { enabled: authEnabled, env_forced: envForced },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

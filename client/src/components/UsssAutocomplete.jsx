@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { authHeaders } from '../utils/api'
 
 export default function UsssAutocomplete({ endpoint, placeholder, value, onChange, onSelect, className }) {
   const [query, setQuery] = useState(value || '')
@@ -28,7 +29,7 @@ export default function UsssAutocomplete({ endpoint, placeholder, value, onChang
     const commaIdx = term.indexOf(',')
     if (commaIdx > 0) searchTerm = term.substring(0, commaIdx).trim()
 
-    fetch(`/api/usss/${endpoint}?q=${encodeURIComponent(searchTerm)}`)
+    fetch(`/api/usss/${endpoint}?q=${encodeURIComponent(searchTerm)}`, { headers: authHeaders() })
       .then(r => r.json())
       .then(data => {
         // If comma present, filter by first name

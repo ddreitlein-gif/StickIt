@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 function fmtUptime(secs) {
   const d = Math.floor(secs / 86400)
@@ -34,8 +35,8 @@ export default function AdminDashboard() {
   const intervalRef = useRef(null)
 
   const load = () => {
-    fetch('/api/admin/dashboard')
-      .then(r => r.json())
+    fetch('/api/admin/dashboard', { headers: authHeaders() })
+      .then(checkApiResponse)
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false))
@@ -226,13 +227,13 @@ export default function AdminDashboard() {
                   <tbody>
                     {data.audit_log.map((a, i) => (
                       <tr key={i} className="border-b border-slate-800 text-slate-400">
-                        <td className="py-1.5 pr-4 whitespace-nowrap text-xs">{fmtTime(a.created_at)}</td>
+                        <td className="py-1.5 pr-4 whitespace-nowrap text-xs">{fmtTime(a.timestamp)}</td>
                         <td className="py-1.5 pr-4 text-xs">
                           <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">{a.action}</span>
                         </td>
-                        <td className="py-1.5 pr-4 text-xs text-slate-500">{a.entity_type}</td>
+                        <td className="py-1.5 pr-4 text-xs text-slate-500">{a.entity}</td>
                         <td className="py-1.5 text-xs text-slate-500 max-w-[300px] truncate">
-                          {a.changes ? (typeof a.changes === 'string' ? a.changes : JSON.stringify(a.changes)) : '—'}
+                          {a.new_value ? (typeof a.new_value === 'string' ? a.new_value : JSON.stringify(a.new_value)) : '—'}
                         </td>
                       </tr>
                     ))}
@@ -244,16 +245,18 @@ export default function AdminDashboard() {
         )}
       </div>
 
-      {/* Auth Notice */}
+      {/* Auth Status */}
       <div className="mt-6 rounded-xl border border-slate-700/50 bg-slate-800/30 p-5">
         <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">Authentication Status</div>
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span className="text-sm text-amber-400">Not Implemented</span>
+          <span className={`w-2 h-2 rounded-full ${data.auth.enabled ? 'bg-green-400' : 'bg-slate-500'}`} />
+          <span className={`text-sm ${data.auth.enabled ? 'text-green-400' : 'text-slate-400'}`}>
+            {data.auth.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+          {data.auth.env_forced && (
+            <span className="text-xs text-yellow-400 ml-1">(STICKIT_AUTH=off env override active)</span>
+          )}
         </div>
-        <p className="text-xs text-slate-500 mt-2">
-          Authentication and role-based access control will be added in a future build.
-        </p>
       </div>
     </div>
   )

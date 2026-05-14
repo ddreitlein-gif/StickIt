@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import api, { createWebSocket } from '../utils/api'
+import api, { createWebSocket, authHeaders } from '../utils/api'
+import { useAuth } from '../auth/AuthContext'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
 import BibAssignModal from '../components/BibAssignModal'
 import VoiceManualEntryModal from '../components/VoiceManualEntryModal'
+import { QRCodeSVG } from 'qrcode.react'
 
 const ROLE_LABELS = {
   TL1:'T&L 1', TL2:'T&L 2', TL3:'T&L 3',
@@ -47,7 +49,7 @@ function copyText(t) { navigator.clipboard.writeText(t).catch(() => {}) }
 // ── Judges Panel ──────────────────────────────────────────────────────────────
 function JudgePanel({ event, judges, onRefresh }) {
   const { meetId } = useParams()
-  const [form, setForm]   = useState({ name: '', role: 'TL1', pin: '', ussa_id: '' })
+  const [form, setForm]   = useState({ name: '', role: 'TL1', ussa_id: '' })
   const [error, setError] = useState('')
 
   const usedRoles = new Set(judges.map(j => j.role))
@@ -97,7 +99,7 @@ function JudgePanel({ event, judges, onRefresh }) {
     // v1.18.00 — derive judge_number from AeJudgeN role so per-judge tablet URLs map correctly
     const m = /^AeJudge(\d+)$/.exec(form.role)
     const payload = m ? { ...form, judge_number: parseInt(m[1]) } : form
-    try { await api.addJudge(event.id, payload); setForm(f => ({ ...f, name: '', pin: '', ussa_id: '' })); setError(''); onRefresh() }
+    try { await api.addJudge(event.id, payload); setForm(f => ({ ...f, name: '', ussa_id: '' })); setError(''); onRefresh() }
     catch (err) { setError(err.message) }
   }
 
@@ -126,14 +128,13 @@ function JudgePanel({ event, judges, onRefresh }) {
         <h3 className="font-display text-lg text-white mb-4">Assigned Judges</h3>
         {!judges.length ? <p className="text-slate-500 text-sm">No judges assigned yet.</p> : (
           <table className="data-table">
-            <thead><tr><th>Role</th><th>Name</th><th>USSS ID</th><th>PIN</th><th></th></tr></thead>
+            <thead><tr><th>Role</th><th>Name</th><th>USSS ID</th><th></th></tr></thead>
             <tbody>
               {judges.map(j => (
                 <tr key={j.id}>
                   <td><span className={`font-semibold ${ROLE_COLOR[j.role] || 'text-slate-300'}`}>{ROLE_LABELS[j.role] || j.role}</span></td>
                   <td className="text-white">{j.name}</td>
                   <td className="font-mono text-slate-400 text-xs">{j.ussa_id || '--'}</td>
-                  <td className="font-mono text-slate-400">{j.pin || '--'}</td>
                   <td><button onClick={async () => { await api.removeJudge(event.id, j.id); onRefresh() }} className="text-red-500 hover:text-red-400 text-xs">Remove</button></td>
                 </tr>
               ))}
@@ -164,7 +165,7 @@ function JudgePanel({ event, judges, onRefresh }) {
       {availableRoles.length > 0 && (
         <div className="card">
           <h3 className="font-display text-lg text-white mb-4">Add Judge</h3>
-          <form onSubmit={addJudge} className="grid grid-cols-5 gap-3 items-end">
+          <form onSubmit={addJudge} className="grid grid-cols-4 gap-3 items-end">
             <div>
               <label className="label">Role</label>
               <select className="input" value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
@@ -185,10 +186,6 @@ function JudgePanel({ event, judges, onRefresh }) {
             <div>
               <label className="label">USSS ID</label>
               <input className="input font-mono" placeholder="USSS ID" value={form.ussa_id} onChange={e => setForm({ ...form, ussa_id: e.target.value })} />
-            </div>
-            <div>
-              <label className="label">PIN (optional)</label>
-              <input className="input font-mono" placeholder="4 digits" maxLength={4} value={form.pin} onChange={e => setForm({ ...form, pin: e.target.value.replace(/\D/g,'') })} />
             </div>
             <button type="submit" className="btn-primary">Add</button>
           </form>
@@ -536,6 +533,19 @@ function EventSetupPanel({ event, judges, onRefresh }) {
   )
 }
 
+// ── QR Modal ─────────────────────────────────────────────────────────────────
+function QRModal({ url, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
+        <div className="text-sm text-slate-400 text-center max-w-xs truncate">{url}</div>
+        <QRCodeSVG value={url} size={240} bgColor="#0f172a" fgColor="#ffffff" />
+        <button onClick={onClose} className="btn-ghost text-xs">Close</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Links Panel ───────────────────────────────────────────────────────────────
 function LinksPanel({ event, judges }) {
   const { meetId } = useParams()
@@ -543,15 +553,16 @@ function LinksPanel({ event, judges }) {
   const isPaper       = event.score_entry_mode === 'paper'
   const ec = event.short_code || event.id
   const mc = event.meet_short_code || meetId
-  const tabletUrl     = (j) => `http://${appHost()}/judge/${ec}?judge=${j.short_code || j.id}${j.pin ? `&pin=${j.pin}` : ''}`
+  const tabletUrl     = (j) => `http://${appHost()}/judge/${ec}?judge=${j.short_code || j.id}`
   const aerialsUrl    = `http://${appHost()}/aerials-judge/${ec}`
   // v1.18.00 — per-judge aerials tablet URL (v2 events with seeded AeJudgeN panel)
-  const aerialsJudgeUrl = (j) => `http://${appHost()}/aerials-judge/${ec}/${j.short_code || j.id}${j.pin ? `?pin=${j.pin}` : ''}`
+  const aerialsJudgeUrl = (j) => `http://${appHost()}/aerials-judge/${ec}/${j.short_code || j.id}`
   const timekeeperUrl = `http://${appHost()}/timekeeper/${ec}`
   const hjUrl         = `http://${appHost()}/headjudge/${mc}/${ec}`
   const scoreboardUrl = `http://${appHost()}/scoreboard/${ec}`
   const overlayUrl    = `http://${appHost()}/overlay/${ec}`
   const hjJudge       = judges.find(j => j.role === 'HJ')
+  const [qrUrl, setQrUrl] = useState(null)
 
   const LinkRow = ({ label, url, path, note }) => (
     <div className="flex items-center gap-3 py-3 border-b border-slate-800 last:border-0">
@@ -560,6 +571,7 @@ function LinksPanel({ event, judges }) {
         {note && <div className="text-xs text-slate-500">{note}</div>}
       </div>
       <code className="text-xs text-slate-400 bg-slate-800 px-2 py-1.5 rounded flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{url}</code>
+      <button onClick={() => setQrUrl(url)} className="btn-ghost text-xs shrink-0">QR</button>
       <button onClick={() => copyText(url)} className="btn-ghost text-xs shrink-0">Copy</button>
       <a href={path || url} target="_blank" rel="noreferrer" className="btn-primary text-xs shrink-0">Open</a>
     </div>
@@ -586,9 +598,8 @@ function LinksPanel({ event, judges }) {
                   <LinkRow
                     key={j.id}
                     label={`${ROLE_LABELS[j.role] || j.role} -- ${j.name}`}
-                    url={`http://${appHost()}/judge/${event.id}?judge=${j.id}${j.pin ? `&pin=${j.pin}` : ''}`}
-                    path={`/judge/${event.id}?judge=${j.id}${j.pin ? `&pin=${j.pin}` : ''}`}
-                    note={j.pin ? `PIN: ${j.pin}` : 'No PIN'}
+                    url={`http://${appHost()}/judge/${event.id}?judge=${j.id}`}
+                    path={`/judge/${event.id}?judge=${j.id}`}
                   />
                 ))}
               </div>
@@ -614,8 +625,7 @@ function LinksPanel({ event, judges }) {
                       key={j.id}
                       label={`Judge ${j.judge_number || ''} -- ${j.name}`}
                       url={aerialsJudgeUrl(j)}
-                      path={`/aerials-judge/${ec}/${j.short_code || j.id}${j.pin ? `?pin=${j.pin}` : ''}`}
-                      note={j.pin ? `PIN: ${j.pin}` : 'No PIN'}
+                      path={`/aerials-judge/${ec}/${j.short_code || j.id}`}
                     />
                   ))}
                 </div>
@@ -632,7 +642,7 @@ function LinksPanel({ event, judges }) {
                 />
                 {scoring.map(j => (
                   <div key={j.id} className="px-3 py-1.5 text-xs text-slate-500 border-b border-slate-800 last:border-0">
-                    {ROLE_LABELS[j.role] || j.role} -- {j.name}{j.pin ? ` (PIN: ${j.pin})` : ''}
+                    {ROLE_LABELS[j.role] || j.role} -- {j.name}
                   </div>
                 ))}
               </div>
@@ -646,8 +656,7 @@ function LinksPanel({ event, judges }) {
                   key={j.id}
                   label={`${ROLE_LABELS[j.role] || j.role} -- ${j.name}`}
                   url={tabletUrl(j)}
-                  path={`/judge/${event.id}?judge=${j.id}${j.pin ? `&pin=${j.pin}` : ''}`}
-                  note={j.pin ? `PIN: ${j.pin}` : 'No PIN'}
+                  path={`/judge/${event.id}?judge=${j.id}`}
                 />
               ))
         )}
@@ -673,6 +682,7 @@ function LinksPanel({ event, judges }) {
         <LinkRow label="Scoreboard"      url={scoreboardUrl} path={`/scoreboard/${event.id}`} />
         <LinkRow label="Overlay (YoloBox)" url={overlayUrl}  path={`/overlay/${event.id}`} note="1920x1080 browser source" />
       </div>
+      {qrUrl && <QRModal url={qrUrl} onClose={() => setQrUrl(null)} />}
     </div>
   )
 }
@@ -952,7 +962,7 @@ function HeatsPanel({ event, registrations, onRefresh }) {
                   try {
                     const resp = await fetch('/api/pdf/phase-run-order', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { 'Content-Type': 'application/json', ...authHeaders() },
                       body: JSON.stringify({ eventId: event.id, phaseId: ps.id }),
                     })
                     if (!resp.ok) throw new Error((await resp.json()).error || 'PDF failed')
@@ -1992,7 +2002,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
   // v1.6: load candidate source mogul events for the picker
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/events/${event.id}/dual/candidate-source-events`)
+    fetch(`/api/events/${event.id}/dual/candidate-source-events`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { events: [], default_event_id: null })
       .then(j => {
         if (cancelled) return
@@ -2038,7 +2048,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-mogul-event`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ source_event_id: sourceEventId, preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2054,7 +2064,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-usss`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2071,7 +2081,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-event-plus-usss`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ source_event_id: sourceEventId, preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2099,7 +2109,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
         // Save the computed seed list via batch endpoint
         const res = await fetch(`/api/events/${event.id}/dual/save-seed-list`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ entries: pendingEntries }),
         })
         if (!res.ok) {
@@ -2111,7 +2121,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
         for (let i = 0; i < seedList.length; i++) {
           const res = await fetch(`/api/events/${event.id}/dual/seeds/${seedList[i].id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ seed: i + 1 }),
           })
           if (!res.ok) {
@@ -2309,7 +2319,7 @@ function DualScoringPanel({ event, registrations }) {
   const resendToHj = async () => {
     setResending(true); setError(''); setMsg('')
     try {
-      const r = await fetch(`/api/events/${event.id}/dual/resend-to-hj`, { method: 'POST' })
+      const r = await fetch(`/api/events/${event.id}/dual/resend-to-hj`, { method: 'POST', headers: authHeaders() })
       if (!r.ok) {
         const j = await r.json().catch(() => ({}))
         throw new Error(j.error || `Server error ${r.status}`)
@@ -2405,7 +2415,7 @@ function DualScoringPanel({ event, registrations }) {
     try {
       const res = await fetch(`/api/events/${event.id}/dual/active-match`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ match_id: matchId }),
       })
       if (!res.ok) { const j = await res.json(); throw new Error(j.error) }
@@ -2416,7 +2426,7 @@ function DualScoringPanel({ event, registrations }) {
 
   const clearActiveMatch = async () => {
     try {
-      await fetch(`/api/events/${event.id}/dual/active-match`, { method: 'DELETE' })
+      await fetch(`/api/events/${event.id}/dual/active-match`, { method: 'DELETE', headers: authHeaders() })
       setActiveMatchId(null)
       await load()
     } catch (e) { setError(e.message) }
@@ -5741,10 +5751,12 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function EventDetail() {
   const { meetId, eventId } = useParams()
+  const { user } = useAuth()
+  const isJudge = user?.role === 'judge'
   const [event,         setEvent]         = useState(null)
   const [registrations, setRegistrations] = useState([])
   const [judges,        setJudges]        = useState([])
-  const [activeTab,     setActiveTab]     = useState('Registrations')
+  const [activeTab,     setActiveTab]     = useState(isJudge ? 'Links' : 'Registrations')
   const [loading,       setLoading]       = useState(true)
 
   const refresh = async () => {
@@ -5757,9 +5769,11 @@ export default function EventDetail() {
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!event)  return null
 
-  const tabsToShow = event.discipline === 'dual_mogul'
-    ? TABS.filter(t => !['Phases'].includes(t))
-    : TABS.filter(t => t !== 'Dual Bracket')
+  const tabsToShow = isJudge
+    ? ['Links']
+    : event.discipline === 'dual_mogul'
+      ? TABS.filter(t => !['Phases'].includes(t))
+      : TABS.filter(t => t !== 'Dual Bracket')
 
   return (
     <div className="p-8 max-w-6xl mx-auto">

@@ -16,7 +16,7 @@
 // only fill in athletes who don't yet have a bib.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useState } from 'react'
-import api from '../utils/api'
+import api, { authHeaders } from '../utils/api'
 
 export default function BibAssignModal({ event, registrations, onClose, onRefresh }) {
   const [mode,        setMode]        = useState('run_order')
@@ -151,7 +151,7 @@ export default function BibAssignModal({ event, registrations, onClose, onRefres
 
   const runCopyFromEvent = async () => {
     if (!sourceId) throw new Error('Select a source event.')
-    const res = await fetch(`/api/events/${sourceId}/registrations`)
+    const res = await fetch(`/api/events/${sourceId}/registrations`, { headers: authHeaders() })
     if (!res.ok) throw new Error('Could not load source event registrations.')
     const srcRegs = await res.json()
     const byAthlete = new Map()

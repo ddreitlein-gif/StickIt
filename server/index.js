@@ -3,10 +3,11 @@ const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const path = require('path');
-const { initSchema, queryOne, execute } = require('./db/schema');
+const { initSchema, queryOne, execute, queryAll } = require('./db/schema');
 const { recordWrite, listBackups, getWriteCount, startAutoBackup } = require('./db/autosave');
 const { startScheduledSync } = require('./usss/sync');
 const { VERSION } = require('./version');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
@@ -97,33 +98,40 @@ app.get('/api/resolve', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+const { requireAuth, requireRole } = require('./middleware/auth');
+
+// Mixed-auth routers: individual endpoints inside these files apply requireAuth
 app.use('/api/meets', require('./routes/meets'));
 app.use('/api/meets/:meetId/events', require('./routes/events'));
-app.use('/api/meets/:meetId/officials', require('./routes/officials'));
-app.use('/api/meets/:meetId/course-specs', require('./routes/coursespecs'));
 app.use('/api/athletes', require('./routes/athletes'));
-app.use('/api/events/:eventId/heats', require('./routes/heats'));
-app.use('/api/events/:eventId/registrations', require('./routes/registrations'));
 app.use('/api/events/:eventId/judges', require('./routes/judges'));
 app.use('/api/events/:eventId/runs', require('./routes/runs'));
 app.use('/api/events/:eventId/results', require('./routes/results'));
-app.use('/api/events/:eventId/phases', require('./routes/phases'));
 app.use('/api/events/:eventId/dual', require('./routes/dual'));
-app.use('/api/export', require('./routes/export'));
-app.use('/api/export', require('./routes/transmit'));
-app.use('/api/import', require('./routes/import'));
-app.use('/api/print', require('./routes/print'));
 app.use('/api/pdf',   require('./routes/pdf'));
-app.use('/api/jump-dds', require('./routes/jumpdds'));
-app.use('/api/audit', require('./routes/audit'));
-app.use('/api/usss', require('./routes/usss'));
+app.use('/api/print', require('./routes/print'));
+
+// Officials-only mounts: all endpoints require auth
+app.use('/api/meets/:meetId/officials', requireAuth, require('./routes/officials'));
+app.use('/api/meets/:meetId/course-specs', requireAuth, require('./routes/coursespecs'));
+app.use('/api/events/:eventId/heats', requireAuth, require('./routes/heats'));
+app.use('/api/events/:eventId/registrations', requireAuth, require('./routes/registrations'));
+app.use('/api/events/:eventId/phases', requireAuth, require('./routes/phases'));
+app.use('/api/export', requireAuth, require('./routes/export'));
+app.use('/api/export', requireAuth, require('./routes/transmit'));
+app.use('/api/import', requireAuth, require('./routes/import'));
+app.use('/api/audit', requireAuth, require('./routes/audit'));
+app.use('/api/usss', requireAuth, require('./routes/usss'));
 app.use('/api', require('./routes/training'));
-const { requireAuth } = require('./middleware/auth');
-app.use('/api/admin', requireAuth, require('./routes/admin'));
+
+// Public
+app.use('/api/jump-dds', require('./routes/jumpdds'));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/admin', requireAuth, requireRole('system_admin'), require('./routes/admin'));
 app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 
 // POST finalize event (mark as complete after all phases done)
-app.post('/api/events/:eventId/finalize', async (req, res) => {
+app.post('/api/events/:eventId/finalize', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.params;
     const { execute, queryAll, queryOne } = require('./db/schema');
@@ -211,6 +219,24 @@ initSchema().then(async () => {
   } catch (e) {
     console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
   }
+
+  // Seed initial admin account if no active admin exists (v1.23.00)
+  try {
+    const adminCount = await queryOne(
+      `SELECT COUNT(*) AS cnt FROM users WHERE is_active=1 AND role IN ('event_admin','system_admin')`
+    );
+    if (!adminCount || parseInt(adminCount.cnt) === 0) {
+      const adminUser = process.env.STICKIT_ADMIN_USER || 'admin';
+      await execute(
+        `INSERT INTO users (id, username, password_hash, display_name, role, is_active) VALUES (?,?,NULL,?,?,1)`,
+        [uuidv4(), adminUser, 'Administrator', 'system_admin']
+      );
+      console.log(`[startup] Seeded initial admin account: username="${adminUser}" — set a password in Admin → Users before enabling protection.`);
+    }
+  } catch (e) {
+    console.error('[startup] failed to seed admin account:', e.message);
+  }
+
   server.listen(PORT, () => console.log(`StickIt ${VERSION} ready on port ${PORT}`));
   startScheduledSync();
   startAutoBackup((err, ctx) => {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
 const PAGE_SIZE = 100
 
@@ -19,8 +20,8 @@ export default function AdminAthletes() {
   const debounceRef = useRef(null)
 
   const fetchDivisions = () => {
-    fetch('/api/admin/athletes/divisions')
-      .then(r => r.ok ? r.json() : { divisions: [] })
+    fetch('/api/admin/athletes/divisions', { headers: authHeaders() })
+      .then(checkApiResponse)
       .then(d => setDivisions(d.divisions || []))
       .catch(() => setDivisions([]))
   }
@@ -32,8 +33,8 @@ export default function AdminAthletes() {
     if (divVal) params.set('division', divVal)
     params.set('page', String(pageVal))
     params.set('limit', String(PAGE_SIZE))
-    fetch(`/api/admin/athletes?${params.toString()}`)
-      .then(r => r.ok ? r.json() : { rows: [], total: 0 })
+    fetch(`/api/admin/athletes?${params.toString()}`, { headers: authHeaders() })
+      .then(checkApiResponse)
       .then(data => {
         setRows(data.rows || [])
         setTotal(data.total || 0)
@@ -82,7 +83,7 @@ export default function AdminAthletes() {
     try {
       const res = await fetch('/api/admin/athletes/preview-delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
       const data = await res.json()
@@ -106,7 +107,7 @@ export default function AdminAthletes() {
       const { label, count, sample, ...body } = confirm
       const res = await fetch('/api/admin/athletes/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
       const data = await res.json()

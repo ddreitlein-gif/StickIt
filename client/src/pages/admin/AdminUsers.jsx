@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react'
+import { authHeaders, checkApiResponse } from '../../utils/api'
 
-const ROLES = ['official', 'event_admin', 'system_admin']
-const ROLE_LABELS = { official: 'Official', event_admin: 'Event Admin', system_admin: 'System Admin' }
+const ROLES = ['official', 'judge', 'system_admin']
+const ROLE_LABELS = { official: 'Official', judge: 'Judge', system_admin: 'System Admin' }
 
 function UserModal({ user, onClose, onSave }) {
   const [form, setForm] = useState({
     username: user?.username || '',
     display_name: user?.display_name || '',
     role: user?.role || 'official',
+    password: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -18,13 +20,17 @@ function UserModal({ user, onClose, onSave }) {
       setError('Username and display name are required.')
       return
     }
+    if (!user && !form.password) {
+      setError('Password is required for new users.')
+      return
+    }
     setSaving(true)
     try {
       const url = user ? `/api/admin/users/${user.id}` : '/api/admin/users'
       const method = user ? 'PUT' : 'POST'
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(form),
       })
       if (!res.ok) {
@@ -74,12 +80,16 @@ function UserModal({ user, onClose, onSave }) {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1 uppercase tracking-wider">Password</label>
+            <label className="block text-xs text-slate-400 mb-1 uppercase tracking-wider">
+              Password{user ? ' (leave blank to keep current)' : ' *'}
+            </label>
             <input
-              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-600 cursor-not-allowed"
-              value=""
-              placeholder="Authentication coming in a future build"
-              disabled
+              type="password"
+              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+              value={form.password}
+              onChange={e => setForm({ ...form, password: e.target.value })}
+              placeholder={user ? 'Leave blank to keep current password' : 'Required'}
+              autoComplete="new-password"
             />
           </div>
           {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -104,8 +114,8 @@ export default function AdminUsers() {
 
   const fetchUsers = () => {
     setLoading(true)
-    fetch('/api/admin/users')
-      .then(r => r.json())
+    fetch('/api/admin/users', { headers: authHeaders() })
+      .then(checkApiResponse)
       .then(setUsers)
       .catch(() => setUsers([]))
       .finally(() => setLoading(false))
@@ -116,7 +126,7 @@ export default function AdminUsers() {
   const toggleActive = async (user) => {
     await fetch(`/api/admin/users/${user.id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ is_active: user.is_active ? 0 : 1 }),
     })
     fetchUsers()

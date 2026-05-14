@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { authHeaders } from '../utils/api'
 
 export default function UsssDatabase() {
   const [status, setStatus] = useState(null)
@@ -11,7 +12,7 @@ export default function UsssDatabase() {
 
   const load = () => {
     setLoading(true)
-    fetch('/api/usss/status')
+    fetch('/api/usss/status', { headers: authHeaders() })
       .then(r => r.json())
       .then(d => { setStatus(d); setError(null) })
       .catch(e => setError(e.message))
@@ -23,7 +24,7 @@ export default function UsssDatabase() {
   const handleSync = async () => {
     setSyncing(true); setMsg('')
     try {
-      const r = await fetch('/api/usss/sync', { method: 'POST' })
+      const r = await fetch('/api/usss/sync', { method: 'POST', headers: authHeaders() })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error)
       setMsg(data.skipped ? 'Already current' : `Synced ${data.recordCount} records`)
@@ -42,7 +43,7 @@ export default function UsssDatabase() {
     try {
       const fd = new FormData()
       fd.append('file', file)
-      const r = await fetch('/api/usss/upload', { method: 'POST', body: fd })
+      const r = await fetch('/api/usss/upload', { method: 'POST', headers: authHeaders(), body: fd })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error)
       setMsg(`Uploaded ${data.recordCount} records`)

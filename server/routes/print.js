@@ -2,9 +2,10 @@ const router = require('express').Router();
 const { queryAll, queryOne } = require('../db/schema');
 const { rankResults, pickBestRun } = require('../scoring/engine');
 const { normalizeGender } = require('../utils/gender');
+const { requireAuth } = require('../middleware/auth');
 
 // Printable HTML results page -- open in browser and print to PDF
-router.get('/results/:eventId', async (req, res) => {
+router.get('/results/:eventId', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).send('Event not found');

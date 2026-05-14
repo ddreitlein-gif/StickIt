@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { authHeaders } from '../utils/api'
 
 // StickIt v1.5 Feature 1: CSV registration import modal.
 // Two-step flow: upload -> preview (server mode=preview) -> confirm -> commit.
@@ -25,6 +26,7 @@ export default function CsvImportModal({ meetId, eventId, event, onClose, onImpo
       }
       const res = await fetch(`/api/events/${eventId}/registrations/import-csv?mode=${mode}`, {
         method: 'POST',
+        headers: authHeaders(),
         body: fd,
       })
       const data = await res.json()

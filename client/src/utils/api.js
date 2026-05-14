@@ -1,12 +1,38 @@
 const API_BASE = '/api';
 
+export function authHeaders() {
+  const token = localStorage.getItem('stickit_auth_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handle401() {
+  localStorage.removeItem('stickit_auth_token');
+  window.dispatchEvent(new CustomEvent('stickit:auth-expired'));
+}
+
+export function checkApiResponse(r) {
+  if (r.status === 401) {
+    localStorage.removeItem('stickit_auth_token');
+    window.dispatchEvent(new CustomEvent('stickit:auth-expired'));
+    throw new Error('Authentication required');
+  }
+  if (!r.ok) throw new Error(r.statusText || `HTTP ${r.status}`);
+  return r.json();
+}
+
 async function apiFetch(path, options = {}) {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...options.headers },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+
+  if (res.status === 401) {
+    handle401();
+    const err = await res.json().catch(() => ({ error: 'Authentication required' }));
+    throw new Error(err.error || 'Authentication required');
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));

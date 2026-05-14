@@ -4,6 +4,7 @@ const fs = require('fs');
 const multer = require('multer');
 const { queryAll, queryOne } = require('../db/schema');
 const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
+const { requireAuth } = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
 const { normalizeGender } = require('../utils/gender');
 const { computeDualFfsp } = require('../dual/ffsp');
@@ -1029,7 +1030,7 @@ function generateResultsPdf(res, data) {
 // ===========================================================================
 // POST /api/pdf/run-order — Compact 3-column Winfree-style entrants list
 // ===========================================================================
-router.post('/run-order', async (req, res) => {
+router.post('/run-order', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
@@ -1160,7 +1161,7 @@ router.post('/run-order', async (req, res) => {
 });
 
 // Keep start-list as alias for backward compatibility
-router.post('/start-list', async (req, res) => {
+router.post('/start-list', requireAuth, async (req, res) => {
   req.url = '/run-order';
   router.handle(req, res);
 });
@@ -1168,7 +1169,7 @@ router.post('/start-list', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/phase-run-order — Run order for a specific phase
 // ===========================================================================
-router.post('/phase-run-order', async (req, res) => {
+router.post('/phase-run-order', requireAuth, async (req, res) => {
   try {
     const { eventId, phaseId } = req.body;
     if (!eventId || !phaseId) return res.status(400).json({ error: 'eventId and phaseId required' });
@@ -1215,7 +1216,7 @@ router.post('/phase-run-order', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/check-bib
 // ===========================================================================
-router.post('/check-bib', async (req, res) => {
+router.post('/check-bib', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const runNumber = options.runNumber || 1;
@@ -1257,7 +1258,7 @@ router.post('/check-bib', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/check-order
 // ===========================================================================
-router.post('/check-order', async (req, res) => {
+router.post('/check-order', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const runNumber = options.runNumber || 1;
@@ -1300,7 +1301,7 @@ router.post('/check-order', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/registration
 // ===========================================================================
-router.post('/registration', async (req, res) => {
+router.post('/registration', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const sortBy = options.sort || 'alpha';
@@ -1405,7 +1406,7 @@ router.post('/registration', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/training-day/:id — Training day participant roster
 // ===========================================================================
-router.post('/training-day/:id', async (req, res) => {
+router.post('/training-day/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const td = await queryOne('SELECT * FROM training_days WHERE id=?', [id]);
@@ -1492,7 +1493,7 @@ router.post('/training-day/:id', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/timer-sheet — Manual Time Sheet (triple-spaced for on-hill)
 // ===========================================================================
-router.post('/timer-sheet', async (req, res) => {
+router.post('/timer-sheet', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
@@ -1527,7 +1528,7 @@ router.post('/timer-sheet', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/run-results — Winfree-style detailed per-run results
 // ===========================================================================
-router.post('/run-results', async (req, res) => {
+router.post('/run-results', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const rawRunNumber = options.runNumber || 1;
@@ -1609,7 +1610,7 @@ router.post('/run-results', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/event-results-summary — Simple summary by score
 // ===========================================================================
-router.post('/event-results-summary', async (req, res) => {
+router.post('/event-results-summary', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
     const data = await buildResultsData(eventId, 'qualification');
@@ -1755,7 +1756,7 @@ router.post('/event-results-detailed', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/event-results-component — Detailed Results with Component Scoring
 // ===========================================================================
-router.post('/event-results-component', async (req, res) => {
+router.post('/event-results-component', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
@@ -2256,7 +2257,7 @@ router.post('/event-results-component', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/event-results-group-summary — Summary grouped by age category
 // ===========================================================================
-router.post('/event-results-group-summary', async (req, res) => {
+router.post('/event-results-group-summary', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
     const data = await buildResultsData(eventId, 'qualification');
@@ -2330,7 +2331,7 @@ router.post('/event-results-group-summary', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/event-results-group-detailed — Detailed grouped by age category
 // ===========================================================================
-router.post('/event-results-group-detailed', async (req, res) => {
+router.post('/event-results-group-detailed', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
@@ -2453,7 +2454,7 @@ router.post('/event-results-group-detailed', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/dual-seed-list — Seeding list with prior results & USSS data
 // ===========================================================================
-router.post('/dual-seed-list', async (req, res) => {
+router.post('/dual-seed-list', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
@@ -3193,7 +3194,7 @@ router.post('/dual-bracket', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/bracket-keeper  — B&W bracket for spectators to follow along
 // ===========================================================================
-router.post('/bracket-keeper', async (req, res) => {
+router.post('/bracket-keeper', requireAuth, async (req, res) => {
   try {
     const PDFDocument = require('pdfkit');
     const { eventId } = req.body;
@@ -3301,7 +3302,7 @@ router.post('/bracket-keeper', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/group-awards
 // ===========================================================================
-router.post('/group-awards', async (req, res) => {
+router.post('/group-awards', requireAuth, async (req, res) => {
   try {
     const PDFDocument = require('pdfkit');
     const { eventId, groups = [] } = req.body;
@@ -3461,13 +3462,13 @@ router.post('/group-awards', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/upload-logo/:meetId — Upload event/meet logo
 // ===========================================================================
-router.post('/upload-logo/:meetId', logoUpload.single('logo'), (req, res) => {
+router.post('/upload-logo/:meetId', requireAuth, logoUpload.single('logo'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No valid image file provided. Use PNG or JPEG.' });
   res.json({ ok: true, filename: req.file.filename });
 });
 
 // DELETE /api/pdf/logo/:meetId — Remove uploaded meet logo
-router.delete('/logo/:meetId', (req, res) => {
+router.delete('/logo/:meetId', requireAuth, (req, res) => {
   const logoPath = getMeetLogoPath(req.params.meetId);
   if (logoPath) {
     fs.unlinkSync(logoPath);
@@ -3487,7 +3488,7 @@ router.get('/logo/:meetId', (req, res) => {
 // TD Report — fillable PDF using pdf-lib
 // POST /api/pdf/td-report   body: { meetId }
 // ---------------------------------------------------------------------------
-router.post('/td-report', async (req, res) => {
+router.post('/td-report', requireAuth, async (req, res) => {
   try {
     const { meetId } = req.body;
     if (!meetId) return res.status(400).json({ error: 'meetId required' });

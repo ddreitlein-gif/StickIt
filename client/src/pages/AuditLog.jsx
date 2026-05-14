@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { authHeaders } from '../utils/api'
 
 const ENTITIES = ['', 'run', 'athlete', 'athletes', 'event', 'registration']
 const ACTIONS  = ['', 'score_submitted', 'run_status_set', 'hj_approved',
@@ -89,7 +90,7 @@ export default function AuditLog() {
     const params = new URLSearchParams({ limit })
     if (entity) params.set('entity', entity)
     if (action) params.set('action', action)
-    fetch(`/api/audit?${params}`)
+    fetch(`/api/audit?${params}`, { headers: authHeaders() })
       .then(r => r.json())
       .then(data => setEntries(Array.isArray(data) ? data : []))
       .catch(() => setEntries([]))

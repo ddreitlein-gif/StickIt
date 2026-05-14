@@ -2,6 +2,7 @@ const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { logAudit } = require('./audit');
 const { rankResults, calcDualMogulPointSplit, pickBestRun } = require('../scoring/engine');
+const { requireAuth } = require('../middleware/auth');
 const {
   buildPlacement,
   effectiveBracketSize,
@@ -602,7 +603,7 @@ router.get('/', async (req, res) => {
 // Returns { default_event_id, events: [...] } for the source mogul event
 // picker in DualSeedingPanel.
 // ---------------------------------------------------------------------------
-router.get('/candidate-source-events', async (req, res) => {
+router.get('/candidate-source-events', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -619,7 +620,7 @@ router.get('/candidate-source-events', async (req, res) => {
 // POST /seed -- legacy seed endpoint (client provides explicit seeds)
 // Preserved for backwards compatibility.  Uses the new placement helper.
 // ---------------------------------------------------------------------------
-router.post('/seed', async (req, res) => {
+router.post('/seed', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -654,7 +655,7 @@ router.post('/seed', async (req, res) => {
 // Refuses if no seed list exists.  Refuses on started matches without
 // force:true in the body.
 // ---------------------------------------------------------------------------
-router.post('/seed-fis', async (req, res) => {
+router.post('/seed-fis', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -711,7 +712,7 @@ router.post('/seed-fis', async (req, res) => {
 // POST /seed-manual -- manual bracket placement
 // User assigns each athlete or BYE to specific blue/red slots.
 // ---------------------------------------------------------------------------
-router.post('/seed-manual', async (req, res) => {
+router.post('/seed-manual', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -875,7 +876,7 @@ router.post('/seed-manual', async (req, res) => {
 // POST /seed-random -- v1.6: deterministic random seed list
 // Uses the stored dual_random_seed so re-running produces identical output.
 // ---------------------------------------------------------------------------
-router.post('/seed-random', async (req, res) => {
+router.post('/seed-random', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -909,7 +910,7 @@ router.post('/seed-random', async (req, res) => {
 // Legacy route name, preserved.  Uses computeOfficialPlacings (same logic
 // as the Results tab), NOT raw qualification scores.
 // ---------------------------------------------------------------------------
-router.post('/seed-from-event', async (req, res) => {
+router.post('/seed-from-event', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -927,7 +928,7 @@ router.post('/seed-from-event', async (req, res) => {
 // POST /seed-mogul-event -- v1.6: Mode 1
 // Body: { source_event_id }
 // ---------------------------------------------------------------------------
-router.post('/seed-mogul-event', async (req, res) => {
+router.post('/seed-mogul-event', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -1001,7 +1002,7 @@ async function seedFromMogulEventImpl(req, res, sourceEventId, event) {
 // POST /seed-usss -- v1.6: Mode 2
 // Sort by USSS dm_points DESCENDING (higher is better, opposite of FIS).
 // ---------------------------------------------------------------------------
-router.post('/seed-usss', async (req, res) => {
+router.post('/seed-usss', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -1050,7 +1051,7 @@ router.post('/seed-usss', async (req, res) => {
 // Body: { source_event_id }
 // Implements "Best of MO rank / USSS rank" with FIS-style tiebreakers.
 // ---------------------------------------------------------------------------
-router.post('/seed-event-plus-usss', async (req, res) => {
+router.post('/seed-event-plus-usss', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -1149,7 +1150,7 @@ router.post('/seed-event-plus-usss', async (req, res) => {
 // PUT /seeds/:registrationId -- update a competitor seed (accepts decimals)
 // v1.6: stamps dual_seed_source = 'manual'
 // ---------------------------------------------------------------------------
-router.put('/seeds/:registrationId', async (req, res) => {
+router.put('/seeds/:registrationId', requireAuth, async (req, res) => {
   try {
     const { seed } = req.body;
     if (seed === undefined || seed === null) return res.status(400).json({ error: 'seed required' });
@@ -1178,7 +1179,7 @@ router.put('/seeds/:registrationId', async (req, res) => {
 // POST /save-seed-list -- batch persist a seed list from preview
 // Body: { entries: [{ registration_id, seed, source, source_value }] }
 // ---------------------------------------------------------------------------
-router.post('/save-seed-list', async (req, res) => {
+router.post('/save-seed-list', requireAuth, async (req, res) => {
   try {
     const { entries } = req.body;
     if (!Array.isArray(entries) || entries.length === 0) {
@@ -1194,7 +1195,7 @@ router.post('/save-seed-list', async (req, res) => {
 // ---------------------------------------------------------------------------
 // PUT /runoff-option -- update runoff setting
 // ---------------------------------------------------------------------------
-router.put('/runoff-option', async (req, res) => {
+router.put('/runoff-option', requireAuth, async (req, res) => {
   try {
     const { runoff_option } = req.body;
     const valid = ['runoff_to_8th', 'runoff_to_4th', 'no_runoff'];
@@ -1207,7 +1208,7 @@ router.put('/runoff-option', async (req, res) => {
 // ---------------------------------------------------------------------------
 // PUT /:matchId/winner -- record match winner and advance
 // ---------------------------------------------------------------------------
-router.put('/:matchId/winner', async (req, res) => {
+router.put('/:matchId/winner', requireAuth, async (req, res) => {
   try {
     const { winner_registration_id, loser_status } = req.body;
     if (!winner_registration_id) return res.status(400).json({ error: 'winner_registration_id required' });
@@ -1297,7 +1298,7 @@ router.put('/:matchId/winner', async (req, res) => {
 // ---------------------------------------------------------------------------
 // DELETE /reset -- clear bracket and dual seeds
 // ---------------------------------------------------------------------------
-router.delete('/reset', async (req, res) => {
+router.delete('/reset', requireAuth, async (req, res) => {
   try {
     await execute(`DELETE FROM dual_bracket WHERE event_id=?`, [req.params.eventId]);
     await execute(`UPDATE registrations SET dual_seed=NULL WHERE event_id=?`, [req.params.eventId]);
@@ -1353,7 +1354,7 @@ router.get('/active-match', async (req, res) => {
 });
 
 // PUT /active-match -- set the active dual match
-router.put('/active-match', async (req, res) => {
+router.put('/active-match', requireAuth, async (req, res) => {
   try {
     const { match_id } = req.body;
     if (!match_id) return res.status(400).json({ error: 'match_id required' });
@@ -1391,7 +1392,7 @@ router.put('/active-match', async (req, res) => {
 });
 
 // DELETE /active-match -- clear the active dual match
-router.delete('/active-match', async (req, res) => {
+router.delete('/active-match', requireAuth, async (req, res) => {
   try {
     await execute('UPDATE events SET active_dual_match_id=NULL, dual_manual_entry=0 WHERE id=?', [req.params.eventId]);
     if (req.app.broadcast) {
@@ -1404,7 +1405,7 @@ router.delete('/active-match', async (req, res) => {
 
 // v1.16.30 -- manual score entry override for active dual match
 // POST /manual-entry-start -- lock judges' tablets and return existing partial scores
-router.post('/manual-entry-start', async (req, res) => {
+router.post('/manual-entry-start', requireAuth, async (req, res) => {
   try {
     const event = await queryOne(
       'SELECT active_dual_match_id FROM events WHERE id=?',
@@ -1434,7 +1435,7 @@ router.post('/manual-entry-start', async (req, res) => {
 });
 
 // POST /manual-entry-cancel -- release the lock without submitting scores
-router.post('/manual-entry-cancel', async (req, res) => {
+router.post('/manual-entry-cancel', requireAuth, async (req, res) => {
   try {
     await execute('UPDATE events SET dual_manual_entry=0 WHERE id=?', [req.params.eventId]);
     if (req.app.broadcast) {
@@ -1627,7 +1628,7 @@ router.post('/:matchId/judge-points', async (req, res) => {
 
 // DELETE /:matchId/judge-points -- clear all judge point entries for a match
 // (Useful for resetting a match before re-judging.)
-router.delete('/:matchId/judge-points', async (req, res) => {
+router.delete('/:matchId/judge-points', requireAuth, async (req, res) => {
   try {
     const match = await queryOne(
       'SELECT * FROM dual_bracket WHERE id=? AND event_id=?',
@@ -1760,7 +1761,7 @@ router.post('/:matchId/approve', async (req, res) => {
 // POST /:matchId/paper-score -- paper entry: submit all judge scores at once
 // or set DNS/DNF/DSQ.  Auto-finalizes match and advances bracket.
 // ---------------------------------------------------------------------------
-router.post('/:matchId/paper-score', async (req, res) => {
+router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
   try {
     const match = await queryOne(
       'SELECT * FROM dual_bracket WHERE id=? AND event_id=?',
@@ -1969,7 +1970,7 @@ router.get('/review-state', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/send-back-to-scoring', async (req, res) => {
+router.post('/send-back-to-scoring', requireAuth, async (req, res) => {
   try {
     const ev = await queryOne(
       'SELECT dual_bracket_review_status FROM events WHERE id=?',
@@ -1991,7 +1992,7 @@ router.post('/send-back-to-scoring', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/resend-to-hj', async (req, res) => {
+router.post('/resend-to-hj', requireAuth, async (req, res) => {
   try {
     const ev = await queryOne(
       'SELECT dual_bracket_review_status FROM events WHERE id=?',

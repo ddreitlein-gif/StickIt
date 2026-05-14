@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
 const { calcPaceTime } = require('../scoring/engine');
+const { requireAuth } = require('../middleware/auth');
 
 // v1.18.00 — Event Type rules. Centralized so POST/PUT and meets.js share the logic.
 const EVENT_TYPES = ['fis_major', 'fis_nac', 'fis_other', 'usa_national', 'usa_regional'];
@@ -84,7 +85,7 @@ router.get('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     const { discipline, division, gender, name, num_tl_judges=3, num_air_judges=2, num_jumps=2, has_speed=1, turns_weight=0.60, air_weight=0.20, speed_weight=0.20, has_small_final=1, runoff_option, component_scoring, score_entry_mode='tablet', is_divisional=0 } = req.body;
     if (!discipline || !division || !gender || !name) return res.status(400).json({ error: 'discipline, division, gender, and name are required' });
@@ -127,7 +128,7 @@ router.post('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id = ? AND meet_id = ?', [req.params.id, req.params.meetId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
@@ -193,7 +194,7 @@ router.put('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const eventId = req.params.id;
     const meetId  = req.params.meetId;

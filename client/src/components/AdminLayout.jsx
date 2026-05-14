@@ -1,7 +1,11 @@
-import { Outlet, NavLink, Link } from 'react-router-dom'
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useAuth } from '../auth/AuthContext'
+import ChangePasswordModal from './ChangePasswordModal'
 
 const ADMIN_NAV = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: '\u2139' },
+  { to: '/admin/security', label: 'Security', icon: '\ud83d\udd12' },
   { to: '/admin/users', label: 'Users', icon: '\u2699' },
   { to: '/admin/events', label: 'Events', icon: '\u26F7' },
   { to: '/admin/usss-people', label: 'USSS People', icon: '\uD83D\uDC65' },
@@ -12,6 +16,10 @@ const ADMIN_NAV = [
 ]
 
 export default function AdminLayout() {
+  const [showChangePw, setShowChangePw] = useState(false)
+  const { user, authEnabled, logout } = useAuth()
+  const navigate = useNavigate()
+
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: '#0a1628', fontFamily: "'Barlow', sans-serif", color: '#e8f0f8' }}>
       {/* Sidebar */}
@@ -52,12 +60,35 @@ export default function AdminLayout() {
             </NavLink>
           ))}
         </nav>
+
+        {/* Account block — shown only when auth is enabled and user is logged in */}
+        {authEnabled && user && (
+          <div className="px-3 pb-3 border-t border-slate-700/50 pt-2">
+            <div className="text-xs text-slate-400 truncate mb-1">{user.display_name}</div>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setShowChangePw(true)}
+                className="flex-1 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
+              >
+                Password
+              </button>
+              <button
+                onClick={async () => { await logout(); navigate('/'); }}
+                className="flex-1 text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 hover:text-red-300 hover:bg-red-900/20 transition-colors"
+              >
+                Log Out
+              </button>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Main content */}
       <main className="flex-1 overflow-auto p-6">
         <Outlet />
       </main>
+
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
     </div>
   )
 }
