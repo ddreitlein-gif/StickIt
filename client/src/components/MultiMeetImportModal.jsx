@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import ImportConflictModal from './ImportConflictModal'
+import { authHeaders } from '../utils/api'
 
 function fmtDate(s) {
   if (!s) return ''
@@ -11,7 +12,7 @@ function fmtDate(s) {
 }
 
 async function callImport(pendingId, action) {
-  const r = await fetch(`/api/meets/import?pending_import_id=${pendingId}&conflict_action=${action}`, { method: 'POST' })
+  const r = await fetch(`/api/meets/import?pending_import_id=${pendingId}&conflict_action=${action}`, { method: 'POST', headers: authHeaders() })
   const data = await r.json().catch(() => ({}))
   return { ok: r.ok, data }
 }
@@ -96,7 +97,7 @@ export default function MultiMeetImportModal({ multiMeetData, onClose, onComplet
       if (phase === 'selecting') {
         // Best-effort cleanup if unmounted mid-selection
         for (const m of meets) {
-          try { fetch(`/api/meets/import?pending_import_id=${m.pending_import_id}&conflict_action=cancel`, { method: 'POST' }) } catch {}
+          try { fetch(`/api/meets/import?pending_import_id=${m.pending_import_id}&conflict_action=cancel`, { method: 'POST', headers: authHeaders() }) } catch {}
         }
       }
     }

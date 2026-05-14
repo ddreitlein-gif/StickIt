@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import api from '../utils/api'
+import api, { authHeaders } from '../utils/api'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
 const DIVISION_LABEL = { comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }
@@ -910,7 +910,7 @@ function CloseExportModal({ meetId, onClose, onClosed }) {
   const doExport = async (force) => {
     setBusy(true)
     try {
-      const r = await fetch(`/api/meets/${meetId}/close${force ? '?force=true' : ''}`, { method: 'POST' })
+      const r = await fetch(`/api/meets/${meetId}/close${force ? '?force=true' : ''}`, { method: 'POST', headers: authHeaders() })
       if (!r.ok) {
         const err = await r.json().catch(() => ({}))
         if (err.problems) { setProblems(err.problems); setBusy(false); return }
@@ -1066,7 +1066,7 @@ export default function MeetDetail() {
   const reopenMeet = async () => {
     if (!window.confirm('Reopen this meet?  All events in this meet will return to active status.')) return
     try {
-      const r = await fetch(`/api/meets/${meetId}/reopen`, { method: 'POST' })
+      const r = await fetch(`/api/meets/${meetId}/reopen`, { method: 'POST', headers: authHeaders() })
       if (!r.ok) throw new Error('Reopen failed')
       await refreshMeet()
     } catch (e) { alert(e.message) }
@@ -1091,7 +1091,7 @@ export default function MeetDetail() {
 
   const downloadTdReport = async () => {
     try {
-      const res = await fetch('/api/pdf/td-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meetId }) })
+      const res = await fetch('/api/pdf/td-report', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ meetId }) })
       if (!res.ok) throw new Error('Failed to generate TD Report')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

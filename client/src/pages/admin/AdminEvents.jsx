@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { authHeaders } from '../../utils/api'
 
 function disciplineLabel(d) {
   if (d === 'dual_mogul') return 'Dual Moguls'
@@ -13,7 +14,7 @@ export default function AdminEvents() {
 
   const fetchEvents = () => {
     setLoading(true)
-    fetch('/api/admin/events')
+    fetch('/api/admin/events', { headers: authHeaders() })
       .then(r => r.json())
       .then(setEvents)
       .catch(() => setEvents([]))
@@ -24,13 +25,13 @@ export default function AdminEvents() {
 
   const toggleLock = async (event) => {
     const action = event.locked ? 'unlock' : 'lock'
-    await fetch(`/api/admin/events/${event.id}/${action}`, { method: 'PUT' })
+    await fetch(`/api/admin/events/${event.id}/${action}`, { method: 'PUT', headers: authHeaders() })
     fetchEvents()
   }
 
   const toggleLockAll = async (meetId, shouldLock) => {
     const action = shouldLock ? 'lock-all' : 'unlock-all'
-    await fetch(`/api/admin/meets/${meetId}/${action}`, { method: 'PUT' })
+    await fetch(`/api/admin/meets/${meetId}/${action}`, { method: 'PUT', headers: authHeaders() })
     fetchEvents()
   }
 

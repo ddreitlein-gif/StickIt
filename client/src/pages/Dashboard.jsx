@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import api from '../utils/api'
+import api, { authHeaders } from '../utils/api'
 import ImportConflictModal from '../components/ImportConflictModal'
 import MultiMeetImportModal from '../components/MultiMeetImportModal'
 
@@ -135,7 +135,7 @@ export default function Dashboard() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch('/api/meets/import', { method: 'POST', body: formData })
+      const res = await fetch('/api/meets/import', { method: 'POST', headers: authHeaders(), body: formData })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
       if (data.multi_meet) {

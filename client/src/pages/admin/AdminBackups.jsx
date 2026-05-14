@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { authHeaders } from '../../utils/api'
 
 const fmtBytes = b => {
   if (b == null) return '—'
@@ -34,7 +35,7 @@ export default function AdminBackups() {
 
   const load = () => {
     setLoading(true)
-    fetch('/api/admin/backups')
+    fetch('/api/admin/backups', { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { backups: [], stats: {} })
       .then(setData)
       .catch(() => setData({ backups: [], stats: {} }))
@@ -46,7 +47,7 @@ export default function AdminBackups() {
   const handleCreate = async () => {
     setCreating(true); setMsg('')
     try {
-      const r = await fetch('/api/admin/backups/create', { method: 'POST' })
+      const r = await fetch('/api/admin/backups/create', { method: 'POST', headers: authHeaders() })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || 'Backup failed')
       setMsg(`Backup created: ${d.latest?.filename || 'ok'}`)

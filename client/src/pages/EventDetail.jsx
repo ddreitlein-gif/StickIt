@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import api, { createWebSocket } from '../utils/api'
+import api, { createWebSocket, authHeaders } from '../utils/api'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
@@ -952,7 +952,7 @@ function HeatsPanel({ event, registrations, onRefresh }) {
                   try {
                     const resp = await fetch('/api/pdf/phase-run-order', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { 'Content-Type': 'application/json', ...authHeaders() },
                       body: JSON.stringify({ eventId: event.id, phaseId: ps.id }),
                     })
                     if (!resp.ok) throw new Error((await resp.json()).error || 'PDF failed')
@@ -1992,7 +1992,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
   // v1.6: load candidate source mogul events for the picker
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/events/${event.id}/dual/candidate-source-events`)
+    fetch(`/api/events/${event.id}/dual/candidate-source-events`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { events: [], default_event_id: null })
       .then(j => {
         if (cancelled) return
@@ -2038,7 +2038,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-mogul-event`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ source_event_id: sourceEventId, preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2054,7 +2054,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-usss`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2071,7 +2071,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
     setSeeding(true); setSeedMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-event-plus-usss`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ source_event_id: sourceEventId, preview: true })
       })
       const j = await res.json().catch(() => ({}))
@@ -2099,7 +2099,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
         // Save the computed seed list via batch endpoint
         const res = await fetch(`/api/events/${event.id}/dual/save-seed-list`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ entries: pendingEntries }),
         })
         if (!res.ok) {
@@ -2111,7 +2111,7 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
         for (let i = 0; i < seedList.length; i++) {
           const res = await fetch(`/api/events/${event.id}/dual/seeds/${seedList[i].id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ seed: i + 1 }),
           })
           if (!res.ok) {
@@ -2309,7 +2309,7 @@ function DualScoringPanel({ event, registrations }) {
   const resendToHj = async () => {
     setResending(true); setError(''); setMsg('')
     try {
-      const r = await fetch(`/api/events/${event.id}/dual/resend-to-hj`, { method: 'POST' })
+      const r = await fetch(`/api/events/${event.id}/dual/resend-to-hj`, { method: 'POST', headers: authHeaders() })
       if (!r.ok) {
         const j = await r.json().catch(() => ({}))
         throw new Error(j.error || `Server error ${r.status}`)
@@ -2405,7 +2405,7 @@ function DualScoringPanel({ event, registrations }) {
     try {
       const res = await fetch(`/api/events/${event.id}/dual/active-match`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ match_id: matchId }),
       })
       if (!res.ok) { const j = await res.json(); throw new Error(j.error) }
@@ -2416,7 +2416,7 @@ function DualScoringPanel({ event, registrations }) {
 
   const clearActiveMatch = async () => {
     try {
-      await fetch(`/api/events/${event.id}/dual/active-match`, { method: 'DELETE' })
+      await fetch(`/api/events/${event.id}/dual/active-match`, { method: 'DELETE', headers: authHeaders() })
       setActiveMatchId(null)
       await load()
     } catch (e) { setError(e.message) }

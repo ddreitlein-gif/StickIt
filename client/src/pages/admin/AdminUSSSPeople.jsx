@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { authHeaders } from '../../utils/api'
 
 const TYPE_LABELS = { C: 'Competitor', CO: 'Coach/Comp', O: 'Official' }
 const TYPE_FILTERS = [
@@ -29,7 +30,7 @@ export default function AdminUSSSPeople() {
   const debounceRef = useRef(null)
 
   useEffect(() => {
-    fetch('/api/usss/status')
+    fetch('/api/usss/status', { headers: authHeaders() })
       .then(r => r.ok ? r.json() : null)
       .then(setStatus)
       .catch(() => setStatus(null))
@@ -42,7 +43,7 @@ export default function AdminUSSSPeople() {
     if (typeVal) params.set('type', typeVal)
     params.set('page', String(pageVal))
     params.set('limit', String(PAGE_SIZE))
-    fetch(`/api/admin/usss/people?${params.toString()}`)
+    fetch(`/api/admin/usss/people?${params.toString()}`, { headers: authHeaders() })
       .then(r => r.ok ? r.json() : { rows: [], total: 0 })
       .then(data => {
         setRows(data.rows || [])

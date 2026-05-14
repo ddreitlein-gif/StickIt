@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { authHeaders } from '../../utils/api'
 
 function fmtUptime(secs) {
   const d = Math.floor(secs / 86400)
@@ -34,7 +35,7 @@ export default function AdminDashboard() {
   const intervalRef = useRef(null)
 
   const load = () => {
-    fetch('/api/admin/dashboard')
+    fetch('/api/admin/dashboard', { headers: authHeaders() })
       .then(r => r.json())
       .then(setData)
       .catch(() => setData(null))
