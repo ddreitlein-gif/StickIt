@@ -123,6 +123,7 @@ app.use('/api/import', requireAuth, require('./routes/import'));
 app.use('/api/audit', requireAuth, require('./routes/audit'));
 app.use('/api/usss', requireAuth, require('./routes/usss'));
 app.use('/api', require('./routes/training'));
+app.use('/api/viewer', require('./routes/viewer'));
 
 // Public
 app.use('/api/jump-dds', require('./routes/jumpdds'));

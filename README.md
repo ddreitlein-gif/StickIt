@@ -1,6 +1,6 @@
 # StickIt — Freestyle Scoring System
 
-**v1.22.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
+**v1.23.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
 
 ---
 
@@ -151,6 +151,175 @@ Add **G** to any invert for grab (e.g. `bTG`). Dual mogul DDs are ×1.25. Jump c
 
 To run in the cloud for remote access, deploy to any Node.js host (Railway, Render, Fly.io).
 Set environment variable `LIBSQL_URL` to a hosted Turso database URL and `LIBSQL_AUTH_TOKEN` for auth.
+
+---
+
+## Viewer API Reference
+
+Read-only public API for iOS and third-party clients. No authentication required. All endpoints return JSON and include permissive CORS headers (`Access-Control-Allow-Origin: *`).
+
+Base URL: `http://<server-host>:3001/api/viewer`
+
+---
+
+### GET `/events`
+
+Returns a list of all events. Pass `?status=in_progress` to filter to live events only.
+
+**Query params:** `status` (optional) — any `events.status` value, e.g. `in_progress`, `complete`
+
+**Example response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Men's Moguls",
+    "discipline": "mogul",
+    "meet_name": "Rocky Mountain Championships",
+    "venue": "Steamboat Springs, CO",
+    "date": "2026-01-15",
+    "status": "in_progress"
+  }
+]
+```
+
+**`discipline` values:** `mogul`, `dual_mogul`, `aerials`
+
+---
+
+### GET `/resolve/:shortCode`
+
+Looks up an event by its short code (the same identifier used in `/scoreboard/:shortCode` URLs). Use this to resolve a shared scoreboard link to a full event ID.
+
+**Example:** `GET /api/viewer/resolve/abc123`
+
+**Response:** Event object (same shape as one item from `/events`) plus `short_code` field. Returns 404 if the short code is not found.
+
+---
+
+### GET `/events/:eventId/status`
+
+Returns the live state of an event: who is on course, who is up next, and what round is active.
+
+**Example response:**
+```json
+{
+  "event_id": "uuid",
+  "status": "in_progress",
+  "current_round": "Final 1",
+  "current_run_number": 2,
+  "athlete_on_course": {
+    "bib_number": 14,
+    "first_name": "Jane",
+    "last_name": "Smith"
+  },
+  "upcoming_athletes": [
+    { "run_order": 5, "bib_number": 22, "first_name": "Alex", "last_name": "Jones" },
+    { "run_order": 6, "bib_number": 7,  "first_name": "Ryan", "last_name": "Lee" }
+  ]
+}
+```
+
+- `athlete_on_course` is `null` when no run is active.
+- `upcoming_athletes` lists the next 10 athletes in run order who have not yet competed in the current round.
+- `current_round` / `current_run_number` are `null` for events in `setup` state.
+
+---
+
+### GET `/events/:eventId/results`
+
+Returns scored results for the current active round. For dual mogul events, returns the full bracket instead.
+
+**Mogul / aerials response:**
+```json
+{
+  "discipline": "mogul",
+  "results": [
+    {
+      "rank": 1,
+      "bib_number": 14,
+      "first_name": "Jane",
+      "last_name": "Smith",
+      "turns_score": 38.40,
+      "air_score": 14.22,
+      "time_score": 18.11,
+      "total_score": 70.73,
+      "run_status": null
+    }
+  ]
+}
+```
+
+- `run_status` is `null` for a normal scored run; `"DNS"`, `"DNF"`, `"DSQ"`, or `"RNS"` otherwise.
+- Results are ranked by `total_score` descending. DNS/DNF/DSQ athletes sort last.
+
+**Dual mogul response:**
+```json
+{
+  "discipline": "dual_mogul",
+  "bracket": [
+    {
+      "bracket_round": 4,
+      "bracket_position": 1,
+      "match_status": "complete",
+      "blue_bib": 1,  "blue_first": "Jane", "blue_last": "Smith", "blue_score": 22,
+      "red_bib": 8,   "red_first": "Alex",  "red_last": "Jones",  "red_score": 19,
+      "winner_registration_id": "uuid",
+      "is_bye": 0
+    }
+  ]
+}
+```
+
+- `bracket_round` is the power-of-2 round size (e.g. 16 = Round of 16, 2 = Final).
+- `is_bye`: 1 when one side is a bye (no opponent).
+
+---
+
+### GET `/events/:eventId/results/scores`
+
+Returns per-judge, per-score-type raw scores for all completed runs in the current active round. Use this to build an expanded score detail view.
+
+**Example response:**
+```json
+{
+  "run_number": 2,
+  "scores": [
+    {
+      "run_id": "uuid",
+      "judge_number": 1,
+      "judge_name": "Judge 1",
+      "role": "TL1",
+      "score_type": "tl_carving",
+      "raw_score": 7.5
+    }
+  ]
+}
+```
+
+Group the `scores` array by `run_id` to display a per-athlete breakdown. Common `score_type` values for mogul: `tl_carving`, `tl_abext`, `tl_upper_body`, `tl_deduction` (component scoring), `air_jump1`, `air_jump2`.
+
+---
+
+### GET `/events/:eventId/rounds`
+
+Returns the list of rounds (phases) for an event with their status.
+
+**Example response:**
+```json
+[
+  { "id": "uuid", "round_name": "Qualifier 1", "run_number": 1, "status": "complete" },
+  { "id": "uuid", "round_name": "Final 1",     "run_number": 2, "status": "in_progress" }
+]
+```
+
+**`status` values:** `not_started`, `in_progress`, `complete`
+
+---
+
+### Error responses
+
+All endpoints return `404` with `{ "error": "Event not found" }` for an unknown ID or short code, and `500` with `{ "error": "<message>" }` on a database failure.
 
 ---
 

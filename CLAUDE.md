@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.22.02
+**Current version:** v1.23.00
 
 ## Commands
 
@@ -184,6 +184,40 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.23.00 Feature Notes
+
+### Read-Only Viewer API for iOS and Third-Party Clients (v1.23.00)
+
+New additive read-only public API at `/api/viewer` consumed by iOS apps and other third-party clients to display live competition results. No authentication required; permissive CORS headers applied to the viewer router only. Zero changes to any existing route, scoring logic, schema, or frontend file — one registration line added to `server/index.js`.
+
+**Six endpoints:**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/viewer/events?status=` | Event list across all meets; optional `?status=in_progress` filter for live-only |
+| `GET /api/viewer/resolve/:shortCode` | Look up event ID from a short code (same identifier used in `/scoreboard/:shortCode` URLs) |
+| `GET /api/viewer/events/:eventId/status` | Live event state: current round, athlete on course, next 10 upcoming athletes in run order |
+| `GET /api/viewer/events/:eventId/results` | Ranked results for the active round (mogul/aerials) or full bracket state (dual mogul) |
+| `GET /api/viewer/events/:eventId/results/scores` | Per-judge, per-score-type raw scores for the active round — enables expanded detail view |
+| `GET /api/viewer/events/:eventId/rounds` | Round/phase list with status (`not_started` / `in_progress` / `complete`) |
+
+**Upcoming athletes logic.** Phase-based events (qualifier/finals) query `phase_run_order` joined to the in-progress `event_phases` row, excluding registrations that already have a `runs` row with `status IN ('scoring', 'complete')` for the current run_number. Non-phase events use `registrations.run_order` with the same exclusion filter against `run_round_status`.
+
+**Active round resolution.** A shared `getActiveRound(eventId)` helper prioritises `in_progress` phases, falls back to the most-recently-completed phase, then falls back to `run_round_status` rows. This ensures results are always returned even between rounds.
+
+**Per-judge scores** reuse the existing SQL pattern from `server/routes/results.js`: join `judge_scores` → `judges` and return `score_type`, `raw_score`, `role`, `judge_number` per row. Client groups by `run_id`.
+
+**Dual mogul results** return the full `dual_bracket` table with blue/red athlete info, per-side scores, winner, and bye flag — sufficient to render a bracket tree.
+
+**Error handling.** All handlers are wrapped in try/catch. Unknown event ID or short code returns 404 `{ error: 'Event not found' }`. Database failures return 500 `{ error: message }`.
+
+**README updated.** A new "Viewer API Reference" section documents all six endpoints with example JSON response shapes, suitable for an iOS developer unfamiliar with StickIt.
+
+**Files created:** `server/routes/viewer.js`
+**Files modified:** `server/index.js` (one registration line), `README.md` (Viewer API Reference section + version bump)
 
 ---
 
