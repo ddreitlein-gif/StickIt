@@ -240,7 +240,10 @@ router.get('/events/:eventId/results', async (req, res) => {
         `SELECT db.bracket_round, db.bracket_position, db.status AS match_status,
                 ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
                 ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
-                db.winner_registration_id, db.blue_score, db.red_score, db.is_bye
+                db.winner_registration_id,
+                (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_score,
+                (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_score,
+                db.is_bye
          FROM dual_bracket db
          LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
          LEFT JOIN athletes ab ON ab.id = rb.athlete_id

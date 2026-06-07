@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.23.00
+**Current version:** v1.23.01
 
 ## Commands
 
@@ -184,6 +184,26 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.23.01 Feature Notes
+
+### Viewer API — Dual Mogul Results Fix (v1.23.01)
+
+Fixed `GET /api/viewer/events/:id/results` returning HTTP 500 for all dual mogul events.
+
+**Root cause.** The dual mogul branch of the results handler referenced `db.blue_score` and `db.red_score` in the `dual_bracket` SELECT. Those columns do not exist on the table — scores live as individual judge points in `dual_judge_points` (`blue_points` / `red_points`, one row per judge per match) and must be aggregated with SUM.
+
+**Fix.** Replaced the two bare column references with correlated subqueries that mirror the pattern already used in `server/routes/dual.js:575`:
+```sql
+(SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_score,
+(SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_score,
+```
+
+SUM returns NULL when no judge points exist yet (unscored match), which is correct for the iOS client's `Double?` optional fields. The JSON response shape (`blue_score`, `red_score`) is unchanged.
+
+**Files modified:** `server/routes/viewer.js`
 
 ---
 
