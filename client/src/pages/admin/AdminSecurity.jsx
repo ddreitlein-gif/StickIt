@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { authHeaders, checkApiResponse } from '../../utils/api';
 import { useAuth } from '../../auth/AuthContext';
 
-// Set to true to make the toggle functional — "make enable password button active"
-const AUTH_TOGGLE_ENABLED = false;
+// v1.25.00 (A-5) — activated after the A-1/A-2/A-3 token-propagation work:
+// every UI call now carries the auth token, so protection can be enabled live.
+const AUTH_TOGGLE_ENABLED = true;
 
 export default function AdminSecurity() {
   const auth = useAuth();

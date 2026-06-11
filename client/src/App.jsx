@@ -10,7 +10,6 @@ import Scoreboard from './pages/Scoreboard'
 import HeadJudgeTablet from './pages/HeadJudgeTablet'
 import Overlay from './pages/Overlay'
 import AerialsJudgeTablet from './pages/AerialsJudgeTablet'
-import AuditLog from './pages/AuditLog'
 import Home from './pages/Home'
 import LiveScores from './pages/LiveScores'
 import Admin from './pages/Admin'
@@ -32,7 +31,8 @@ export default function App() {
           <Route path="/livescores" element={<LiveScores />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/help/:topicSlug" element={<HelpPage />} />
-          <Route path="/admin/*" element={<RequireAuth role="event_admin"><Admin /></RequireAuth>} />
+          {/* v1.25.00 (A-3) — admin requires system_admin (event_admin is a legacy alias of equal rank) */}
+          <Route path="/admin/*" element={<RequireAuth role="system_admin"><Admin /></RequireAuth>} />
           <Route path="/judge/:eventId" element={<JudgeTablet />} />
           <Route path="/aerials-judge/:eventId" element={<AerialsJudgeTablet />} />
           <Route path="/aerials-judge/:eventId/:judgeId" element={<AerialsJudgeTablet />} />

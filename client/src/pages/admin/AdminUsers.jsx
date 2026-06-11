@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { authHeaders, checkApiResponse } from '../../utils/api'
 
-const ROLES = ['official', 'judge', 'system_admin']
-const ROLE_LABELS = { official: 'Official', judge: 'Judge', system_admin: 'System Admin' }
+// v1.25.00 (A-3) — canonical roles, lowest to highest: judge < official < system_admin
+const ROLES = ['judge', 'official', 'system_admin']
+const ROLE_LABELS = { judge: 'Judge', official: 'Official', system_admin: 'System Admin', event_admin: 'System Admin (legacy)' }
 
 function UserModal({ user, onClose, onSave }) {
   const [form, setForm] = useState({
@@ -77,6 +78,9 @@ function UserModal({ user, onClose, onSave }) {
               onChange={e => setForm({ ...form, role: e.target.value })}
             >
               {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+              {form.role && !ROLES.includes(form.role) && (
+                <option value={form.role} disabled>{ROLE_LABELS[form.role] || form.role} (legacy)</option>
+              )}
             </select>
           </div>
           <div>
@@ -123,12 +127,21 @@ export default function AdminUsers() {
 
   useEffect(fetchUsers, [])
 
+  const [actionError, setActionError] = useState('')
+
+  // v1.25.00 (B-3/A-4) — confirm before deactivating; surface server guard errors
   const toggleActive = async (user) => {
-    await fetch(`/api/admin/users/${user.id}`, {
+    setActionError('')
+    if (user.is_active && !window.confirm(`Deactivate ${user.display_name}? They will no longer be able to log in.`)) return
+    const res = await fetch(`/api/admin/users/${user.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ is_active: user.is_active ? 0 : 1 }),
     })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setActionError(data.error || 'Failed to update user')
+    }
     fetchUsers()
   }
 
@@ -146,6 +159,10 @@ export default function AdminUsers() {
         </button>
       </div>
 
+      {actionError && (
+        <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-red-900/30 text-red-400">{actionError}</div>
+      )}
+
       {loading ? (
         <div className="text-slate-500 py-8 text-center">Loading...</div>
       ) : users.length === 0 ? (
@@ -158,6 +175,7 @@ export default function AdminUsers() {
                 <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium">Username</th>
                 <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium">Display Name</th>
                 <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium">Role</th>
+                <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium">Password</th>
                 <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium">Status</th>
                 <th className="px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-medium text-right">Actions</th>
               </tr>
@@ -170,6 +188,11 @@ export default function AdminUsers() {
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700/50 text-slate-300">
                       {ROLE_LABELS[user.role] || user.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${user.has_password ? 'bg-green-500/20 text-green-400' : 'bg-slate-700/50 text-slate-400'}`}>
+                      {user.has_password ? 'Set' : 'Not set'}
                     </span>
                   </td>
                   <td className="px-4 py-3">
