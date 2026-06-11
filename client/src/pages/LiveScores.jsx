@@ -107,17 +107,26 @@ export default function LiveScores() {
   const [expandedMeets, setExpandedMeets] = useState(new Set());
 
   useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams({ page, limit: 10 });
-    if (division) params.set('division', division);
-    fetch(`/api/meets/livescores?${params}`)
-      .then(r => r.json())
-      .then(data => {
-        setMeets(data.meets || []);
-        setTotalPages(data.totalPages || 1);
-      })
-      .catch(() => setMeets([]))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const fetchMeets = (showSpinner) => {
+      if (showSpinner) setLoading(true);
+      const params = new URLSearchParams({ page, limit: 10 });
+      if (division) params.set('division', division);
+      fetch(`/api/meets/livescores?${params}`)
+        .then(r => r.json())
+        .then(data => {
+          if (cancelled) return;
+          setMeets(data.meets || []);
+          setTotalPages(data.totalPages || 1);
+        })
+        .catch(() => { if (!cancelled && showSpinner) setMeets([]); })
+        .finally(() => { if (!cancelled && showSpinner) setLoading(false); });
+    };
+    fetchMeets(true);
+    // v1.25.00 (D-1) — auto-refresh every 45s so spectators see events go
+    // live/finish without reloading. Silent (no spinner, no scroll reset).
+    const iv = setInterval(() => fetchMeets(false), 45000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [page, division]);
 
   const handleDivisionChange = (val) => {
@@ -147,7 +156,7 @@ export default function LiveScores() {
           position: 'sticky',
           top: 0,
           zIndex: 10,
-          background: 'rgba(7,13,26,0.92)',
+          background: 'var(--bg-header)', /* v1.25.00 (D-2) — follows Sun Mode */
           backdropFilter: 'blur(10px)',
           borderBottom: '1px solid var(--border)'
         }}>

@@ -89,6 +89,9 @@ export const api = {
 
   // Athletes
   getAthletes: (q) => apiFetch(`/athletes${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  // v1.25.00 (C-14) — paginated form returns { rows, total, page, limit }
+  getAthletesPaged: (q, page = 1, limit = 100) =>
+    apiFetch(`/athletes?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
   getAthlete: (id) => apiFetch(`/athletes/${id}`),
   createAthlete: (data) => apiFetch('/athletes', { method: 'POST', body: data }),
   updateAthlete: (id, data) => apiFetch(`/athletes/${id}`, { method: 'PUT', body: data }),

@@ -156,26 +156,31 @@ router.get('/training-days/:id/participants', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/training-days/:id/exclusions   body: { athlete_id, exclude: boolean }
+// POST /api/training-days/:id/exclusions
+//   single: { athlete_id, exclude: boolean }
+//   bulk (v1.25.00, C-17): { athlete_ids: [...], exclude: boolean }
 router.post('/training-days/:id/exclusions', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { athlete_id, exclude } = req.body || {};
-    if (!athlete_id) return res.status(400).json({ error: 'athlete_id required' });
+    const { athlete_id, athlete_ids, exclude } = req.body || {};
+    const ids = Array.isArray(athlete_ids) ? athlete_ids : (athlete_id ? [athlete_id] : []);
+    if (!ids.length) return res.status(400).json({ error: 'athlete_id or athlete_ids required' });
 
     const td = await queryOne('SELECT id FROM training_days WHERE id=?', [id]);
     if (!td) return res.status(404).json({ error: 'Training day not found' });
 
-    if (exclude) {
-      await execute(
-        `INSERT OR IGNORE INTO training_day_exclusions (training_day_id, athlete_id) VALUES (?, ?)`,
-        [id, athlete_id]
-      );
-    } else {
-      await execute(
-        `DELETE FROM training_day_exclusions WHERE training_day_id=? AND athlete_id=?`,
-        [id, athlete_id]
-      );
+    for (const aid of ids) {
+      if (exclude) {
+        await execute(
+          `INSERT OR IGNORE INTO training_day_exclusions (training_day_id, athlete_id) VALUES (?, ?)`,
+          [id, aid]
+        );
+      } else {
+        await execute(
+          `DELETE FROM training_day_exclusions WHERE training_day_id=? AND athlete_id=?`,
+          [id, aid]
+        );
+      }
     }
 
     // Bump the training day's updated_at so changes show in the UI

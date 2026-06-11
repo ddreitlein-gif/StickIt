@@ -263,6 +263,14 @@ function numericValue(text, fieldType, isAerials) {
   return { value: recovered, status: rangeStatus(recovered, 0, max) };
 }
 
+// v1.25.00 (F-3) — range-check a typed (not spoken) value on the Review screen,
+// using the same limits spoken values get.
+export function statusForField(value, fieldType, isAerials) {
+  if (value == null || value === '') return null;
+  if (fieldType === 'time') return rangeStatus(value, 5, 90);
+  return rangeStatus(value, 0, fieldMax(fieldType, isAerials));
+}
+
 export function extractValueForField(utterance, fieldType, options = {}) {
   const { allowedJumpCodes, isAerials } = options;
   const t = normalize(utterance);

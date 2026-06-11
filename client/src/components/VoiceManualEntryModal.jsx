@@ -32,7 +32,7 @@
 
 import { useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { api } from '../utils/api';
-import { extractValueForField, tokenizeUtterance, validateJumpCode } from '../voice/parser';
+import { extractValueForField, tokenizeUtterance, validateJumpCode, statusForField } from '../voice/parser';
 import { createVoiceCapture } from '../voice/audioCapture';
 import StatusConfirmDialog from './StatusConfirmDialog';
 
@@ -222,6 +222,13 @@ export default function VoiceManualEntryModal({
   const statusesRef = useRef(statuses);
   useEffect(() => { statusesRef.current = statuses; }, [statuses]);
   const fKeyHandlerRef = useRef(null);
+  // v1.25.00 (F-1) — the once-bound keydown effect must never call a stale
+  // toggleRecording closure (it chains into stopRecording -> handleBibTranscript,
+  // which read finalTranscript/upcoming). Re-assigned every render below.
+  const toggleRecordingRef = useRef(null);
+  // v1.25.00 (F-6) — when re-entering an athlete who already ran (explicit
+  // warning accepted), this holds their existing run so submit takes the edit path.
+  const [overwriteRun, setOverwriteRun] = useState(null);
 
   // Fetch the event's jump-code list once on mount so we can validate codes.
   useEffect(() => {
@@ -276,7 +283,8 @@ export default function VoiceManualEntryModal({
         const s = screenRef.current;
         if (s === SCREEN.BIB || s === SCREEN.DICTATION || s === SCREEN.NEXT) {
           e.preventDefault();
-          toggleRecording();
+          // F-1: always the current render's closure, never the first render's
+          toggleRecordingRef.current?.();
         }
         return;
       }
@@ -472,11 +480,40 @@ export default function VoiceManualEntryModal({
     setParsedBib(bib);
     setError(null);
     const reg = upcoming.find(a => Number(a.bib_number) === bib);
-    if (reg) setMatchedReg(reg);
+    if (reg) { setMatchedReg(reg); setOverwriteRun(null); }
     else {
       setMatchedReg(null);
-      setError(`No athlete with bib ${bib} remaining in this round.`);
+      checkAlreadyRan(bib);
     }
+  }
+
+  // v1.25.00 (F-6) — a bib not in the upcoming list may belong to an athlete
+  // who already ran. Offer to overwrite their existing run behind an explicit
+  // warning; on confirm, submit goes through the edit (manual-score) path.
+  function checkAlreadyRan(bib) {
+    api.getRuns(event.id)
+      .then(runs => {
+        const existing = (runs || []).find(r =>
+          Number(r.bib_number) === Number(bib) && Number(r.run_number) === Number(runNumber));
+        if (!existing) {
+          setError(`No athlete with bib ${bib} remaining in this round.`);
+          return;
+        }
+        const name = `${existing.first_name} ${existing.last_name}`;
+        if (window.confirm(`Bib ${bib} (${name}) has already run in this round. Re-entering will OVERWRITE their existing scores. Continue?`)) {
+          setOverwriteRun(existing);
+          setMatchedReg({
+            id: existing.registration_id,
+            bib_number: existing.bib_number,
+            first_name: existing.first_name,
+            last_name: existing.last_name,
+          });
+          setError(null);
+        } else {
+          setError(`Bib ${bib} already ran — re-entry cancelled. Use Edit Score on the Scoring tab to correct their score.`);
+        }
+      })
+      .catch(() => setError(`No athlete with bib ${bib} remaining in this round.`));
   }
 
   function acceptBib() {
@@ -494,6 +531,7 @@ export default function VoiceManualEntryModal({
   function rejectBib() {
     setParsedBib(null);
     setMatchedReg(null);
+    setOverwriteRun(null);
     setError(null);
   }
 
@@ -502,7 +540,8 @@ export default function VoiceManualEntryModal({
     setManualBibInput(String(bibNum));
     setParsedBib(Number(bibNum));
     setMatchedReg(reg || null);
-    setError(reg ? null : `Bib ${bibNum} not in upcoming list.`);
+    if (reg) { setOverwriteRun(null); setError(null); }
+    else checkAlreadyRan(bibNum); // F-6
   }
 
   // ---------- Submit ----------
@@ -521,6 +560,24 @@ export default function VoiceManualEntryModal({
         await api.manualScore(event.id, run.id, body);
         if (onSuccess) onSuccess({ runId: run.id });
         onClose && onClose();
+      } else if (overwriteRun) {
+        // F-6: confirmed re-entry of an already-run athlete — edit their run.
+        await api.manualScore(event.id, overwriteRun.id, body);
+        if (onSuccess) onSuccess({ runId: overwriteRun.id });
+        if (isPaper) {
+          setLastSavedName(`bib ${reg.bib_number}, ${reg.first_name} ${reg.last_name} (corrected)`);
+          setScreen(SCREEN.NEXT);
+          setEditable(emptyEditable(event));
+          setStatuses(emptyStatuses());
+          setWizardPos(0);
+          setEditTarget(null);
+          setParsedBib(null);
+          setMatchedReg(null);
+          setOverwriteRun(null);
+          setFinalTranscript('');
+        } else {
+          onClose && onClose();
+        }
       } else if (reg) {
         body.registration_id = reg.id;
         body.run_number = runNumber;
@@ -563,6 +620,23 @@ export default function VoiceManualEntryModal({
         await api.manualScore(event.id, run.id, body);
         if (onSuccess) onSuccess({ runId: run.id });
         onClose && onClose();
+      } else if (overwriteRun) {
+        // F-6: status override on an already-run athlete edits their run.
+        await api.manualScore(event.id, overwriteRun.id, body);
+        if (onSuccess) onSuccess({ runId: overwriteRun.id });
+        if (isPaper) {
+          setLastSavedName(`bib ${reg.bib_number}, ${reg.first_name} ${reg.last_name} (${statusCode})`);
+          setScreen(SCREEN.NEXT);
+          setEditable(emptyEditable(event));
+          setStatuses(emptyStatuses());
+          setWizardPos(0);
+          setParsedBib(null);
+          setMatchedReg(null);
+          setOverwriteRun(null);
+          setFinalTranscript('');
+        } else {
+          onClose && onClose();
+        }
       } else if (reg) {
         body.registration_id = reg.id;
         body.run_number = runNumber;
@@ -601,6 +675,7 @@ export default function VoiceManualEntryModal({
       setStatuses(emptyStatuses());
       setMatchedReg(null);
       setParsedBib(null);
+      setOverwriteRun(null);
       setFinalTranscript('');
     } else {
       onClose && onClose();
@@ -631,6 +706,9 @@ export default function VoiceManualEntryModal({
       setScreen(SCREEN.REVIEW);
     }
   }
+
+  // F-1: keep the hardware-key toggle pointing at this render's closure.
+  toggleRecordingRef.current = toggleRecording;
 
   // F1/F3/F4 dispatch — re-assigned every render so closures are always fresh.
   fKeyHandlerRef.current = (key) => {
@@ -744,7 +822,16 @@ export default function VoiceManualEntryModal({
               interim={interimTranscript}
               finalText={finalTranscript}
               onToggle={toggleRecording}
-              onCancel={() => { if (isPaper) { setScreen(SCREEN.BIB); } else { onClose && onClose(); } }}
+              onCancel={() => {
+                // v1.25.00 (F-4) — confirm before discarding dictated values
+                const hasValues = fields.some(f => {
+                  let v = editable;
+                  for (const k of f.path) v = v?.[k];
+                  return v != null && v !== '';
+                });
+                if (hasValues && !window.confirm('Discard everything entered for this athlete?')) return;
+                if (isPaper) { setScreen(SCREEN.BIB); setOverwriteRun(null); } else { onClose && onClose(); }
+              }}
               onReview={() => setScreen(SCREEN.REVIEW)}
             />
           )}
@@ -815,6 +902,7 @@ function BibScreen({ parsedBib, matchedReg, recording, audioLevel, error, interi
           {recording ? 'Recording — speak the bib number, then press stop' : 'Press start, then speak the bib number'}
         </p>
         <p className="mt-1 text-xs text-slate-500">F2 toggles record · PowerMic button if configured</p>
+        <p className="mt-1 text-xs text-slate-600">Bibs that already ran are accepted with an overwrite warning</p>
         {recording && <div className="mt-3 flex justify-center"><LevelMeter level={audioLevel} /></div>}
         {interim && <p className="mt-3 text-slate-400 italic">"{interim}"</p>}
       </div>
@@ -871,7 +959,7 @@ function BibScreen({ parsedBib, matchedReg, recording, audioLevel, error, interi
       )}
 
       <div className="flex justify-end">
-        <button onClick={onDone} className="text-slate-400 hover:text-slate-200 underline text-sm">Done</button>
+        <button onClick={onDone} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 text-sm">Close</button>
       </div>
     </div>
   );
@@ -1058,8 +1146,9 @@ function ReviewScreen({ event, fields, editable, statuses, setEditable, setStatu
       const status = validateJumpCode(val, allowedJumpCodes);
       setStatuses(prev => ({ ...prev, [field.id]: val ? status : null }));
     } else {
-      // For numeric fields, defer status recompute -- assume ok if a numeric was typed.
-      setStatuses(prev => ({ ...prev, [field.id]: (val == null || val === '') ? null : 'ok' }));
+      // v1.25.00 (F-3) — typed corrections get the same range check spoken values get.
+      const isAerials = event?.discipline === 'aerials';
+      setStatuses(prev => ({ ...prev, [field.id]: statusForField(val, field.type, isAerials) }));
     }
   }
 
