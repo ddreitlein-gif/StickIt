@@ -74,18 +74,50 @@ function calcTurnsSumScore(tlScores) {
 }
 
 /**
- * Calculate air score for a single jump (Winfree-compatible).
- * Floor each judge's (score × DD) individually, then average.
- * Returns the UN-rounded average — truncation to hundredths happens
- * at the combined-jump level in calcMogulScore.
+ * Turns SUM for the 5-TL ("7-judge") format with the high/low drop applied to
+ * the GROSS turns scores and the DEDUCTIONS independently, then combined.
+ *
+ * Per FIS JH 6203.1.1, the high and low turns scores and the high and low
+ * deductions are discarded SEPARATELY -- the discarded turns judge need not be
+ * the discarded deduction judge. StickIt otherwise stores one net score per
+ * judge and drops the high/low of the net, which differs whenever the extreme
+ * deductions don't coincide with the extreme gross scores. (Review finding F-7.)
+ *
+ * @param {number[]} grossArr - per-judge gross turns (execution, pre-deduction)
+ * @param {number[]} dedArr   - per-judge deductions (positive, subtracted)
+ * @returns {number} summed turns score on 0-60 scale
+ */
+function calcTurnsSumScoreSeparate(grossArr, dedArr) {
+  const dropHiLoSum = (arr) => {
+    if (!arr || arr.length === 0) return 0;
+    if (arr.length <= 2) return arr.reduce((a, b) => a + b, 0);
+    const sorted = [...arr].sort((a, b) => a - b);
+    return sorted.slice(1, sorted.length - 1).reduce((a, b) => a + b, 0);
+  };
+  return dropHiLoSum(grossArr) - dropHiLoSum(dedArr);
+}
+
+/**
+ * Calculate air score for a single jump per FIS Judging Handbook 6203.2.2 /
+ * 6204.3: average the air judges' raw scores, truncate to two decimals, then
+ * multiply by DD. The per-jump result is capped at 10.0 (JH 6204.3.2) and a
+ * jump with averaged form below 0.1 earns no points (no DD without form).
+ *
+ * Note: prior to review finding F-4 (06-10-26) this floored each judge's
+ * (score × DD) individually then averaged, to match Winfree. David ruled the
+ * handbook order governs going forward; the two differ by up to 0.01/jump.
+ *
  * @param {number[]} airJudgeScores - Raw scores from air judges (0-10 each)
  * @param {number} dd - Degree of difficulty multiplier
- * @returns {number} jump air score (avg of per-judge floored values, full precision)
+ * @returns {number} jump air score (truncated, capped at 10.0)
  */
 function calcJumpScore(airJudgeScores, dd) {
   if (!airJudgeScores || airJudgeScores.length === 0 || !dd) return 0;
-  const perJudge = airJudgeScores.map(s => floorToHundredth(s * dd));
-  return perJudge.reduce((a, b) => a + b, 0) / perJudge.length;
+  const avg = floorToHundredth(
+    airJudgeScores.reduce((a, b) => a + b, 0) / airJudgeScores.length
+  );
+  if (avg < 0.1) return 0;                            // JH 6204.3.2: no DD without 0.1 form pts
+  return Math.min(floorToHundredth(avg * dd), 10.0);  // JH 6204.3.2 per-jump cap
 }
 
 /**
@@ -177,6 +209,9 @@ function calcMogulScore(params) {
     hasSpeed = true,
     numTlJudges = 3,
     numJumps = 2,
+    tlDeductions = [],   // per-judge deduction parallel to tlScores (F-7 separate drop)
+    isRepeat = false,    // jump1/jump2 are repeat-equivalent (F-5)
+    division = null,     // events.division -- drives the RQS repeat rule (F-5)
   } = params;
 
   // --- Turns ---
@@ -188,6 +223,12 @@ function calcMogulScore(params) {
   if (numTlJudges < 3) {
     // Non-standard panel: scale up to 3-judge equivalent (e.g. 2 judges × 1.5 = 60 max)
     turnsContrib = floorToHundredth((3 / numTlJudges) * tlScores.reduce((a, b) => a + b, 0));
+  } else if (tlScores.length >= 4 && tlDeductions && tlDeductions.length === tlScores.length) {
+    // 5-TL "7-judge" format: drop high/low of gross and deductions separately (F-7).
+    // tlScores carry the NET (gross - deduction); reconstruct gross = net + deduction.
+    const gross = tlScores.map((net, i) => net + (Number(tlDeductions[i]) || 0));
+    const deds  = tlDeductions.map(d => Number(d) || 0);
+    turnsContrib = floorToHundredth(calcTurnsSumScoreSeparate(gross, deds));
   } else {
     turnsContrib = floorToHundredth(calcTurnsSumScore(tlScores));
   }
@@ -197,17 +238,33 @@ function calcMogulScore(params) {
   // Each jump: average air judge scores, multiply by DD
   // Per JH 6204.3: score = form_score (0-10) * DD; air total = jump1 + jump2
   // Max per jump = 10.0 * max_DD; FIS caps effective air contribution at 20.0
-  const jump1Score = calcJumpScore(airScoresJump1, dd1);
-  const jump2Score = numJumps >= 2 ? calcJumpScore(airScoresJump2, dd2) : 0;
+  let jump1Score = calcJumpScore(airScoresJump1, dd1);
+  let jump2Score = numJumps >= 2 ? calcJumpScore(airScoresJump2, dd2) : 0;
+
+  // Repeat-jump rule (mogul). Only one of two repeat-equivalent jumps counts.
+  // RQS keeps the higher-SCORING jump; all other divisions keep jump 1 (USSS
+  // 4210.2.1 first-jump-counts). Decided AFTER scoring so the choice reflects
+  // the earned scores rather than the raw DDs. (Review finding F-5, 06-10-26.)
+  let repeatDroppedJump = 0; // 0=none, 1=jump1 dropped, 2=jump2 dropped
+  if (isRepeat && numJumps >= 2) {
+    const div = (division || '').toLowerCase();
+    if (div === 'rqs' && jump2Score > jump1Score) {
+      jump1Score = 0; repeatDroppedJump = 1;
+    } else {
+      jump2Score = 0; repeatDroppedJump = 2;
+    }
+  }
+
   let airRaw;
   if (numJumps === 1) {
     // Single jump: double the score to compensate for missing second jump
     airRaw = floorToHundredth(Math.min(jump1Score * 2, 20.0));
   } else {
     // USSS 4210.2.2: in a 2-jump event, if only one jump is landed (no DD/code
-    // or no air scores on the other), cap that single jump at 10 (50% of 20).
-    const jump1Landed = dd1 > 0 && airScoresJump1 && airScoresJump1.length > 0;
-    const jump2Landed = dd2 > 0 && airScoresJump2 && airScoresJump2.length > 0;
+    // or no air scores on the other -- or the other was dropped as a repeat),
+    // cap that single jump at 10 (50% of 20).
+    const jump1Landed = dd1 > 0 && airScoresJump1 && airScoresJump1.length > 0 && repeatDroppedJump !== 1;
+    const jump2Landed = dd2 > 0 && airScoresJump2 && airScoresJump2.length > 0 && repeatDroppedJump !== 2;
     if (jump1Landed && !jump2Landed) {
       airRaw = floorToHundredth(Math.min(jump1Score, 10.0));
     } else if (!jump1Landed && jump2Landed) {
@@ -221,9 +278,11 @@ function calcMogulScore(params) {
   // Air without DD -- raw execution score for FIS ICR 4207.3 tie-break.
   // Per-jump average of raw judge scores (0-10), summed across jumps. Single-jump
   // events double the one jump average to keep the value comparable to two-jump runs.
+  // A jump dropped by the repeat rule is excluded so the tiebreaker reflects the
+  // counted jump (F-5).
   const avgRaw = (arr) => (arr && arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
-  const j1Raw = avgRaw(airScoresJump1);
-  const j2Raw = numJumps >= 2 ? avgRaw(airScoresJump2) : 0;
+  const j1Raw = repeatDroppedJump === 1 ? 0 : avgRaw(airScoresJump1);
+  const j2Raw = (numJumps >= 2 && repeatDroppedJump !== 2) ? avgRaw(airScoresJump2) : 0;
   const airNoDd = floorToHundredth(numJumps === 1 ? j1Raw * 2 : j1Raw + j2Raw);
 
   // --- Speed ---
@@ -249,6 +308,7 @@ function calcMogulScore(params) {
     speedRaw,          // 0-20 (ICR 4206.3)
     speedContrib,      // 0-20 speed contribution
     total,             // 0-100
+    repeatDroppedJump, // 0=none, 1=jump1 dropped, 2=jump2 dropped (F-5)
   };
 }
 
@@ -862,8 +922,12 @@ function roundToHundredth(n) {
   return Math.round(n * 100) / 100;
 }
 
+// Truncate to two decimals. The +1e-9 epsilon absorbs binary floating-point
+// error so values like 66.25999999999999 (true 66.26) don't truncate a cent
+// low. The epsilon is far below the 0.01 resolution of any judge input.
+// (Review finding F-1, 06-10-26.)
 function floorToHundredth(n) {
-  return Math.floor(n * 100) / 100;
+  return Math.floor(n * 100 + 1e-9) / 100;
 }
 
 // Pick the best run per key from a flat array of runs, using the discipline's
@@ -906,6 +970,8 @@ module.exports = {
   calcDualMogulPointSplit,
   validateDualPointSplit,
   calcTurnsScore,
+  calcTurnsSumScore,
+  calcTurnsSumScoreSeparate,
   calcJumpScore,
   calcSpeedScore,
   calcPaceTime,

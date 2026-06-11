@@ -157,22 +157,44 @@ function rankDualPlacements({ bracket, meetDate, isSeededGroups = true } = {}) {
     }
   }
 
-  // 2. Consolation matches (small finals) → 3/4, 5/6, 7/8, …
-  const consolMatches = bracket
-    .filter(m => m.is_small_final)
-    .sort((a, b) => a.bracket_position - b.bracket_position);
-  consolMatches.forEach((m, i) => {
-    if (m.status !== 'complete') return;
-    const startPlace = 3 + i * 2;
+  // 2. Consolation small-finals → places.
+  //
+  //   New 5-8 structure (F-2, runoff_to_8th): places come from ROUND-1 small
+  //   finals only — pos 2 → 3/4, pos 3 → 5/6, pos 4 → 7/8. The round-2 small
+  //   finals are consolation SEMIS and assign no places.
+  //
+  //   runoff_to_4th: only round-1 pos 2 (the 3/4 final) exists.
+  //
+  //   Legacy pre-F-2 runoff_to_8th: round-2 pos 3/4 small finals were terminal
+  //   5/6 and 7/8 matches. When no round-1 5/6 final exists, fall back to them so
+  //   already-scored events keep their 5-8 placements.
+  const smallFinals = bracket.filter(m => m.is_small_final);
+  const hasNew58 = smallFinals.some(m => m.bracket_round === 1 && m.bracket_position === 3);
+  const placeMatches = [];
+  const final34 = smallFinals.find(m => m.bracket_round === 1 && m.bracket_position === 2);
+  if (final34) placeMatches.push({ m: final34, start: 3 });
+  if (hasNew58) {
+    const f56 = smallFinals.find(m => m.bracket_round === 1 && m.bracket_position === 3);
+    const f78 = smallFinals.find(m => m.bracket_round === 1 && m.bracket_position === 4);
+    if (f56) placeMatches.push({ m: f56, start: 5 });
+    if (f78) placeMatches.push({ m: f78, start: 7 });
+  } else {
+    smallFinals
+      .filter(m => m.bracket_round === 2)
+      .sort((a, b) => a.bracket_position - b.bracket_position)
+      .forEach((m, i) => placeMatches.push({ m, start: 5 + i * 2 }));
+  }
+  for (const { m, start } of placeMatches) {
+    if (m.status !== 'complete') continue;
     const w = winnerSide(m);
     const l = loserSide(m);
     if (w && classifyDualLoser({ reg_status: w.reg_status }) !== 'scratched') {
-      push(makeFromSide({ ...w, run_status: null }, startPlace));
+      push(makeFromSide({ ...w, run_status: null }, start));
     }
     if (l && classifyDualLoser({ run_status: l.run_status, reg_status: l.reg_status }) !== 'scratched') {
-      push(makeFromSide(l, startPlace + 1));
+      push(makeFromSide(l, start + 1));
     }
-  });
+  }
 
   // 3. Remaining losers per round, applying ICR 4312 hierarchy.
   // Rounds processed nearest-final first (round 2, then 3, …) so ranks ascend.

@@ -387,6 +387,7 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
         // loser_status applies to whichever side lost this match
         loserStatus: !won ? (match.loser_status || null) : null,
         isSmallFinal: !!match.is_small_final,
+        position: match.bracket_position,
       });
     }
     if (redRegId) {
@@ -400,6 +401,7 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
         won,
         loserStatus: !won ? (match.loser_status || null) : null,
         isSmallFinal: !!match.is_small_final,
+        position: match.bracket_position,
       });
     }
   }
@@ -432,11 +434,9 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
       ? Math.min(...normalMatches.map(m => m.round))
       : maxRound + 1;
 
-    // Special cases for final and small final
+    // Special cases for final and consolation finals
     let isFinalWinner = false;
     let isFinalLoser = false;
-    let isSmallFinalWinner = false;
-    let isSmallFinalLoser = false;
 
     const finalMatch = normalMatches.find(m => m.round === 1);
     if (finalMatch) {
@@ -444,24 +444,33 @@ function computeDualStandings(bracket, registrations, maxRound, judgePointsMap =
       isFinalLoser = !finalMatch.won;
     }
 
-    if (smallFinalMatches.length > 0) {
-      const sf = smallFinalMatches[0];
-      isSmallFinalWinner = sf.won;
-      isSmallFinalLoser = !sf.won;
+    // F-2: the TERMINAL consolation final decides 3/4, 5/6 or 7/8. Round-1 small
+    // finals are terminal (pos 2/3/4 -> 3/4, 5/6, 7/8); round-2 small finals are
+    // the new 5-8 SEMIS (a stepping stone, ignored for placement) or, on legacy
+    // events with no round-1 5/6 final, the terminal 5/6 & 7/8 matches.
+    const hasRound1SF = smallFinalMatches.some(m => m.round === 1);
+    const terminalSF = smallFinalMatches.find(m => m.round === 1)
+      || (!hasRound1SF ? smallFinalMatches.find(m => m.round === 2) : null);
+    let sfBase = null; // the better of the two places this final decides
+    if (terminalSF) {
+      sfBase = terminalSF.round === 1
+        ? (terminalSF.position === 3 ? 5 : terminalSF.position === 4 ? 7 : 3)
+        : (terminalSF.position === 4 ? 7 : 5); // legacy round-2 terminal
     }
 
     // Determine sort order (lower = better)
     let sortOrder;
     if (isFinalWinner) sortOrder = 1;
     else if (isFinalLoser) sortOrder = 2;
-    else if (isSmallFinalWinner) sortOrder = 3;
-    else if (isSmallFinalLoser) sortOrder = 4;
-    else sortOrder = 4 + Math.pow(2, deepestRound - 1); // Approximate position
+    else if (sfBase != null) sortOrder = terminalSF.won ? sfBase : sfBase + 1;
+    else sortOrder = 8 + Math.pow(2, deepestRound - 1); // beyond the 5-8 places
 
     // Level label
     let level = levelLabels[deepestRound] || `top ${Math.pow(2, deepestRound)}`;
     if (isFinalWinner || isFinalLoser) level = 'Final';
-    else if (isSmallFinalWinner || isSmallFinalLoser) level = '3/4 final';
+    else if (sfBase === 3) level = '3/4 final';
+    else if (sfBase === 5) level = '5/6 final';
+    else if (sfBase === 7) level = '7/8 final';
 
     // Run elements: athlete's match score per round (skip byes)
     const runElements = [];

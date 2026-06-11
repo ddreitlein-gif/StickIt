@@ -274,79 +274,6 @@ function applyBandRandomization(standardOrder, R, rng) {
 }
 
 // ---------------------------------------------------------------------------
-// Bye distribution
-// ---------------------------------------------------------------------------
-
-/**
- * Distribute byes band-by-band, top-down.
- *
- * Input: the seed list has R athletes; the bracket size is B.  Byes to
- * distribute = B - R (clamped to >= 0).  The participating seeds are
- * 1..R; seeds R+1..B are "empty" slots that become byes.
- *
- * Rules:
- *   Band 1 (1-8): absorbs byes only in whole-band batches.  If the
- *     remaining bye count is >= the band's full size (8 for band 1),
- *     all 8 band-1 seeds receive byes.  Otherwise band 1 is skipped
- *     and the byes fall through to band 2.  This matches the spec's
- *     worked examples: 50/64 gives 14 byes, so band 1 takes 8 (full
- *     batch) and band 2 takes the remaining 6; 14/16 gives 2 byes,
- *     both fall to band 2 "since the 1-8 band is full" (no full-batch
- *     available, band 1 is skipped).
- *   Band 2 (9-16), Band 3 (17-32), Band 4 (33-64): take the
- *     remainingByes (up to the band's full size) and randomly select
- *     that many seeds within the band to receive byes, using the PRNG.
- *
- * Returns a Set of seed numbers that receive byes.  Seeds in this set
- * advance directly to the next round; their first-round match is marked
- * as a bye.
- *
- * Edge case: if R >= B, returns an empty Set (no byes).
- *
- * @param {number} R  number of athletes in the seed list
- * @param {number} B  bracket size
- * @param {() => number} rng
- * @returns {Set<number>}  seed numbers receiving byes
- */
-function distributeByes(R, B, rng) {
-  const byes = new Set();
-  let remaining = Math.max(0, B - R);
-  if (remaining === 0) return byes;
-
-  const bands = bandsForSize(B);
-
-  for (const band of bands) {
-    if (remaining === 0) break;
-
-    // Seeds in this band that actually exist in the athlete pool.
-    const seedsInBand = [];
-    for (let s = band.min; s <= band.max && s <= R; s++) seedsInBand.push(s);
-    if (seedsInBand.length === 0) continue;
-
-    // Band-1 whole-batch rule: band 1 absorbs byes only if the remaining
-    // bye count is at least the band's full size (typically 8).  Otherwise
-    // band 1 is skipped entirely and byes fall through to band 2.
-    if (band.band === 1) {
-      if (remaining < band.cap) continue; // skip band 1, fall through
-      // Full band-1 batch: all band-1 seeds receive byes.
-      for (const s of seedsInBand) byes.add(s);
-      remaining -= seedsInBand.length;
-      continue;
-    }
-
-    // Band 2+: randomized selection.  takeCount is capped by remaining
-    // byes and by how many seeds in this band are currently playing.
-    const takeCount = Math.min(remaining, seedsInBand.length);
-    const shuffled = shuffleWith(seedsInBand, rng);
-    const chosen = shuffled.slice(0, takeCount);
-    for (const s of chosen) byes.add(s);
-    remaining -= takeCount;
-  }
-
-  return byes;
-}
-
-// ---------------------------------------------------------------------------
 // Full bracket build
 // ---------------------------------------------------------------------------
 
@@ -459,6 +386,5 @@ module.exports = {
   effectiveBracketSize,
   bandsForSize,
   applyBandRandomization,
-  distributeByes,
   buildPlacement,
 };

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.23.01
+**Current version:** v1.24.00
 
 ## Commands
 
@@ -184,6 +184,100 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+## v1.24.00 Feature Notes
+
+### Scoring Review Fixes — Full-Season Correctness Pass (v1.24.00)
+
+Implements the confirmed findings from the 06-10-26 comprehensive scoring review
+(`StickIt_Review_Findings_06-10-26.md`), which recomputed every 2026 run three ways against the
+official FIS XML and result PDFs. Scope: findings F-1 through F-8 plus the F-11 CSV BOM. Findings
+F-9 (seed-tail ordering), F-10 (single-mogul FFSP feature), F-11a (XML all-statused ranking), and
+F-12 (walkover docs) were reviewed and deliberately deferred. The review's rulings on F-4 (air
+averaging order) and F-5 (RQS repeat) were pre-decided by David and are treated as confirmed.
+
+**F-1 — Float error in two-decimal truncation (HIGH).** `floorToHundredth` (`server/scoring/engine.js`)
+used `Math.floor(n*100)/100`, which truncated a cent low whenever the binary float of `n*100`
+landed just under the true value (e.g. `49.1 + 8.23 + 8.93 = 66.25999999999999` → 66.25, should be
+66.26). Roughly 45% of season totals were affected. Fixed with a `+1e-9` epsilon, far below the
+0.01 judge-input resolution. This single change corrects every truncation site in the engine.
+
+**F-3 / F-4 — Air averaging order + per-jump 10.0 cap (MEDIUM, ruled).** `calcJumpScore` now follows
+FIS JH 6203.2.2 / 6204.3: average the air judges' raw scores per jump, truncate to 2dp, then
+multiply by DD — replacing the prior Winfree-matching "floor each judge's score×DD then average".
+Each jump is capped at 10.0 (JH 6204.3.2) and a jump whose averaged form is below 0.1 earns no
+points. **Accepted consequence:** re-scored 2026 events differ from Winfree-era published PDFs by
+one cent on some runs (e.g. SOARD 66.27 vs 66.26) — David ruled the handbook order governs. The
+`air_score_no_dd` tiebreaker (raw average, no DD) is unchanged. Aerials paths are untouched.
+
+**F-5 — RQS repeat rule keeps the higher-SCORED jump (MEDIUM, ruled).** The repeat-jump decision
+moved out of the pre-scoring DD adjustment (`applyRepeatJumpRule`, which zeroed the lower-DD jump)
+and into `calcMogulScore`, which now decides AFTER both jump scores are computed. RQS zeros the
+lower-SCORING jump (tie → keep jump 1); all other divisions keep jump 1 (USSS 4210.2.1
+first-counts). `calcMogulScore` takes new `isRepeat` + `division` params and returns
+`repeatDroppedJump` (0/1/2). Callers in `server/routes/runs.js` (manual, edit, live finalize,
+reject paths) detect the repeat via `areJumpsRepeats`, pass it through, and persist DD=0 on the
+dropped jump for display/back-compat. The live path stores both real DDs at run-start (the decision
+needs the air scores) and `tryFinalize` resolves it. The dropped jump is also excluded from
+`air_score_no_dd`. No 2026 exposure (latent), but ruled. `applyRepeatJumpRule` is no longer used.
+
+**F-6 — DD table gaps, stand-alone grab, case-insensitive lookup (LOW).** Added four missing upright
+combination codes to the mogul DD seed (`server/db/schema.js`): `ST` 0.49/0.59, `STS` 0.59/0.69,
+`TTT` 0.59/0.69, `DD` 0.55/0.65 (base + per-letter modifier). Re-valued stand-alone `G` from the
+0.14 grab multiplier to a real jump value 0.54/0.64 (Single + grab). A startup migration (sentinel:
+`G` mogul-M = 0.14 or `STS` absent) seeds/updates these for both `mogul` and `dual_mogul` (×1.25),
+idempotent. `resolveJumpDD` (`server/routes/runs.js`) gained a `COLLATE NOCASE` fallback that runs
+ONLY when the exact-case lookup misses, so season-data lower-case codes (`g`, `3g`, `lg`) resolve to
+`G`/`3G`/`lG` while case-distinct codes (`bp` vs `bP`) stay correct. The bare `p` 0.03 multiplier row
+remains (harmless — never entered as a stand-alone jump).
+
+**F-7 — 7-judge format drops high/low of turns and deductions separately (LOW → full fix).** Per FIS
+JH 6203.1.1, the 5-TL ("7-judge") format must drop the high+low TURNS and the high+low DEDUCTIONS
+independently, then sum — StickIt previously dropped high/low of the NET per judge. New
+`calcTurnsSumScoreSeparate(grossArr, dedArr)` in `engine.js` does the separate drop for ≥4 judges;
+≤3 judges keep the net-sum behavior. No schema change: each `judge_scores` turns row already stores
+net `raw_score` and `tl_deduction`, so per-judge gross = `raw_score + tl_deduction`. The assembly
+sites in `runs.js` thread a `tlDeductions[]` array parallel to `tlScores[]` into `calcMogulScore`.
+
+**F-2 — `runoff_to_8th` real 5-8 bracket (HIGH, structural).** Replaced the two terminal consolation
+matches with a proper 5-8 mini-bracket per USSS 4310.3.2. `buildBracketShell`
+(`server/routes/dual.js`) now creates, for runoff_to_8th: round-2 small finals pos 3/4 =
+**consolation semis** (QF losers), and round-1 small finals pos 3/4 = the **5/6 and 7/8 finals**
+(pos 2 stays the 3/4 final). `advanceWinner` gained a branch: a completed consolation semi (round-2
+small final) routes its winner → 5/6 final and loser → 7/8 final (blue slot first, then red).
+`placement_ranking.js` assigns 5-8 places only from the round-1 finals (pos 2→3/4, 3→5/6, 4→7/8) and
+ignores the semis; it falls back to the legacy round-2-terminal structure when no round-1 5/6 final
+exists, so already-scored events keep their placements. `computePairingNumbers` (and the PDF
+`buildBracketPairings`) order the consolation block so the **finals run 7/8 → 5/6 → 3/4 →
+championship** at the end of the event. The bracket PDF (`server/routes/pdf.js`), the Scoreboard
+Bracket tab (`client/src/pages/Scoreboard.jsx`), and the USSS transmit standings
+(`server/routes/transmit.js`, which now reads the terminal small-final's position for placement) all
+handle the new structure with legacy fallback. The HJ tablet review panel groups by round and needed
+no change. `runoff_to_4th` is unchanged.
+
+**F-8 — Dead code removed (LOW).** Deleted the unused `distributeByes` from `server/dual/placement.js`
+(and its export). It implemented a "byes only in batches of 8" rule contradicting the live
+ghost-partner derivation in `buildPlacement`; risk was future misuse.
+
+**F-11 — CSV BOM (INFO).** Both CSV exports in `server/routes/export.js` now prepend a UTF-8 BOM
+(`﻿`) and send `text/csv; charset=utf-8` so Excel on Windows renders accented athlete names.
+The XLSX exports and the XML all-statused behavior are unchanged.
+
+**Verification.** `server/scripts/verify_v16.js` extended from 50 to 60 checks — synthetic cases for
+the F-1 epsilon, F-3/F-4 averaging + cap, F-5 lower-scored-jump drop, F-7 separate high/low drop, and
+an F-2 placement walk (new + legacy structures rank 1-8). A temp-DB integration test confirmed
+`buildBracketShell` creates the 5 small finals (r2p3, r2p4, r1p2, r1p3, r1p4), `advanceWinner` routes
+semi winners → 5/6 and losers → 7/8, and the finals run order ends M-17 7/8 → M-18 5/6 → M-19 3/4 →
+M-20 championship. `buildBracketShell`, `advanceWinner`, and `computePairingNumbers` are now exported
+from `dual.js` for tooling/tests.
+
+**Files modified:** `server/scoring/engine.js`, `server/routes/runs.js`, `server/db/schema.js`,
+`server/routes/dual.js`, `server/dual/placement.js`, `server/dual/placement_ranking.js`,
+`server/routes/pdf.js`, `server/routes/transmit.js`, `server/routes/export.js`,
+`client/src/pages/Scoreboard.jsx`, `server/scripts/verify_v16.js`, `server/version.js`,
+`client/package.json`, `server/package.json`, `client/src/components/Layout.jsx`, `CLAUDE.md`.
 
 ---
 

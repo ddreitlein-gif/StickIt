@@ -507,6 +507,73 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Scoring review fixes (v1.24.00 — F-1, F-3/F-4, F-5, F-7, F-2)
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('Scoring review fixes (06-10-26):');
+try {
+  const engine = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+  const { rankDualPlacements } = require(path.join(__dirname, '..', 'dual', 'placement_ranking.js'));
+
+  // F-1: epsilon-corrected truncation. 49.1 + 8.23 + 8.93 = 66.26 (float artifact 66.2599...).
+  check('F-1: floorToHundredth(66.26) === 66.26',
+    engine.floorToHundredth(49.1 + 8.23 + 8.93) === 66.26,
+    'got ' + engine.floorToHundredth(49.1 + 8.23 + 8.93));
+
+  // F-3/F-4: handbook averaging order, per-jump 10.0 cap, no DD below 0.1 form.
+  check('F-4: calcJumpScore([6.3,6.3],0.78) === 4.91 (avg->trunc->*DD)',
+    engine.calcJumpScore([6.3, 6.3], 0.78) === 4.91,
+    'got ' + engine.calcJumpScore([6.3, 6.3], 0.78));
+  check('F-3: per-jump cap calcJumpScore([10,10],1.3) === 10',
+    engine.calcJumpScore([10, 10], 1.3) === 10,
+    'got ' + engine.calcJumpScore([10, 10], 1.3));
+  check('F-3: avg<0.1 -> 0 (calcJumpScore([0.05],0.78))',
+    engine.calcJumpScore([0.05], 0.78) === 0,
+    'got ' + engine.calcJumpScore([0.05], 0.78));
+
+  // F-5: RQS keeps the higher-SCORED jump; default keeps jump 1.
+  const rqs = engine.calcMogulScore({ tlScores: [10,10,10], airScoresJump1:[3], dd1:1.0, airScoresJump2:[9], dd2:0.5, hasSpeed:false, numTlJudges:3, numJumps:2, isRepeat:true, division:'rqs' });
+  check('F-5: RQS drops the lower-scored jump (jump1)', rqs.repeatDroppedJump === 1, 'dropped=' + rqs.repeatDroppedJump);
+  const def = engine.calcMogulScore({ tlScores: [10,10,10], airScoresJump1:[3], dd1:1.0, airScoresJump2:[9], dd2:0.5, hasSpeed:false, numTlJudges:3, numJumps:2, isRepeat:true, division:'comp' });
+  check('F-5: non-RQS keeps jump 1 (drops jump2)', def.repeatDroppedJump === 2, 'dropped=' + def.repeatDroppedJump);
+
+  // F-7: 5-TL separate high/low drop of gross and deductions.
+  // gross [15,15,20,10,15] drop hi(20) lo(10) keep 45; ded [1,1,1,1,5] drop hi(5) lo(1) keep 3; 45-3=42.
+  const ded = [1,1,1,1,5];
+  const net = [15,15,20,10,15].map((g,i)=>g-ded[i]);
+  const sep = engine.calcMogulScore({ tlScores: net, tlDeductions: ded, airScoresJump1:[5], dd1:0.5, hasSpeed:false, numTlJudges:5, numJumps:1, isRepeat:false });
+  check('F-7: separate-drop turns === 42', sep.turnsContrib === 42, 'got ' + sep.turnsContrib);
+  // With deductions baked into net (deductions all 0), separate drop equals net drop-high-low sum.
+  const sep0 = engine.calcMogulScore({ tlScores: [15,15,20,10,15], tlDeductions:[0,0,0,0,0], airScoresJump1:[5], dd1:0.5, hasSpeed:false, numTlJudges:5, numJumps:1 });
+  check('F-7: zero deductions -> net drop-hi-lo (45)', sep0.turnsContrib === 45, 'got ' + sep0.turnsContrib);
+
+  // F-2: 5-8 mini-bracket places athletes 1-8 from the round-1 finals; semis don't double-place.
+  const mk = (round, pos, sf, blue, red, winner) => ({
+    bracket_round: round, bracket_position: pos, is_small_final: sf ? 1 : 0, status: 'complete', is_bye: 0,
+    registration_id_blue: blue, registration_id_red: red, winner_registration_id: winner,
+    blue_last: blue, red_last: red, blue_bib: blue, red_bib: red,
+  });
+  const neu = [
+    mk(1,1,false,'A','B','A'), mk(1,2,true,'C','D','C'),
+    mk(1,3,true,'E','F','E'), mk(1,4,true,'G','H','G'),
+    mk(2,3,true,'E','G','E'), mk(2,4,true,'F','H','F'),
+  ];
+  const rNew = rankDualPlacements({ bracket: neu, meetDate: '2026-01-01' });
+  const newMap = Object.fromEntries(rNew.map(p => [p.registration_id, p.rank]));
+  check('F-2: new 5-8 bracket ranks A..H = 1..8',
+    rNew.length === 8 && newMap.E === 5 && newMap.F === 6 && newMap.G === 7 && newMap.H === 8,
+    JSON.stringify(newMap));
+  const leg = [ mk(1,1,false,'A','B','A'), mk(1,2,true,'C','D','C'), mk(2,3,true,'E','F','E'), mk(2,4,true,'G','H','G') ];
+  const rLeg = rankDualPlacements({ bracket: leg, meetDate: '2026-01-01' });
+  const legMap = Object.fromEntries(rLeg.map(p => [p.registration_id, p.rank]));
+  check('F-2: legacy structure still ranks 5/6/7/8',
+    rLeg.length === 8 && legMap.E === 5 && legMap.F === 6 && legMap.G === 7 && legMap.H === 8,
+    JSON.stringify(legMap));
+} catch (e) {
+  fail('Scoring review fix tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log('');

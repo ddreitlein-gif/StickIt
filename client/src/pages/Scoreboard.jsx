@@ -932,7 +932,18 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
 
 function DualBracketTab({ bracketMatches, judgePointsByMatch, expandedMatchId, setExpandedMatchId }) {
   const mainMatches = bracketMatches.filter(m => !m.is_small_final);
-  const consolMatches = bracketMatches.filter(m => m.is_small_final).sort((a, b) => a.bracket_position - b.bracket_position);
+  // F-2: order the consolation block 3/4 final, 5-8 semis, then 5/6 & 7/8 finals.
+  const consolOrder = (m) => {
+    if (m.bracket_round === 1 && m.bracket_position === 2) return 0; // 3/4 final
+    if (m.bracket_round === 2 && m.bracket_position === 3) return 1; // 5-8 semi A
+    if (m.bracket_round === 2 && m.bracket_position === 4) return 2; // 5-8 semi B
+    if (m.bracket_round === 1 && m.bracket_position === 3) return 3; // 5/6 final
+    if (m.bracket_round === 1 && m.bracket_position === 4) return 4; // 7/8 final
+    return 9;
+  };
+  const consolAll = bracketMatches.filter(m => m.is_small_final);
+  const hasNew58 = consolAll.some(m => m.bracket_round === 1 && m.bracket_position === 3);
+  const consolMatches = consolAll.sort((a, b) => consolOrder(a) - consolOrder(b));
   const totalRound = mainMatches.length > 0 ? Math.max(...mainMatches.map(m => m.bracket_round)) : 0;
   const roundMatches = {};
   for (const m of mainMatches) {
@@ -996,9 +1007,14 @@ function DualBracketTab({ bracketMatches, judgePointsByMatch, expandedMatchId, s
                   </div>
                   <div style={{ display: 'grid', gap: 10, marginTop: 24 }}>
                     {consolMatches.map(m => {
-                      const label = m.bracket_round === 1 && m.bracket_position === 2 ? 'SMALL FINAL'
-                        : m.bracket_round === 2 && m.bracket_position === 3 ? '5TH/6TH RUNOFF'
-                        : m.bracket_round === 2 && m.bracket_position === 4 ? '7TH/8TH RUNOFF'
+                      // F-2: in the new 5-8 bracket, round-2 small finals are semis
+                      // feeding the round-1 5/6 & 7/8 finals. Legacy events kept the
+                      // round-2 matches as terminal 5/6 & 7/8 runoffs.
+                      const label = m.bracket_round === 1 && m.bracket_position === 2 ? '3RD/4TH'
+                        : m.bracket_round === 1 && m.bracket_position === 3 ? '5TH/6TH'
+                        : m.bracket_round === 1 && m.bracket_position === 4 ? '7TH/8TH'
+                        : m.bracket_round === 2 && m.bracket_position === 3 ? (hasNew58 ? '5-8 SEMIFINAL' : '5TH/6TH RUNOFF')
+                        : m.bracket_round === 2 && m.bracket_position === 4 ? (hasNew58 ? '5-8 SEMIFINAL' : '7TH/8TH RUNOFF')
                         : 'CONSOLATION';
                       return (
                         <div key={m.id}>
@@ -1264,8 +1280,15 @@ function DualPlaceTab({ placements, isComplete }) {
 }
 
 function roundLabel(m) {
-  if (m.bracket_round === 1) return m.is_small_final ? '3rd Place' : 'Final';
-  if (m.bracket_round === 2) return m.is_small_final ? 'Semi 3/4' : 'Semifinal';
-  if (m.bracket_round === 3) return m.is_small_final ? 'QF 3/4' : 'Quarterfinal';
+  // F-2: round-1 small finals decide 3/4 (pos 2), 5/6 (pos 3), 7/8 (pos 4);
+  // round-2 small finals are the 5-8 consolation semis.
+  if (m.bracket_round === 1) {
+    if (!m.is_small_final) return 'Final';
+    if (m.bracket_position === 3) return '5th Place';
+    if (m.bracket_position === 4) return '7th Place';
+    return '3rd Place';
+  }
+  if (m.bracket_round === 2) return m.is_small_final ? '5-8 Semi' : 'Semifinal';
+  if (m.bracket_round === 3) return m.is_small_final ? 'QF Consol' : 'Quarterfinal';
   return `Round ${m.bracket_round}`;
 }

@@ -178,6 +178,33 @@ function advancementSlot(bracketPosition, bracketRound, totalRound) {
 // Used by: PUT /:matchId/winner, POST /:matchId/approve, POST /:matchId/paper-score
 // ---------------------------------------------------------------------------
 async function advanceWinner(eventId, match, winnerId, loserId) {
+  // F-2: consolation semifinals (runoff_to_8th 5-8 bracket). The semi winner
+  // advances to the 5/6 final (round 1 pos 3); the loser drops to the 7/8 final
+  // (round 1 pos 4). Fill blue slot first, then red, matching the seeding pattern.
+  if (match.is_small_final && match.bracket_round === 2) {
+    if (winnerId) {
+      const final56 = await queryOne(
+        'SELECT * FROM dual_bracket WHERE event_id=? AND bracket_round=1 AND bracket_position=3 AND is_small_final=1',
+        [eventId]
+      );
+      if (final56) {
+        const slot = !final56.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+        await execute(`UPDATE dual_bracket SET ${slot}=?, updated_at=datetime('now') WHERE id=?`, [winnerId, final56.id]);
+      }
+    }
+    if (loserId) {
+      const final78 = await queryOne(
+        'SELECT * FROM dual_bracket WHERE event_id=? AND bracket_round=1 AND bracket_position=4 AND is_small_final=1',
+        [eventId]
+      );
+      if (final78) {
+        const slot = !final78.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+        await execute(`UPDATE dual_bracket SET ${slot}=?, updated_at=datetime('now') WHERE id=?`, [loserId, final78.id]);
+      }
+    }
+    return;
+  }
+
   if (match.bracket_round > 1 && !match.is_small_final) {
     const nextRound = match.bracket_round - 1;
     const nextPos   = Math.ceil(match.bracket_position / 2);
@@ -320,21 +347,29 @@ async function computePairingNumbers(eventId) {
       .forEach(m => { num++; pairingNums.set(m.id, num); });
   }
 
+  // Look up a small-final by (round, position) and assign the next pairing number.
+  const addSmall = (round, pos) => {
+    const m = consolMatches.find(s => s.bracket_round === round && s.bracket_position === pos && !s.is_bye);
+    if (m) { num++; pairingNums.set(m.id, num); }
+  };
+
   // Qualifying rounds
   for (const r of qualRounds) addMainRound(r);
 
   // Finals + consolation interleaved in run order
   if (runoffOption === 'runoff_to_8th' && totalRound >= 3) {
-    addMainRound(3);                                                          // QF
-    if (consolMatches[2]) { num++; pairingNums.set(consolMatches[2].id, num); } // 7th/8th
-    addMainRound(2);                                                          // SF
-    if (consolMatches[1]) { num++; pairingNums.set(consolMatches[1].id, num); } // 5th/6th
-    if (consolMatches[0]) { num++; pairingNums.set(consolMatches[0].id, num); } // 3rd/4th
-    addMainRound(1);                                                          // Final
+    addMainRound(3);            // QF
+    addSmall(2, 3);            // consolation semi A (F-2; legacy: terminal 5/6)
+    addSmall(2, 4);            // consolation semi B (F-2; legacy: terminal 7/8)
+    addMainRound(2);            // SF
+    addSmall(1, 4);            // 7/8 final (F-2 new structure only)
+    addSmall(1, 3);            // 5/6 final (F-2 new structure only)
+    addSmall(1, 2);            // 3/4 final
+    addMainRound(1);            // Championship final
   } else {
-    addMainRound(2);                                                          // SF
-    if (consolMatches[0]) { num++; pairingNums.set(consolMatches[0].id, num); } // 3rd/4th
-    addMainRound(1);                                                          // Final
+    addMainRound(2);            // SF
+    addSmall(1, 2);            // 3/4 final
+    addMainRound(1);            // Final
   }
 
   return { pairingNums, genderPrefix };
@@ -384,6 +419,9 @@ async function buildBracketShell(eventId, fieldSize, runoffOption) {
   }
 
   if (runoffOption === 'runoff_to_8th' && totalRound >= 3) {
+    // F-2: real 5-8 mini-bracket. Round 2 small finals are CONSOLATION SEMIS
+    // (QF losers land here); round 1 small finals pos 3/4 are the 5/6 and 7/8
+    // FINALS (consolation-semi winners/losers land there). Per USSS 4310.3.2.
     inserts.push(execute(
       `INSERT INTO dual_bracket (id,event_id,bracket_round,bracket_position,is_small_final)
        VALUES (?,?,2,3,1)`,
@@ -392,6 +430,16 @@ async function buildBracketShell(eventId, fieldSize, runoffOption) {
     inserts.push(execute(
       `INSERT INTO dual_bracket (id,event_id,bracket_round,bracket_position,is_small_final)
        VALUES (?,?,2,4,1)`,
+      [uuidv4(), eventId]
+    ));
+    inserts.push(execute(
+      `INSERT INTO dual_bracket (id,event_id,bracket_round,bracket_position,is_small_final)
+       VALUES (?,?,1,3,1)`,  // 5/6 final
+      [uuidv4(), eventId]
+    ));
+    inserts.push(execute(
+      `INSERT INTO dual_bracket (id,event_id,bracket_round,bracket_position,is_small_final)
+       VALUES (?,?,1,4,1)`,  // 7/8 final
       [uuidv4(), eventId]
     ));
   }
@@ -2018,3 +2066,7 @@ router.post('/resend-to-hj', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+// Exported for tests / tooling (bracket structure verification).
+module.exports.buildBracketShell = buildBracketShell;
+module.exports.advanceWinner = advanceWinner;
+module.exports.computePairingNumbers = computePairingNumbers;
