@@ -465,6 +465,39 @@ async function seedJumpDDs() {
         console.log('DD migration: fixed upright jump code values (base + modifier)');
       }
 
+      // v1.24.00 (F-6) -- add missing upright combos + re-value stand-alone Grab.
+      // Sentinel: old databases store G as the 0.14 grab multiplier or lack STS.
+      const checkG   = await queryOne("SELECT dd_value FROM jump_dd_table WHERE jump_code='G' AND gender='M' AND discipline='mogul'");
+      const checkSTS = await queryOne("SELECT COUNT(*) as cnt FROM jump_dd_table WHERE jump_code='STS' AND discipline='mogul'");
+      const grabStale = checkG && Math.abs(parseFloat(checkG.dd_value) - 0.14) < 0.001;
+      const stsMissing = !checkSTS || parseInt(checkSTS.cnt) === 0;
+      if (grabStale || stsMissing) {
+        const f6 = [
+          { code: 'ST',  mogM: 0.49, mogF: 0.59 },
+          { code: 'STS', mogM: 0.59, mogF: 0.69 },
+          { code: 'TTT', mogM: 0.59, mogF: 0.69 },
+          { code: 'DD',  mogM: 0.55, mogF: 0.65 },
+          { code: 'G',   mogM: 0.54, mogF: 0.64 }, // re-value stand-alone grab
+        ];
+        const f6Stmts = [];
+        for (const f of f6) {
+          const dualM = Math.round(f.mogM * 1.25 * 10000) / 10000;
+          const dualF = Math.round(f.mogF * 1.25 * 10000) / 10000;
+          // INSERT OR IGNORE seeds missing combos; the follow-up UPDATE corrects
+          // G (which already exists at 0.14) and is a no-op for freshly inserted rows.
+          f6Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','M',?)`, args: [uuidv4(), f.code, f.mogM, f.code] });
+          f6Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','F',?)`, args: [uuidv4(), f.code, f.mogF, f.code] });
+          f6Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','M',?)`, args: [uuidv4(), f.code, dualM, f.code + ' (dual)'] });
+          f6Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','F',?)`, args: [uuidv4(), f.code, dualF, f.code + ' (dual)'] });
+          f6Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='M'`, args: [f.mogM, f.code] });
+          f6Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='F'`, args: [f.mogF, f.code] });
+          f6Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='M'`, args: [dualM, f.code] });
+          f6Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='F'`, args: [dualF, f.code] });
+        }
+        await getClient().batch(f6Stmts, 'write');
+        console.log('DD migration: added ST/STS/TTT/DD combos + re-valued stand-alone Grab (F-6)');
+      }
+
       return;
     }
     // Wipe old non-gendered data and reseed
@@ -493,9 +526,16 @@ async function seedJumpDDs() {
     { code: 'TTS',  ddM: 0.59, ddF: 0.69, notes: 'Triple (Twister-Twister-Spread)' },
     { code: 'TTSS', ddM: 0.68, ddF: 0.78, notes: 'Quad' },
     { code: 'TTSSD',ddM: 0.79, ddF: 0.89, notes: 'Quint' },
+    // Additional upright combinations used in competition (base + per-letter modifier).
+    // (Review finding F-6, 06-10-26.)
+    { code: 'ST',   ddM: 0.49, ddF: 0.59, notes: 'Spread-Twister (Double)' },
+    { code: 'STS',  ddM: 0.59, ddF: 0.69, notes: 'Spread-Twister-Spread (Triple)' },
+    { code: 'TTT',  ddM: 0.59, ddF: 0.69, notes: 'Triple Twister' },
+    { code: 'DD',   ddM: 0.55, ddF: 0.65, notes: 'Double Daffy' },
     // Jump Multipliers
-    { code: 'p',    ddM: 0.03, ddF: 0.03, notes: 'Position' },
-    { code: 'G',    ddM: 0.14, ddF: 0.14, notes: 'Grab' },
+    { code: 'p',    ddM: 0.03, ddF: 0.03, notes: 'Position (multiplier)' },
+    // Stand-alone Grab = Single (0.40/0.50) + grab (0.14). USSS 4210.2.1. (F-6)
+    { code: 'G',    ddM: 0.54, ddF: 0.64, notes: 'Grab (Single + grab)' },
     // Rotational Jumps
     { code: '3',    ddM: 0.68, ddF: 0.78, notes: '360' },
     { code: '3p',   ddM: 0.71, ddF: 0.81, notes: '360 Position' },

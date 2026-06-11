@@ -114,9 +114,9 @@ router.get('/csv/:eventId', async (req, res) => {
     ]);
 
     const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${event.name.replace(/\s+/g,'_')}_results.csv"`);
-    res.send(csv);
+    res.send('﻿' + csv); // F-6/F-11: UTF-8 BOM so Excel renders accented names
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -293,10 +293,10 @@ router.get('/results-csv/:eventId', async (req, res) => {
       .join('\n');
 
     const safeName = event.name.replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '');
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition',
       `attachment; filename="${safeName}_results_full_${round}.csv"`);
-    res.send(csv);
+    res.send('﻿' + csv); // F-11: UTF-8 BOM so Excel renders accented names
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

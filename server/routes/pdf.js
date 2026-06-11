@@ -2628,6 +2628,39 @@ function parseBracketData(bracket, runoffOption) {
   return { mainMatches, consolMatches, totalRound, finalsRound, qualRounds, finalsRounds };
 }
 
+// F-2: the place-deciding consolation FINALS in display order, structure-aware.
+// New 5-8 bracket: round-1 small finals pos 2/3/4 -> 3/4, 5/6, 7/8 (semis at
+// round 2 are excluded — they decide no placement). runoff_to_4th: just the 3/4
+// final. Legacy pre-F-2 runoff_to_8th: round-2 pos 3/4 terminal matches.
+// Returns [{ match, label, placeBase }] (placeBase = the better of the two places).
+function consolFinalsInOrder(consolMatches) {
+  const find = (round, pos) => consolMatches.find(m => m.bracket_round === round && m.bracket_position === pos);
+  const out = [];
+  const f34 = find(1, 2);
+  if (f34) out.push({ match: f34, label: '3rd / 4th Place', placeBase: 3 });
+  if (find(1, 3)) { // new structure
+    const f56 = find(1, 3), f78 = find(1, 4);
+    if (f56) out.push({ match: f56, label: '5th / 6th Place', placeBase: 5 });
+    if (f78) out.push({ match: f78, label: '7th / 8th Place', placeBase: 7 });
+  } else { // legacy: round-2 terminal consolation matches
+    consolMatches
+      .filter(m => m.bracket_round === 2)
+      .sort((a, b) => a.bracket_position - b.bracket_position)
+      .forEach((m, i) => out.push({ match: m, label: i === 0 ? '5th / 6th Place' : '7th / 8th Place', placeBase: 5 + i * 2 }));
+  }
+  return out;
+}
+
+// F-2: consolation SEMIS (round-2 small finals) in the new 5-8 bracket. Empty
+// for runoff_to_4th and for legacy runoff_to_8th (where round-2 is terminal).
+function consolSemisInOrder(consolMatches) {
+  const hasNew58 = consolMatches.some(m => m.bracket_round === 1 && m.bracket_position === 3);
+  if (!hasNew58) return [];
+  return consolMatches
+    .filter(m => m.bracket_round === 2)
+    .sort((a, b) => a.bracket_position - b.bracket_position);
+}
+
 function buildBracketPairings(event, mainMatches, consolMatches, qualRounds, finalsRounds, runoffOption) {
   const genderPrefix = normalizeGender(event.gender) === 'F' ? 'W' : 'M';
   const pairingNums = new Map();
@@ -2638,18 +2671,26 @@ function buildBracketPairings(event, mainMatches, consolMatches, qualRounds, fin
       .sort((a, b) => a.bracket_position - b.bracket_position);
     for (const m of rm) { pNum++; pairingNums.set(m.id, pNum); }
   }
+  // F-2: assign consolation pairing numbers by (round, position) so the new
+  // 5-8 mini-bracket (semis + 5/6 + 7/8 finals) and legacy structures both work.
+  const addSmall = (round, pos) => {
+    const m = consolMatches.find(s => s.bracket_round === round && s.bracket_position === pos && !s.is_bye);
+    if (m) { pNum++; pairingNums.set(m.id, pNum); }
+  };
   for (const r of qualRounds) addMainRoundPairings(r);
   if (runoffOption === 'runoff_to_8th' && finalsRounds.includes(3)) {
-    addMainRoundPairings(3);
-    if (consolMatches[2]) { pNum++; pairingNums.set(consolMatches[2].id, pNum); }
-    addMainRoundPairings(2);
-    if (consolMatches[1]) { pNum++; pairingNums.set(consolMatches[1].id, pNum); }
-    if (consolMatches[0]) { pNum++; pairingNums.set(consolMatches[0].id, pNum); }
-    addMainRoundPairings(1);
+    addMainRoundPairings(3);   // QF
+    addSmall(2, 3);            // consolation semi A (legacy: terminal 5/6)
+    addSmall(2, 4);            // consolation semi B (legacy: terminal 7/8)
+    addMainRoundPairings(2);   // SF
+    addSmall(1, 4);            // 7/8 final (new structure only)
+    addSmall(1, 3);            // 5/6 final (new structure only)
+    addSmall(1, 2);            // 3/4 final
+    addMainRoundPairings(1);   // Championship final
   } else {
     for (const r of finalsRounds) {
       addMainRoundPairings(r);
-      if (r === 2 && consolMatches[0]) { pNum++; pairingNums.set(consolMatches[0].id, pNum); }
+      if (r === 2) addSmall(1, 2); // 3/4 final
     }
   }
   function pairingLabel(match) {
@@ -2789,21 +2830,24 @@ function renderBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, layout) 
   const fPos = buildBracketPositions(finalsRounds, finFirstMatches, fColW, fBoxW, MARG, BKTOP, mainH, mainMatches, totalRound, BOX_H);
   drawBracketSection(doc, finalsRounds, fPos, mainMatches, fColW, fBoxW, BKTOP, drawMatchFn, colors);
 
-  // Consolation matches
-  if (consolMatches.length > 0) {
+  // Consolation matches (F-2: 3/4 final, then the 5-8 semis feeding the 5/6 & 7/8 finals)
+  const finals = consolFinalsInOrder(consolMatches);
+  const semis  = consolSemisInOrder(consolMatches).map(m => ({ match: m, label: 'Consolation Semifinal' }));
+  const f34    = finals.filter(f => f.placeBase === 3);
+  const f5678  = finals.filter(f => f.placeBase >= 5);
+  const consolDisplay = [...f34, ...semis, ...f5678];
+  if (consolDisplay.length > 0) {
     doc.moveTo(MARG, consolTop - 6).lineTo(MARG + UW, consolTop - 6)
       .strokeColor(colors.connector).lineWidth(0.4).stroke();
     doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
       .text('Consolation', MARG, consolTop - 4, { width: UW, align: 'center' });
-    const consolLabels = ['3rd / 4th Place', '5th / 6th Place', '7th / 8th Place'];
-    const cW = UW / consolMatches.length;
-    consolMatches.forEach((m, i) => {
+    const cW = UW / consolDisplay.length;
+    consolDisplay.forEach(({ match, label }, i) => {
       const cx  = MARG + i * cW + 4;
       const cw  = cW - 8;
-      const lbl = consolLabels[i] || `Place ${i * 2 + 3} / ${i * 2 + 4}`;
       doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
-        .text(lbl, cx, consolTop + 8, { width: cw, align: 'center' });
-      drawMatchFn(m, cx, consolTop + 20, cw);
+        .text(label, cx, consolTop + 8, { width: cw, align: 'center' });
+      drawMatchFn(match, cx, consolTop + 20, cw);
     });
   }
 }
@@ -2921,22 +2965,22 @@ function renderCompactBracketPages(doc, bk, drawHeaderFn, drawMatchFn, colors, l
       finalBoxW = boxW;
     }
 
-    if (showConsol && finalPos) {
-      const consolLabels = ['3rd / 4th Place', '5th / 6th Place', '7th / 8th Place'];
+    // F-2: stack the place-deciding consolation finals (3/4, 5/6, 7/8) with
+    // medal annotations. The 5-8 consolation semis are omitted here to keep the
+    // vertical stack within the page; the bracket-keeper sheet shows them.
+    const consolFinals = consolFinalsInOrder(consolMatches);
+    if (showConsol && finalPos && consolFinals.length) {
       const cx = finalPos.x;
       const cw = finalBoxW;
       const labelH = 10;
       const interGap = 8;
       const firstGap = 14;
       let y = finalPos.y + BOX_H + firstGap;
-      consolMatches.forEach((m, i) => {
-        const lbl = consolLabels[i] || `Place ${i * 2 + 3} / ${i * 2 + 4}`;
+      consolFinals.forEach(({ match: m, label, placeBase }) => {
         doc.fillColor(colors.label).fontSize(7).font('Helvetica-Bold')
-          .text(lbl, cx, y, { width: cw, align: 'center' });
+          .text(label, cx, y, { width: cw, align: 'center' });
         let opts = {};
-        const includeThis = i === 0 || runoffOption === 'runoff_to_8th';
-        if (includeThis && m.status === 'complete' && !m.is_bye && m.winner_registration_id) {
-          const placeBase = 3 + i * 2;  // 3, 5, 7
+        if (m.status === 'complete' && !m.is_bye && m.winner_registration_id) {
           const blueWon = m.winner_registration_id === m.registration_id_blue;
           opts = blueWon
             ? { bluePlace: ORDINAL[placeBase - 1], redPlace: ORDINAL[placeBase] }

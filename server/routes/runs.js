@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, getClient } = require('../db/schema');
-const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats, applyRepeatJumpRule } = require('../scoring/engine');
+const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const { requireAuth } = require('../middleware/auth');
@@ -342,6 +342,7 @@ router.get('/active', async (req, res) => {
 
 // Resolve DD value for a jump code; throws with a user-readable message on miss.
 async function resolveJumpDD(code, disc, gender) {
+  // Exact-case lookups first so case-distinct codes (bp vs bP) stay correct.
   let r = await queryOne(
     `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`,
     [code, disc, gender]
@@ -349,6 +350,20 @@ async function resolveJumpDD(code, disc, gender) {
   if (!r) {
     r = await queryOne(
       `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`,
+      [code, disc]
+    );
+  }
+  // F-6: case-insensitive fallback ONLY when the exact-case lookup misses, so
+  // lower-case entries (g, 3g, lg) resolve to G/3G/lG without disturbing bp/bP.
+  if (!r) {
+    r = await queryOne(
+      `SELECT dd_value FROM jump_dd_table WHERE jump_code=? COLLATE NOCASE AND discipline=? AND gender=?`,
+      [code, disc, gender]
+    );
+  }
+  if (!r) {
+    r = await queryOne(
+      `SELECT dd_value FROM jump_dd_table WHERE jump_code=? COLLATE NOCASE AND discipline=?`,
       [code, disc]
     );
   }
@@ -431,7 +446,7 @@ router.post('/manual', requireAuth, async (req, res) => {
     }
 
     // Scored path -- validate and resolve jump codes
-    let dd1 = null, dd2 = null;
+    let dd1 = null, dd2 = null, isRepeat = false;
     if (jump1_code) {
       try { dd1 = await resolveJumpDD(jump1_code, disc, eventGender); }
       catch (e) { return res.status(400).json({ error: e.message }); }
@@ -439,12 +454,9 @@ router.post('/manual', requireAuth, async (req, res) => {
     if (jump2_code) {
       try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
       catch (e) { return res.status(400).json({ error: e.message }); }
-      const duplicate = !!(jump1_code && areJumpsRepeats(jump1_code, jump2_code));
-      if (duplicate && event.discipline !== 'aerials') {
-        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
-        dd1 = adj.dd1;
-        dd2 = adj.dd2;
-      }
+      // F-5: detect repeats here but let calcMogulScore decide which jump to
+      // drop AFTER scoring (RQS keeps the higher-scored jump). DDs stay intact.
+      isRepeat = !!(jump1_code && areJumpsRepeats(jump1_code, jump2_code)) && event.discipline !== 'aerials';
     }
 
     // Compute scores using the same engine functions as the normal scoring flow
@@ -459,6 +471,7 @@ router.post('/manual', requireAuth, async (req, res) => {
     } else {
       result = calcMogulScore({
         tlScores:       tl_scores,
+        tlDeductions:   tl_components.map(c => (c && c.deduction != null ? c.deduction : 0)),
         airScoresJump1: air_jump1_scores, dd1: dd1 || 0,
         airScoresJump2: air_jump2_scores, dd2: dd2 || 0,
         runTime:        run_time || null,
@@ -469,7 +482,12 @@ router.post('/manual', requireAuth, async (req, res) => {
         hasSpeed:       !!event.has_speed,
         numTlJudges:    event.num_tl_judges,
         numJumps:       event.num_jumps || 2,
+        isRepeat,
+        division:       event.division,
       });
+      // Persist DD=0 on the jump dropped by the repeat rule (display + back-compat).
+      if (result.repeatDroppedJump === 1) dd1 = 0;
+      else if (result.repeatDroppedJump === 2) dd2 = 0;
     }
 
     const id = uuidv4();
@@ -593,15 +611,12 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
       try { dd1 = await resolveJumpDD(jump1_code, disc, eventGender); }
       catch (e) { return res.status(400).json({ error: e.message }); }
     }
+    let isRepeat = false;
     if (jump2_code) {
       try { dd2 = await resolveJumpDD(jump2_code, disc, eventGender); }
       catch (e) { return res.status(400).json({ error: e.message }); }
-      const duplicate = !!(code1 && areJumpsRepeats(code1, jump2_code));
-      if (duplicate && event.discipline !== 'aerials') {
-        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
-        dd1 = adj.dd1;
-        dd2 = adj.dd2;
-      }
+      // F-5: detect repeats; calcMogulScore drops the right jump after scoring.
+      isRepeat = !!(code1 && code2 && areJumpsRepeats(code1, code2)) && event.discipline !== 'aerials';
     }
 
     const finalTime = run_time !== undefined ? run_time : run.run_time;
@@ -617,6 +632,7 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
     } else {
       result = calcMogulScore({
         tlScores:       tl_scores,
+        tlDeductions:   tl_components.map(c => (c && c.deduction != null ? c.deduction : 0)),
         airScoresJump1: air_jump1_scores, dd1: dd1 || 0,
         airScoresJump2: air_jump2_scores, dd2: dd2 || 0,
         runTime:        finalTime || null,
@@ -627,7 +643,11 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
         hasSpeed:       !!event.has_speed,
         numTlJudges:    event.num_tl_judges,
         numJumps:       event.num_jumps || 2,
+        isRepeat,
+        division:       event.division,
       });
+      if (result.repeatDroppedJump === 1) dd1 = 0;
+      else if (result.repeatDroppedJump === 2) dd2 = 0;
     }
 
     // v1.18.01 — aerials now also persists pre-DD raw air execution for tie-break
@@ -802,13 +822,9 @@ router.post('/', async (req, res) => {
       } else {
         dd2 = r.dd_value;
       }
-      if (duplicateJumps && event.discipline !== 'aerials') {
-        // Repeat jump rule. USSS first-counts (default) zeros dd2;
-        // RMF RQS higher-counts zeros whichever jump has the lower DD.
-        const adj = applyRepeatJumpRule(dd1, dd2, event.division);
-        dd1 = adj.dd1;
-        dd2 = adj.dd2;
-      }
+      // F-5: store BOTH real DDs at run-start. The repeat-jump decision (which
+      // jump to drop) is made in tryFinalize once air scores exist, because RQS
+      // keeps the higher-SCORED jump, not the higher-DD one.
     }
 
     const id = uuidv4();
@@ -953,13 +969,8 @@ router.put('/:runId', requireAuth, async (req, res) => {
         } else {
           dd2 = r.dd_value;
         }
-        if (duplicateJumps && event.discipline !== 'aerials') {
-          // Repeat jump rule. USSS first-counts (default) zeros dd2;
-          // RMF RQS higher-counts zeros whichever jump has the lower DD.
-          const adj = applyRepeatJumpRule(dd1, dd2, event.division);
-          dd1 = adj.dd1;
-          dd2 = adj.dd2;
-        }
+        // F-5: store both real DDs; the repeat decision is deferred to
+        // tryFinalize (RQS keeps the higher-SCORED jump, not higher-DD).
       }
     }
 
@@ -1094,9 +1105,10 @@ async function tryFinalize(run, eventId) {
     return tryFinalizeAerials(run, event);
   }
 
-  // Fetch scores joined to judge role so HJ-only judges are excluded from the turns count
+  // Fetch scores joined to judge role so HJ-only judges are excluded from the turns count.
+  // tl_deduction is pulled so the 5-TL separate high/low drop (F-7) can reconstruct gross.
   const scores = await queryAll(
-    `SELECT js.score_type, js.raw_score, j.role
+    `SELECT js.score_type, js.raw_score, js.tl_deduction, j.role
      FROM judge_scores js
      JOIN judges j ON j.id = js.judge_id
      WHERE js.run_id=?`,
@@ -1106,7 +1118,9 @@ async function tryFinalize(run, eventId) {
   // A judge holding a dual role (assigned both a TL position AND the HJ position as
   // separate judge records) will contribute their TL score here correctly.
   // A standalone HJ who is not also assigned a TL role will not affect the count.
-  const tl = scores.filter(s => s.score_type === 'turns' && /^TL/.test(s.role)).map(s => s.raw_score);
+  const tlRows = scores.filter(s => s.score_type === 'turns' && /^TL/.test(s.role));
+  const tl = tlRows.map(s => s.raw_score);
+  const tlDeductions = tlRows.map(s => s.tl_deduction || 0);
   const a1 = scores.filter(s => s.score_type === 'air_jump1').map(s => s.raw_score);
   const a2 = scores.filter(s => s.score_type === 'air_jump2').map(s => s.raw_score);
 
@@ -1116,8 +1130,14 @@ async function tryFinalize(run, eventId) {
   if (needsJump2 && a2.length < event.num_air_judges) return null;
   if (event.has_speed && !run.run_time) return null;
 
+  // F-5: detect a repeat from the stored codes; the engine decides which jump
+  // to drop after scoring (RQS keeps the higher-scored jump).
+  const isRepeat = !!(run.jump1_code && run.jump2_code && areJumpsRepeats(run.jump1_code, run.jump2_code))
+                   && event.discipline !== 'aerials';
+
   const result = calcMogulScore({
     tlScores: tl,
+    tlDeductions,
     airScoresJump1: a1, dd1: run.jump1_dd || 0,
     airScoresJump2: a2, dd2: run.jump2_dd || 0,
     runTime: run.run_time,
@@ -1128,7 +1148,16 @@ async function tryFinalize(run, eventId) {
     hasSpeed: !!event.has_speed,
     numTlJudges: event.num_tl_judges,
     numJumps: event.num_jumps || 2,
+    isRepeat,
+    division: event.division,
   });
+
+  // F-5: persist DD=0 on the jump the repeat rule dropped (display + back-compat).
+  if (result.repeatDroppedJump === 1 && run.jump1_dd) {
+    await execute(`UPDATE runs SET jump1_dd=0 WHERE id=?`, [run.id]);
+  } else if (result.repeatDroppedJump === 2 && run.jump2_dd) {
+    await execute(`UPDATE runs SET jump2_dd=0 WHERE id=?`, [run.id]);
+  }
 
   // Check whether a Head Judge is configured for this event
   const hj = await queryOne(`SELECT id FROM judges WHERE event_id=? AND role='HJ'`, [eventId]);
@@ -1467,7 +1496,7 @@ router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res)
     // Recompute partial totals from remaining scores (regardless of completeness)
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     const remaining = await queryAll(
-      `SELECT js.score_type, js.raw_score, j.role
+      `SELECT js.score_type, js.raw_score, js.tl_deduction, j.role
        FROM judge_scores js
        JOIN judges j ON j.id = js.judge_id
        WHERE js.run_id=?`,
@@ -1527,12 +1556,17 @@ router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res)
         });
       }
     } else {
-      const tl = remaining.filter(s => s.score_type === 'turns' && /^TL/.test(s.role)).map(s => s.raw_score);
+      const tlRows = remaining.filter(s => s.score_type === 'turns' && /^TL/.test(s.role));
+      const tl = tlRows.map(s => s.raw_score);
+      const tlDeductions = tlRows.map(s => s.tl_deduction || 0);
       const a1 = remaining.filter(s => s.score_type === 'air_jump1').map(s => s.raw_score);
       const a2 = remaining.filter(s => s.score_type === 'air_jump2').map(s => s.raw_score);
+      const isRepeat = !!(run.jump1_code && run.jump2_code && areJumpsRepeats(run.jump1_code, run.jump2_code))
+                       && event.discipline !== 'aerials';
       if (tl.length > 0 || a1.length > 0 || a2.length > 0) {
         partial = calcMogulScore({
           tlScores: tl.length > 0 ? tl : [0],
+          tlDeductions: tl.length > 0 ? tlDeductions : [0],
           airScoresJump1: a1.length > 0 ? a1 : [0], dd1: run.jump1_dd || 0,
           airScoresJump2: a2.length > 0 ? a2 : [0], dd2: run.jump2_dd || 0,
           runTime: run.run_time,
@@ -1543,6 +1577,8 @@ router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res)
           hasSpeed: !!event.has_speed,
           numTlJudges: event.num_tl_judges,
           numJumps: event.num_jumps || 2,
+          isRepeat,
+          division: event.division,
         });
       }
     }
