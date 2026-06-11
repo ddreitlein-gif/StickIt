@@ -156,7 +156,7 @@ app.post('/api/events/:eventId/finalize', requireAuth, async (req, res) => {
 });
 
 // POST return event to scoring (reopen last phase so HJ can reject and re-score)
-app.post('/api/events/:eventId/return-to-scoring', async (req, res) => {
+app.post('/api/events/:eventId/return-to-scoring', requireAuth, async (req, res) => {
   try {
     const { eventId } = req.params;
     const { execute, queryAll } = require('./db/schema');
@@ -172,6 +172,16 @@ app.post('/api/events/:eventId/return-to-scoring', async (req, res) => {
     if (app.broadcast) app.broadcast(eventId, 'run_round_status', { run_number: lastPhase.run_number, status: 'complete' });
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// v1.25.00 (E-1) -- operator control to hide/show the broadcast overlay graphics.
+app.post('/api/events/:eventId/overlay/hide', requireAuth, (req, res) => {
+  if (app.broadcast) app.broadcast(req.params.eventId, 'OVERLAY_HIDE', {});
+  res.json({ ok: true });
+});
+app.post('/api/events/:eventId/overlay/show', requireAuth, (req, res) => {
+  if (app.broadcast) app.broadcast(req.params.eventId, 'OVERLAY_SHOW', {});
+  res.json({ ok: true });
 });
 
 // Direct event lookup by ID (no meetId required -- used by Scoreboard and Overlay)
@@ -212,6 +222,14 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 initSchema().then(async () => {
+  // v1.25.00 (A-6) -- load (or generate-and-persist) the JWT secret so sessions
+  // survive server restarts. Must run before any login/verify can happen.
+  try {
+    await require('./middleware/auth').initJwtSecret();
+  } catch (e) {
+    console.error('[startup] initJwtSecret failed:', e.message);
+  }
+
   // Clear any stale dual mogul manual-entry locks from a prior run. If the
   // server crashed (or the operator's browser closed) while a manual-entry
   // session was open, judges' tablets would otherwise stay locked indefinitely.

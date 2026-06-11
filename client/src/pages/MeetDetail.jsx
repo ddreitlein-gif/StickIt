@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import api, { authHeaders } from '../utils/api'
+import api, { authHeaders, downloadAuthed } from '../utils/api'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
 const DIVISION_LABEL = { comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }
@@ -779,7 +779,7 @@ function CourseSpecsPanel({ meetId }) {
 
   useEffect(() => { load() }, [meetId])
 
-  const save = async () => {
+  const save = async (overrideStandard) => {
     setSaving(true)
     setError('')
     setSaved(false)
@@ -791,13 +791,21 @@ function CourseSpecsPanel({ meetId }) {
         pitch_deg: form.pitch_deg ? parseFloat(form.pitch_deg) : null,
         pace_time_override_m: overrideM && overrideValM ? parseFloat(overrideValM) : null,
         pace_time_override_f: overrideF && overrideValF ? parseFloat(overrideValF) : null,
-        pace_standard: paceStandard,
+        pace_standard: overrideStandard || paceStandard,
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
       load()
     } catch (err) { setError(err.message) }
     finally { setSaving(false) }
+  }
+
+  // v1.25.00 (C-12) — the USSS/FIS toggle persists immediately when a spec
+  // already exists, so what's displayed is always what's active.
+  const changePaceStandard = (std) => {
+    if (std === paceStandard) return
+    setPaceStandard(std)
+    if (spec) save(std)
   }
 
   const paceM = calcPace(form.length_m, 'M')
@@ -835,15 +843,18 @@ function CourseSpecsPanel({ meetId }) {
           <div className="text-sm text-slate-400">Pace Time (Length / Speed)</div>
           <div className="flex items-center gap-1 bg-slate-800 rounded-lg p-0.5">
             <button
-              onClick={() => setPaceStandard('usss')}
+              onClick={() => changePaceStandard('usss')}
               className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${paceStandard === 'usss' ? 'bg-mountain-600 text-white' : 'text-slate-400 hover:text-white'}`}
             >USSS</button>
             <button
-              onClick={() => setPaceStandard('fis')}
+              onClick={() => changePaceStandard('fis')}
               className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${paceStandard === 'fis' ? 'bg-mountain-600 text-white' : 'text-slate-400 hover:text-white'}`}
             >FIS</button>
           </div>
         </div>
+        {!spec && (
+          <p className="text-xs text-amber-500/80 mb-2">Standard not saved until you press Save Course.</p>
+        )}
         <div className="grid grid-cols-2 gap-4">
           {/* Men */}
           <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
@@ -891,7 +902,7 @@ function CourseSpecsPanel({ meetId }) {
       </div>
 
       <div className="flex items-center gap-3 pt-2">
-        <button onClick={save} disabled={saving} className="btn-primary">
+        <button onClick={() => save()} disabled={saving} className="btn-primary">
           {saving ? 'Saving...' : 'Save Course'}
         </button>
         {saved && <span className="text-green-400 text-sm">Saved -- pace times updated on all events</span>}
@@ -1125,11 +1136,33 @@ export default function MeetDetail() {
     setMeet(m => ({ ...m, events: m.events.filter(e => e.id !== eventId) }))
   }
 
+  // v1.25.00 (C-8) — confirm before manually flipping to/from complete, which
+  // bypasses the Close Meet / finalize flow.
   const setMeetStatus = async (status) => {
+    if (status === meet.status) return
+    if (status === 'complete' || meet.status === 'complete') {
+      const msg = status === 'complete'
+        ? 'Mark this meet Complete? "Close Meet and Export to USSS" is the normal completion path. Mark complete anyway?'
+        : `Change meet status from Complete back to ${status}?`
+      if (!window.confirm(msg)) return
+    }
     const updated = await api.updateMeet(meetId, { status })
     setMeet(m => ({ ...m, status: updated.status }))
     setEditingStatus(false)
   }
+
+  // v1.25.00 (A-1) — Export Meet must carry the auth token; window.open can't.
+  const [exportingMeet, setExportingMeet] = useState(false)
+  const handleExportMeet = async () => {
+    setExportingMeet(true)
+    try {
+      await downloadAuthed(`/api/meets/${meet.id}/export`, { fallbackName: `meet_${meet.id}.zip` })
+    } catch (e) { alert('Export failed: ' + e.message) }
+    finally { setExportingMeet(false) }
+  }
+
+  // v1.25.00 (C-11) — rarely-used header actions live under a More menu.
+  const [showMore, setShowMore] = useState(false)
 
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!meet) return null
@@ -1164,15 +1197,18 @@ export default function MeetDetail() {
                 'bg-slate-800 text-slate-400 border-slate-700'}`}>
               {meet.status}
             </span>
-            <select
-              className="bg-transparent text-xs text-slate-600 hover:text-slate-400 cursor-pointer"
-              value={meet.status}
-              onChange={e => setMeetStatus(e.target.value)}
-            >
-              <option value="setup">Setup</option>
-              <option value="active">Active</option>
-              <option value="complete">Complete</option>
-            </select>
+            <label className="flex items-center gap-1 text-xs text-slate-600">
+              Status:
+              <select
+                className="bg-transparent text-xs text-slate-600 hover:text-slate-400 cursor-pointer"
+                value={meet.status}
+                onChange={e => setMeetStatus(e.target.value)}
+              >
+                <option value="setup">Setup</option>
+                <option value="active">Active</option>
+                <option value="complete">Complete</option>
+              </select>
+            </label>
             {writeCount !== null && (
               <span className="text-xs text-slate-600" title="Write operations since server start">
                 autosave: {writeCount} writes
@@ -1184,10 +1220,7 @@ export default function MeetDetail() {
             <MeetRankingField meetId={meetId} value={meet.meet_ranking} onSave={refreshMeet} />
           </div>
         </div>
-        <div className="flex gap-3">
-          <button onClick={downloadTdReport} className="btn-secondary text-sm">
-            TD Report
-          </button>
+        <div className="flex flex-wrap gap-3 justify-end">
           <button onClick={() => navigate(`/dashboard/meets/${meetId}/training`)} className="btn-secondary text-sm">
             Training Days
           </button>
@@ -1201,15 +1234,38 @@ export default function MeetDetail() {
               Reopen Meet
             </button>
           )}
-          <button
-            onClick={() => window.open(`/api/meets/${meet.id}/export`, '_blank')}
-            className="btn-secondary text-sm"
-          >
-            Export Meet
-          </button>
-          <button onClick={() => setShowClone(true)} className="btn-secondary text-sm">
-            Clone Meet
-          </button>
+          {/* v1.25.00 (C-11) — rarely-used actions grouped under More */}
+          <div className="relative">
+            <button onClick={() => setShowMore(s => !s)} className="btn-secondary text-sm">
+              More ▾
+            </button>
+            {showMore && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowMore(false)} />
+                <div className="absolute right-0 mt-1 w-44 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20 py-1">
+                  <button
+                    onClick={() => { setShowMore(false); downloadTdReport() }}
+                    className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  >
+                    TD Report
+                  </button>
+                  <button
+                    onClick={() => { setShowMore(false); handleExportMeet() }}
+                    disabled={exportingMeet}
+                    className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  >
+                    {exportingMeet ? 'Exporting...' : 'Export Meet'}
+                  </button>
+                  <button
+                    onClick={() => { setShowMore(false); setShowClone(true) }}
+                    className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  >
+                    Clone Meet
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button onClick={() => setShowCreate(true)} className="btn-primary">
             + Add Event
           </button>

@@ -5,17 +5,40 @@ const bcrypt = require('bcryptjs');
 const { queryAll, queryOne, execute } = require('../db/schema');
 const { VERSION } = require('../version');
 const { isAuthEnabled } = require('../middleware/auth');
-
-const VALID_ROLES = ['official', 'event_admin', 'system_admin'];
+const { VALID_ROLES } = require('../auth/roles');
 
 // ── Users CRUD ──────────────────────────────────────────────────────────────
 
 router.get('/users', async (req, res) => {
   try {
-    const users = await queryAll('SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users ORDER BY display_name');
+    const users = await queryAll(
+      `SELECT id, username, display_name, role, is_active, created_at, updated_at,
+              CASE WHEN password_hash IS NOT NULL THEN 1 ELSE 0 END AS has_password
+       FROM users ORDER BY display_name`
+    );
     res.json(users);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// v1.25.00 (A-4) — refuse changes that would lock the admin panel out entirely.
+// req.user is only set when auth is enabled; the last-admin rule applies always.
+async function deactivationGuard(req, res, target) {
+  if (req.user && req.user.id === target.id) {
+    res.status(400).json({ error: 'You cannot deactivate your own account' });
+    return false;
+  }
+  if (target.role === 'system_admin' || target.role === 'event_admin') {
+    const row = await queryOne(
+      `SELECT COUNT(*) AS cnt FROM users WHERE is_active=1 AND role IN ('event_admin','system_admin') AND id != ?`,
+      [target.id]
+    );
+    if (!row || parseInt(row.cnt) === 0) {
+      res.status(400).json({ error: 'Cannot deactivate the last active admin' });
+      return false;
+    }
+  }
+  return true;
+}
 
 router.get('/users/:id', async (req, res) => {
   try {
@@ -55,6 +78,8 @@ router.put('/users/:id', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const { display_name, role, is_active, password } = req.body;
     if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+    const deactivating = (is_active === 0 || is_active === false) && user.is_active;
+    if (deactivating && !(await deactivationGuard(req, res, user))) return;
     await execute(
       `UPDATE users SET display_name=COALESCE(?,display_name), role=COALESCE(?,role), is_active=COALESCE(?,is_active), updated_at=datetime('now') WHERE id=?`,
       [display_name || null, role || null, is_active !== undefined ? is_active : null, req.params.id]
@@ -79,6 +104,7 @@ router.delete('/users/:id', async (req, res) => {
   try {
     const user = await queryOne('SELECT * FROM users WHERE id=?', [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.is_active && !(await deactivationGuard(req, res, user))) return;
     await execute(`UPDATE users SET is_active=0, updated_at=datetime('now') WHERE id=?`, [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -260,6 +286,10 @@ router.get('/dashboard', async (req, res) => {
       errors: (req.app.errorLog || []).slice(-50).reverse(),
       audit_log: auditLog,
       auth: { enabled: authEnabled, env_forced: envForced },
+      env: {
+        deepgram_configured: !!process.env.DEEPGRAM_API_KEY,
+        jwt_secret_set: !!process.env.STICKIT_JWT_SECRET,
+      },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -271,7 +301,8 @@ router.get('/athletes', async (req, res) => {
     const { q, division } = req.query;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
-    const conds = ['deleted_at IS NULL'];
+    // v1.25.00 (B-7): ?deleted=1 lists soft-deleted athletes for the restore view.
+    const conds = [req.query.deleted === '1' ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'];
     const args = [];
     if (q && q.trim()) {
       const t = `%${q.trim()}%`;
@@ -377,6 +408,42 @@ router.post('/athletes/delete', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// v1.25.00 (B-7) — restore soft-deleted athletes.
+router.post('/athletes/restore', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
+    const placeholders = ids.map(() => '?').join(',');
+    await execute(
+      `UPDATE athletes SET deleted_at=NULL WHERE id IN (${placeholders}) AND deleted_at IS NOT NULL`,
+      ids
+    );
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('athletes_restored', 'athlete', null, null, { count: ids.length, ids });
+    } catch (_) {}
+    res.json({ restored: ids.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// v1.25.00 (B-9b) — deliberately re-open a finalized event so scores can be corrected.
+router.post('/events/:eventId/reopen', async (req, res) => {
+  try {
+    const ev = await queryOne('SELECT id, name, status, discipline FROM events WHERE id=?', [req.params.eventId]);
+    if (!ev) return res.status(404).json({ error: 'Event not found' });
+    if (ev.status !== 'complete') return res.status(400).json({ error: 'Event is not finalized' });
+    await execute(`UPDATE events SET status='in_progress', updated_at=datetime('now') WHERE id=?`, [ev.id]);
+    if (ev.discipline === 'dual_mogul') {
+      await execute(`UPDATE events SET dual_bracket_review_status=NULL WHERE id=?`, [ev.id]);
+    }
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('event_reopened', 'event', ev.id, null, { name: ev.name, discipline: ev.discipline });
+    } catch (_) {}
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── USSS People (view + CSV download) ───────────────────────────────────────
 
 router.get('/usss/people', async (req, res) => {
@@ -468,6 +535,30 @@ router.get('/backups/:filename/download', async (req, res) => {
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     fs.createReadStream(fullPath).pipe(res);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// v1.25.00 (B-9a) — restore a backup over the live database. Takes a pre-restore
+// safety backup first. The server must be restarted afterward to reload the DB.
+router.post('/backups/:filename/restore', async (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const { BACKUP_DIR, doBackup } = require('../db/autosave');
+    const { filename } = req.params;
+    if (!/^scoring_[\w\-]+\.db$/.test(filename)) {
+      return res.status(400).json({ error: 'Invalid backup filename' });
+    }
+    const fullPath = path.join(BACKUP_DIR, filename);
+    if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Backup not found' });
+    await doBackup(); // pre-restore safety copy of the current DB
+    const dbPath = path.join(__dirname, '../data/scoring.db');
+    fs.copyFileSync(fullPath, dbPath);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('backup_restored', 'backup', filename, null, { filename });
+    } catch (_) {}
+    res.json({ ok: true, restart_required: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

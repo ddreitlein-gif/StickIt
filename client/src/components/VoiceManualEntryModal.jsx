@@ -34,6 +34,7 @@ import { useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { api } from '../utils/api';
 import { extractValueForField, tokenizeUtterance, validateJumpCode } from '../voice/parser';
 import { createVoiceCapture } from '../voice/audioCapture';
+import StatusConfirmDialog from './StatusConfirmDialog';
 
 const SCREEN = {
   BIB: 'bib',
@@ -1141,26 +1142,6 @@ function ErrorScreen({ error, onRetry, onClose }) {
       <div className="flex justify-center gap-3">
         <button onClick={onRetry} className="px-4 py-2 bg-mountain-600 hover:bg-mountain-500 rounded text-white">Retry</button>
         <button onClick={onClose} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded text-slate-200">Close</button>
-      </div>
-    </div>
-  );
-}
-
-function StatusConfirmDialog({ status, athleteName, onConfirm, onCancel, submitting }) {
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-lg shadow-2xl w-full max-w-md p-5">
-        <h3 className="text-lg font-semibold text-slate-100 mb-2">Mark as {status}?</h3>
-        <p className="text-slate-300 text-sm mb-5">
-          {athleteName ? `${athleteName} will be recorded as ${status}.` : `Record this athlete as ${status}.`}
-          {' '}This overrides any scores entered so far.
-        </p>
-        <div className="flex justify-end gap-2">
-          <button onClick={onCancel} disabled={submitting} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-200">Cancel</button>
-          <button onClick={onConfirm} disabled={submitting} className="px-4 py-2 bg-rose-600 hover:bg-rose-500 rounded text-white font-semibold">
-            {submitting ? 'Submitting…' : `Confirm ${status}`}
-          </button>
-        </div>
       </div>
     </div>
   );

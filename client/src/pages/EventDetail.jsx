@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import api, { createWebSocket, authHeaders } from '../utils/api'
+import api, { createWebSocket, authHeaders, downloadAuthed } from '../utils/api'
 import { useAuth } from '../auth/AuthContext'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import CsvImportModal from '../components/CsvImportModal'
 import BibAssignModal from '../components/BibAssignModal'
 import VoiceManualEntryModal from '../components/VoiceManualEntryModal'
+import StatusConfirmDialog from '../components/StatusConfirmDialog'
+import AerialsV2ManualModal from '../components/AerialsV2ManualModal'
 import { QRCodeSVG } from 'qrcode.react'
 
 const ROLE_LABELS = {
@@ -51,6 +53,16 @@ function JudgePanel({ event, judges, onRefresh }) {
   const { meetId } = useParams()
   const [form, setForm]   = useState({ name: '', role: 'TL1', ussa_id: '' })
   const [error, setError] = useState('')
+  // v1.25.00 (C-15) — inline edit of judge name + USSS ID
+  const [editJudgeId, setEditJudgeId] = useState(null)
+  const [editJudgeForm, setEditJudgeForm] = useState({ name: '', ussa_id: '' })
+  const saveJudgeEdit = async (judgeId) => {
+    try {
+      await api.updateJudge(event.id, judgeId, { name: editJudgeForm.name.trim(), ussa_id: editJudgeForm.ussa_id.trim() || null })
+      setEditJudgeId(null)
+      onRefresh()
+    } catch (err) { setError(err.message) }
+  }
 
   const usedRoles = new Set(judges.map(j => j.role))
   const availableRoles = []
@@ -133,9 +145,31 @@ function JudgePanel({ event, judges, onRefresh }) {
               {judges.map(j => (
                 <tr key={j.id}>
                   <td><span className={`font-semibold ${ROLE_COLOR[j.role] || 'text-slate-300'}`}>{ROLE_LABELS[j.role] || j.role}</span></td>
-                  <td className="text-white">{j.name}</td>
-                  <td className="font-mono text-slate-400 text-xs">{j.ussa_id || '--'}</td>
-                  <td><button onClick={async () => { await api.removeJudge(event.id, j.id); onRefresh() }} className="text-red-500 hover:text-red-400 text-xs">Remove</button></td>
+                  {editJudgeId === j.id ? (
+                    <>
+                      <td>
+                        <input className="input py-1 text-sm" value={editJudgeForm.name}
+                          onChange={e => setEditJudgeForm(f => ({ ...f, name: e.target.value }))} />
+                      </td>
+                      <td>
+                        <input className="input py-1 text-xs font-mono w-28" value={editJudgeForm.ussa_id}
+                          onChange={e => setEditJudgeForm(f => ({ ...f, ussa_id: e.target.value }))} />
+                      </td>
+                      <td className="whitespace-nowrap">
+                        <button onClick={() => saveJudgeEdit(j.id)} className="text-green-500 hover:text-green-400 text-xs mr-3">Save</button>
+                        <button onClick={() => setEditJudgeId(null)} className="text-slate-500 hover:text-slate-400 text-xs">Cancel</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="text-white">{j.name}</td>
+                      <td className="font-mono text-slate-400 text-xs">{j.ussa_id || '--'}</td>
+                      <td className="whitespace-nowrap">
+                        <button onClick={() => { setEditJudgeId(j.id); setEditJudgeForm({ name: j.name || '', ussa_id: j.ussa_id || '' }) }} className="text-mountain-400 hover:text-mountain-300 text-xs mr-3">Edit</button>
+                        <button onClick={async () => { if (!window.confirm(`Remove judge ${j.name} (${ROLE_LABELS[j.role] || j.role})? Their tablet link stops working.`)) return; await api.removeJudge(event.id, j.id); onRefresh() }} className="text-red-500 hover:text-red-400 text-xs">Remove</button>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -156,7 +190,7 @@ function JudgePanel({ event, judges, onRefresh }) {
           </button>
           {seedError && <p className="text-red-400 text-sm mt-2">{seedError}</p>}
           <p className="text-xs text-slate-500 mt-3">
-            After seeding, edit each judge&apos;s name from the Assigned Judges table above (click to remove and re-add via the Add Judge form, or use the API).
+            After seeding, edit each judge&apos;s name with the Edit button in the Assigned Judges table above.
             The Head Judge is added separately below.
           </p>
         </div>
@@ -1110,113 +1144,6 @@ function HeatsPanel({ event, registrations, onRefresh }) {
   )
 }
 
-// ── Link Events Panel ─────────────────────────────────────────────────────────
-function LinkEventsPanel({ event, onRefresh }) {
-  const { meetId } = useParams()
-  const [meetEvents,   setMeetEvents]   = useState([])
-  const [qualId,       setQualId]       = useState(event.qualifier_event_id || '')
-  const [finalsId,     setFinalsId]     = useState(event.finals_event_id   || '')
-  const [saving,       setSaving]       = useState(false)
-  const [msg,          setMsg]          = useState('')
-  const [topByes,      setTopByes]      = useState(0)
-  const [seeding,      setSeeding]      = useState(false)
-  const [seedMsg,      setSeedMsg]      = useState('')
-
-  useEffect(() => {
-    setQualId(event.qualifier_event_id || '')
-    setFinalsId(event.finals_event_id  || '')
-  }, [event.qualifier_event_id, event.finals_event_id])
-
-  useEffect(() => {
-    api.getEvents(meetId).then(evts => setMeetEvents(evts.filter(e => e.id !== event.id))).catch(() => {})
-  }, [meetId])
-
-  const save = async () => {
-    setSaving(true); setMsg('')
-    try {
-      await api.updateEvent(meetId, event.id, {
-        qualifier_event_id: qualId   || null,
-        finals_event_id:    finalsId || null,
-      })
-      setMsg('Saved.')
-      onRefresh()
-    } catch (e) { setMsg(`Error: ${e.message}`) }
-    setSaving(false)
-  }
-
-  const doSeedFromQualifier = async () => {
-    setSeeding(true); setSeedMsg('')
-    try {
-      const res = await api.seedFromQualifier(event.id, { topByes })
-      setSeedMsg(`Run order seeded from qualifier.  ${res.count} athletes ordered${res.byes ? `, ${res.byes} byes assigned` : ''}.`)
-      onRefresh()
-    } catch (e) { setSeedMsg(`Error: ${e.message}`) }
-    setSeeding(false)
-  }
-
-  const evtLabel = (e) => `${e.name} (${e.discipline === 'dual_mogul' ? 'Dual' : e.discipline === 'aerials' ? 'Aerials' : 'Moguls'} -- ${e.gender === 'M' ? 'Men' : 'Women'})`
-
-  return (
-    <div className="space-y-6 max-w-xl">
-      <div className="card">
-        <h3 className="font-display text-lg text-white mb-1">Link Qualifier / Finals Events</h3>
-        <p className="text-xs text-slate-400 mb-5">
-          Designate another event in this meet as the qualifier or finals for this event.
-          These links enable seeding the finals run order from qualifier results and
-          registering finalists directly into the finals event.
-        </p>
-        <div className="space-y-4">
-          <div>
-            <label className="label">Qualifier Event (feeds results into this event)</label>
-            <select className="input" value={qualId} onChange={e => setQualId(e.target.value)}>
-              <option value="">-- None --</option>
-              {meetEvents.map(e => <option key={e.id} value={e.id}>{evtLabel(e)}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label">Finals Event (receives finalists selected from this event)</label>
-            <select className="input" value={finalsId} onChange={e => setFinalsId(e.target.value)}>
-              <option value="">-- None --</option>
-              {meetEvents.map(e => <option key={e.id} value={e.id}>{evtLabel(e)}</option>)}
-            </select>
-          </div>
-          <div className="flex gap-3 items-center">
-            <button onClick={save} disabled={saving} className="btn-primary">
-              {saving ? 'Saving...' : 'Save Links'}
-            </button>
-            {msg && <span className="text-sm text-emerald-400">{msg}</span>}
-          </div>
-        </div>
-      </div>
-
-      {/* Seed from qualifier */}
-      <div className="card">
-        <h3 className="font-display text-lg text-white mb-1">Seed Run Order from Qualifier</h3>
-        <p className="text-xs text-slate-400 mb-4">
-          Sets the run order for this event based on linked qualifier results.
-          Best qualifier runs last.  Top-ranked athletes with a bye are placed at the end.
-        </p>
-        <div className="flex gap-4 items-end">
-          <div>
-            <label className="label">Top N Byes</label>
-            <input type="number" min={0} max={32} className="input w-20"
-              value={topByes} onChange={e => setTopByes(Number(e.target.value))} />
-          </div>
-          <button onClick={doSeedFromQualifier} disabled={seeding || !event.qualifier_event_id}
-            className={`btn-primary ${!event.qualifier_event_id ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title={!event.qualifier_event_id ? 'Link a qualifier event first' : ''}>
-            {seeding ? 'Seeding...' : 'Seed from Qualifier'}
-          </button>
-        </div>
-        {!event.qualifier_event_id && (
-          <p className="text-xs text-amber-400 mt-2">Link a qualifier event above to enable this feature.</p>
-        )}
-        {seedMsg && <p className="text-sm text-emerald-400 mt-3">{seedMsg}</p>}
-      </div>
-    </div>
-  )
-}
-
 // ── Registration + Run Order Panel ────────────────────────────────────────────
 function computeAgeClass(birthYear, eventDate) {
   if (!birthYear) return '--';
@@ -1232,6 +1159,39 @@ function computeAgeClass(birthYear, eventDate) {
   if (age <= 18) return 'U19';
   if (age <= 20) return 'Sr';
   return 'Vet';
+}
+
+// v1.25.00 (C-2) — bib edits hold local state and save once on blur/Enter,
+// instead of writing (and refreshing the whole page) on every keystroke.
+function BibInput({ eventId, registration, onRefresh }) {
+  const [val, setVal] = useState(registration.bib_number != null ? String(registration.bib_number) : '')
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setVal(registration.bib_number != null ? String(registration.bib_number) : '')
+  }, [registration.bib_number])
+  const commit = async () => {
+    const newBib = val.trim() === '' ? null : parseInt(val)
+    const oldBib = registration.bib_number != null ? registration.bib_number : null
+    if (newBib === oldBib) return
+    try {
+      setFailed(false)
+      await api.updateRegistration(eventId, registration.id, { bib_number: newBib })
+      onRefresh()
+    } catch {
+      setFailed(true)
+    }
+  }
+  return (
+    <input
+      type="number"
+      className={`w-16 bg-slate-800 rounded px-2 py-1 text-sm text-center font-mono text-white border focus:outline-none ${failed ? 'border-red-500' : 'border-transparent focus:border-blue-500'}`}
+      value={val}
+      placeholder="--"
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+    />
+  )
 }
 
 function RegistrationPanel({ event, registrations, onRefresh }) {
@@ -1820,9 +1780,7 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
               {registrations.map(r => (
                 <tr key={r.id} className={isRegistrationIncomplete(r) ? 'bg-red-900/20' : (isMissingBibOnly(r) ? 'bg-yellow-900/20' : '')}>
                   <td>
-                    <input type="number" className="w-16 bg-slate-800 rounded px-2 py-1 text-sm text-center font-mono text-white border border-transparent focus:border-blue-500 focus:outline-none"
-                      value={r.bib_number||''} placeholder="--"
-                      onChange={e => api.updateRegistration(event.id,r.id,{bib_number:e.target.value?parseInt(e.target.value):null}).then(onRefresh)} />
+                    <BibInput eventId={event.id} registration={r} onRefresh={onRefresh} />
                   </td>
                   <td className="text-white font-medium">{r.last_name}, {r.first_name}</td>
                   <td className="font-mono text-slate-400 text-xs">{computeAgeClass(r.birth_year, event.event_date)}</td>
@@ -1844,7 +1802,7 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
                       <option value="scratched">Scratched</option>
                     </select>
                   </td>
-                  <td><button onClick={async()=>{await api.removeRegistration(event.id,r.id);onRefresh()}} className="text-red-500 hover:text-red-400 text-xs">Remove</button></td>
+                  <td><button onClick={async()=>{if(!window.confirm(`Remove ${r.last_name}, ${r.first_name} from this event? Their run order slot will be removed.`))return;await api.removeRegistration(event.id,r.id);onRefresh()}} className="text-red-500 hover:text-red-400 text-xs">Remove</button></td>
                 </tr>
               ))}
             </tbody>
@@ -2255,6 +2213,26 @@ function DualSeedingPanel({ event, registrations, orderList, onRefresh }) {
 }
 
 // ── Dual Mogul Scoring Panel ─────────────────────────────────────────────────
+// v1.25.00 (E-1) — operator control to hide/show the broadcast overlay graphics.
+// Hide persists on the overlay until the next run starts (or Show is clicked).
+function OverlayControl({ eventId }) {
+  const [busy, setBusy] = useState(false)
+  const send = async (action) => {
+    setBusy(true)
+    try {
+      await fetch(`/api/events/${eventId}/overlay/${action}`, { method: 'POST', headers: authHeaders() })
+    } catch (_) {}
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="flex items-center gap-1 text-xs text-slate-500">
+      <span>Broadcast Overlay:</span>
+      <button onClick={() => send('hide')} disabled={busy} className="btn-ghost text-xs px-2 py-1 disabled:opacity-40">Hide</button>
+      <button onClick={() => send('show')} disabled={busy} className="btn-ghost text-xs px-2 py-1 disabled:opacity-40">Show</button>
+    </div>
+  )
+}
+
 function DualScoringPanel({ event, registrations }) {
   const [bracket, setBracket] = useState([])
   const [activeMatchId, setActiveMatchId] = useState(null)
@@ -2435,7 +2413,7 @@ function DualScoringPanel({ event, registrations }) {
   const openManualEntry = async (m) => {
     setError('')
     try {
-      const res = await fetch(`/api/events/${event.id}/dual/manual-entry-start`, { method: 'POST' })
+      const res = await fetch(`/api/events/${event.id}/dual/manual-entry-start`, { method: 'POST', headers: authHeaders() })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to start manual entry')
       setPaperModal({ match: m, existingPoints: data.judgeScores || null, manualEntry: true })
@@ -2444,7 +2422,7 @@ function DualScoringPanel({ event, registrations }) {
 
   const cancelManualEntry = async () => {
     try {
-      await fetch(`/api/events/${event.id}/dual/manual-entry-cancel`, { method: 'POST' })
+      await fetch(`/api/events/${event.id}/dual/manual-entry-cancel`, { method: 'POST', headers: authHeaders() })
     } catch (_) {}
   }
 
@@ -2575,6 +2553,10 @@ function DualScoringPanel({ event, registrations }) {
 
   return (
     <div className="space-y-6">
+      {/* v1.25.00 (E-1) -- broadcast overlay hide/show */}
+      <div className="flex justify-start">
+        <OverlayControl eventId={event.id} />
+      </div>
       {/* v1.16.17 -- Bracket review status banners */}
       {reviewStatus === 'sent_back' && (
         <div className="card border-amber-700 bg-amber-900/10 flex items-center justify-between gap-4">
@@ -2799,7 +2781,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
       }
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
       const data = await res.json()
@@ -2815,7 +2797,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
     try {
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status }),
       })
       const data = await res.json()
@@ -3133,8 +3115,10 @@ function ScoringPanel({ event, registrations }) {
     <div className="space-y-6">
 
       {/* v1.20.00 -- Voice Manual Entry batch trigger (paper-mode-friendly bib confirmation flow) */}
-      {event.discipline !== 'dual_mogul' && (
-        <div className="flex justify-end">
+      {/* v1.25.00 (C-7/F-2) -- voice hidden on aerials: voice does not support aerials scoring */}
+      <div className="flex justify-between items-center">
+        <OverlayControl eventId={event.id} />
+        {event.discipline !== 'dual_mogul' && event.discipline !== 'aerials' ? (
           <button
             onClick={() => setVoiceModal({ mode: 'paper', runNumber: currentRunNumber })}
             className="text-xs px-3 py-1.5 rounded-lg bg-mountain-600 hover:bg-mountain-500 text-white font-semibold shadow"
@@ -3142,8 +3126,8 @@ function ScoringPanel({ event, registrations }) {
           >
             🎙 Voice Manual Entry
           </button>
-        </div>
-      )}
+        ) : <span />}
+      </div>
 
       {/* Active run */}
       {activeRun && (
@@ -3579,7 +3563,16 @@ function ScoringPanel({ event, registrations }) {
                     <select
                       className="bg-slate-800 text-xs text-slate-400 rounded px-1 py-0.5 border border-slate-700 w-20"
                       value={r.run_status || ''}
-                      onChange={async e => { await api.setRunStatus(event.id, r.id, e.target.value || null); loadAll() }}
+                      onChange={async e => {
+                        // v1.25.00 (C-6) — confirm before applying; results recompute live
+                        const newVal = e.target.value || null
+                        const name = `${r.first_name || ''} ${r.last_name || ''}`.trim() || `Bib ${r.bib_number}`
+                        const msg = newVal
+                          ? `Mark ${name} as ${newVal}? Results recompute immediately.`
+                          : `Clear the ${r.run_status} status for ${name}? Their scores become live again.`
+                        if (!window.confirm(msg)) { e.target.value = r.run_status || ''; return }
+                        await api.setRunStatus(event.id, r.id, newVal); loadAll()
+                      }}
                     >
                       <option value="">--</option>
                       <option value="DNS">DNS</option>
@@ -3632,7 +3625,18 @@ function ScoringPanel({ event, registrations }) {
         </div>
       )}
 
-      {manualModal && (
+      {/* v1.25.00 (C-7) -- aerials v2 events open the per-judge grid modal */}
+      {manualModal && event.discipline === 'aerials' && event.aerials_panel_size != null ? (
+        <AerialsV2ManualModal
+          event={event}
+          mode={manualModal.mode}
+          run={manualModal.run || null}
+          registration={manualModal.registration || null}
+          runNumber={manualModal.runNumber || 1}
+          onClose={() => setManualModal(null)}
+          onSuccess={() => { setManualModal(null); loadAll() }}
+        />
+      ) : manualModal && (
         <ManualScoreModal
           event={event}
           mode={manualModal.mode}
@@ -3679,7 +3683,7 @@ function PrintDropdown({ event, round }) {
     try {
       const res = await fetch(`/api/pdf/${endpoint}`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body:    JSON.stringify({ eventId: event.id, options }),
       })
       if (!res.ok) {
@@ -3761,7 +3765,7 @@ function GroupAwardsBuilder({ event }) {
         }))
       }
       const res = await fetch('/api/pdf/group-awards', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload)
       })
       if (!res.ok) { const j = await res.json(); throw new Error(j.error) }
@@ -3859,7 +3863,7 @@ function UsssTransmitModal({ meetId, onClose }) {
       open: 'DIV',
       devo_junior: 'ROC',
     };
-    fetch(`/api/export/usss-transmit-check/${meetId}`)
+    fetch(`/api/export/usss-transmit-check/${meetId}`, { headers: authHeaders() })
       .then(r => r.json()).then(data => {
         setCheckInfo(data);
         if (!category && data.divisions && data.divisions.length > 0) {
@@ -3889,7 +3893,7 @@ function UsssTransmitModal({ meetId, onClose }) {
       }
       const res = await fetch(`/api/export/usss-transmit/${meetId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(body),
       })
 
@@ -4424,11 +4428,12 @@ function ResultsPanel({ event, meetId }) {
             Group Awards
           </button>
           <PrintDropdown event={event} round={round} />
-          <button onClick={() => window.open(`/api/export/results-csv/${event.id}?round=${round}`, '_blank')}
+          {/* v1.25.00 (A-1) — downloads go through downloadAuthed so they carry the auth token */}
+          <button onClick={() => downloadAuthed(`/api/export/results-csv/${event.id}?round=${round}`, { fallbackName: 'results.csv' }).catch(e => alert(e.message))}
             className="btn-ghost text-sm">CSV</button>
-          <button onClick={() => window.open(`/api/export/results-xlsx/${event.id}?round=${round}`, '_blank')}
+          <button onClick={() => downloadAuthed(`/api/export/results-xlsx/${event.id}?round=${round}`, { fallbackName: 'results.xlsx' }).catch(e => alert(e.message))}
             className="btn-ghost text-sm">XLSX</button>
-          <button onClick={() => window.open(`/api/export/results-html/${event.id}?round=${round}`, '_blank')}
+          <button onClick={() => downloadAuthed(`/api/export/results-html/${event.id}?round=${round}`, { openInTab: true }).catch(e => alert(e.message))}
             className="btn-ghost text-sm">HTML</button>
         </div>
       </div>
@@ -4521,7 +4526,7 @@ function DualBracketPanel({ event, registrations }) {
     setSeeding(true); setError(''); setMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-fis`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify(force ? { force: true } : {})
       })
       if (res.status === 409) {
@@ -4558,7 +4563,7 @@ function DualBracketPanel({ event, registrations }) {
     setSeeding(true); setError(''); setMsg('')
     try {
       const res = await fetch(`/api/events/${event.id}/dual/seed-from-event`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({
           sourceEventId: srcEventId,
           maleCutoff:    maleCutoff   ? parseInt(maleCutoff)   : undefined,
@@ -4576,7 +4581,7 @@ function DualBracketPanel({ event, registrations }) {
 
   const resetBracket = async () => {
     if (!window.confirm('Reset bracket? This will clear all match results and seeds.')) return
-    await fetch(`/api/events/${event.id}/dual/reset`, { method: 'DELETE' })
+    await fetch(`/api/events/${event.id}/dual/reset`, { method: 'DELETE', headers: authHeaders() })
     await load(); setMsg('Bracket reset.')
   }
 
@@ -4611,7 +4616,7 @@ function DualBracketPanel({ event, registrations }) {
     try {
       const cleanSlots = manualSlots.map(s => ({ matchIndex: s.matchIndex, blue: s.blue, red: s.red }))
       const res = await fetch(`/api/events/${event.id}/dual/seed-manual`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ slots: cleanSlots, force })
       })
       if (res.status === 409) {
@@ -4648,7 +4653,7 @@ function DualBracketPanel({ event, registrations }) {
     setPrinting(true); setError('')
     try {
       const res = await fetch('/api/pdf/dual-bracket', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
         body: JSON.stringify({ eventId: event.id })
       })
       if (!res.ok) { const j = await res.json(); throw new Error(j.error) }
@@ -5033,7 +5038,7 @@ function PdfReportsPanel({ event }) {
     try {
       const form = new FormData()
       form.append('logo', file)
-      const res = await fetch(`/api/pdf/upload-logo/${event.meet_id}`, { method: 'POST', body: form })
+      const res = await fetch(`/api/pdf/upload-logo/${event.meet_id}`, { method: 'POST', headers: authHeaders(), body: form })
       if (res.ok) setHasLogo(true)
       else alert('Failed to upload logo')
     } catch (e) { alert('Upload error: ' + e.message) }
@@ -5041,7 +5046,7 @@ function PdfReportsPanel({ event }) {
   }
 
   const removeLogo = async () => {
-    await fetch(`/api/pdf/logo/${event.meet_id}`, { method: 'DELETE' })
+    await fetch(`/api/pdf/logo/${event.meet_id}`, { method: 'DELETE', headers: authHeaders() })
     setHasLogo(false)
   }
 
@@ -5050,7 +5055,7 @@ function PdfReportsPanel({ event }) {
     try {
       const res = await fetch(`/api/pdf/${endpoint}`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body:    JSON.stringify({ eventId: event.id, options }),
       })
       if (!res.ok) {
@@ -5278,6 +5283,26 @@ function PdfReportsPanel({ event }) {
 }
 
 // ── ManualScoreModal ──────────────────────────────────────────────────────────
+// v1.25.00 (C-4) — module scope so React doesn't remount the input (and drop
+// keyboard focus) on every ManualScoreModal render.
+function JumpCodeInput({ id, label, value, onChange, codes }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input
+        list={`${id}-list`}
+        className="input font-mono"
+        placeholder="type or select..."
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      />
+      <datalist id={`${id}-list`}>
+        {codes.map(d => <option key={d.jump_code} value={d.jump_code}>{d.jump_code} (DD {d.dd_value})</option>)}
+      </datalist>
+    </div>
+  )
+}
+
 function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClose, onSuccess, onSwitchToVoice }) {
   const isMogul   = event.discipline !== 'aerials'
   const numTL     = event.num_tl_judges  || 3
@@ -5310,6 +5335,8 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
   const [saving,        setSaving]        = useState('')  // '' | 'score' | 'dns' | 'dnf' | 'dsq'
   // Known jump codes for autocomplete datalist
   const [jumpCodes,     setJumpCodes]     = useState([])
+  // v1.25.00 (C-5) — DNS/DNF/DSQ confirm before submitting
+  const [statusConfirm, setStatusConfirm] = useState(null)
 
   // Fetch available jump codes for autocomplete; pre-populate edit fields
   useEffect(() => {
@@ -5404,7 +5431,7 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
     }))
   }
 
-  const handleStatusClick = async (status) => {
+  const submitStatus = async (status) => {
     setSaving(status.toLowerCase()); setError('')
     try {
       const body = { run_status: status }
@@ -5416,9 +5443,12 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
       } else {
         await api.manualScore(event.id, run.id, body)
       }
+      setStatusConfirm(null)
       onSuccess()
-    } catch (err) { setError(err.message); setSaving('') }
+    } catch (err) { setError(err.message); setSaving(''); setStatusConfirm(null) }
   }
+  // C-5 — clicking DNS/DNF/DSQ opens the shared confirm dialog first
+  const handleStatusClick = (status) => setStatusConfirm(status)
 
   const handleSubmit = async () => {
     setError(''); setSaving('score')
@@ -5486,26 +5516,10 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
 
   const isSaving = saving !== ''
 
-  // Reusable jump code input with datalist autocomplete
+  // Jump code list for the module-scope JumpCodeInput (C-4)
   const filteredJumpCodes = isDevOrRqs
     ? jumpCodes.filter(d => !/^[bfl]|o/.test(d.jump_code))
     : jumpCodes
-
-  const JumpCodeInput = ({ id, label, value, onChange }) => (
-    <div>
-      <label className="label">{label}</label>
-      <input
-        list={`${id}-list`}
-        className="input font-mono"
-        placeholder="type or select..."
-        value={value}
-        onChange={e => onChange(e.target.value)}
-      />
-      <datalist id={`${id}-list`}>
-        {filteredJumpCodes.map(d => <option key={d.jump_code} value={d.jump_code}>{d.jump_code} (DD {d.dd_value})</option>)}
-      </datalist>
-    </div>
-  )
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -5672,8 +5686,8 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
 
           {/* 3. Jump Codes with autocomplete */}
           <div className={`grid ${numJumps >= 2 ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
-            <JumpCodeInput id="jump1" label="Jump 1 Code" value={jump1Code} onChange={setJump1Code} />
-            {numJumps >= 2 && <JumpCodeInput id="jump2" label="Jump 2 Code" value={jump2Code} onChange={setJump2Code} />}
+            <JumpCodeInput id="jump1" label="Jump 1 Code" value={jump1Code} onChange={setJump1Code} codes={filteredJumpCodes} />
+            {numJumps >= 2 && <JumpCodeInput id="jump2" label="Jump 2 Code" value={jump2Code} onChange={setJump2Code} codes={filteredJumpCodes} />}
           </div>
 
           {/* 4. Air Judges */}
@@ -5744,6 +5758,15 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
           </div>
         </div>
       </div>
+      {statusConfirm && (
+        <StatusConfirmDialog
+          status={statusConfirm}
+          athleteName={athleteName}
+          submitting={isSaving}
+          onConfirm={() => submitStatus(statusConfirm)}
+          onCancel={() => setStatusConfirm(null)}
+        />
+      )}
     </div>
   )
 }
@@ -5796,11 +5819,16 @@ export default function EventDetail() {
             <span>{{ comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }[event.division] || event.division}</span>
             <span>{event.gender==='M'?'Male':'Female'}</span>
             {event.discipline === 'aerials' ? (
+              // v1.25.00 (C-13) — v2 panel events show the panel model, not legacy roles
+              event.aerials_panel_size != null ? (
+                <span>Scoring Judges: {event.aerials_panel_size} (panel)</span>
+              ) : (
               <>
                 <span>Air Judges: {event.num_air_judges}</span>
                 <span>Form Judges: {event.num_tl_judges}</span>
                 <span>Landing Judges: {event.num_air_judges}</span>
               </>
+              )
             ) : event.discipline === 'dual_mogul' ? (
               // Dual mogul uses 5-judge format
               <span className="text-slate-400 text-xs">5-Judge Format (Turns, Air, Time, Overall)</span>
@@ -5820,13 +5848,27 @@ export default function EventDetail() {
             </div>
           )}
         </div>
-        <select className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300"
-          value={event.status}
-          onChange={async e => { await api.updateEvent(meetId,eventId,{status:e.target.value}); refresh() }}>
-          <option value="setup">Setup</option>
-          <option value="active">Active</option>
-          <option value="complete">Complete</option>
-        </select>
+        {/* v1.25.00 (C-8) — labeled + confirmed; manual Complete bypasses the HJ finalize flow */}
+        <label className="flex items-center gap-2 text-xs text-slate-500">
+          Status
+          <select className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300"
+            value={event.status}
+            onChange={async e => {
+              const newStatus = e.target.value
+              if (newStatus === event.status) return
+              if (newStatus === 'complete' || event.status === 'complete') {
+                const msg = newStatus === 'complete'
+                  ? 'Mark this event Complete? The Head Judge finalize flow is the normal completion path — marking complete manually bypasses it. Continue?'
+                  : `Change event status from Complete back to ${newStatus}? Editing after finalization can desync the review state.`
+                if (!window.confirm(msg)) { e.target.value = event.status; return }
+              }
+              await api.updateEvent(meetId,eventId,{status:newStatus}); refresh()
+            }}>
+            <option value="setup">Setup</option>
+            <option value="active">Active</option>
+            <option value="complete">Complete</option>
+          </select>
+        </label>
       </div>
       <div className="flex gap-1 border-b border-slate-800 mb-6 overflow-x-auto">
         {tabsToShow.map(tab => (
@@ -5846,7 +5888,6 @@ export default function EventDetail() {
       {activeTab==='Results'       && <ResultsPanel event={event} meetId={meetId} />}
       {activeTab==='Dual Bracket'  && <DualBracketPanel event={event} registrations={registrations} />}
       {activeTab==='PDF Reports'   && <PdfReportsPanel event={event} />}
-      {activeTab==='Link Events'   && <LinkEventsPanel event={event} onRefresh={refresh} />}
     </div>
   )
 }
