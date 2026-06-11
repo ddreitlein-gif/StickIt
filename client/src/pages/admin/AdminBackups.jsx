@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { authHeaders, checkApiResponse } from '../../utils/api'
+import { authHeaders, checkApiResponse, downloadAuthed } from '../../utils/api'
 
 const fmtBytes = b => {
   if (b == null) return '—'
@@ -56,6 +56,30 @@ export default function AdminBackups() {
       setMsg('Backup failed: ' + e.message)
     } finally {
       setCreating(false)
+    }
+  }
+
+  // v1.25.00 (B-9a) — in-app restore with typed confirmation
+  const [restoreTarget, setRestoreTarget] = useState(null) // backup object
+  const [restoreTyped, setRestoreTyped] = useState('')
+  const [restoring, setRestoring] = useState(false)
+
+  const handleRestore = async () => {
+    if (!restoreTarget || restoreTyped !== restoreTarget.filename) return
+    setRestoring(true); setMsg('')
+    try {
+      const r = await fetch(`/api/admin/backups/${encodeURIComponent(restoreTarget.filename)}/restore`, {
+        method: 'POST', headers: authHeaders(),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Restore failed')
+      setMsg(`Restored ${restoreTarget.filename}. RESTART THE SERVER NOW to load the restored database. A pre-restore safety backup was taken first.`)
+      setRestoreTarget(null); setRestoreTyped('')
+      load()
+    } catch (e) {
+      setMsg('Restore failed: ' + e.message)
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -150,18 +174,55 @@ export default function AdminBackups() {
                     <div className="text-xs text-slate-500">{fmtRelative(b.created_at)}</div>
                   </td>
                   <td className="px-3 py-2 text-slate-300 text-right font-mono">{fmtBytes(b.size_bytes)}</td>
-                  <td className="px-3 py-2 text-right">
-                    <a
-                      href={`/api/admin/backups/${encodeURIComponent(b.filename)}/download`}
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => downloadAuthed(`/api/admin/backups/${encodeURIComponent(b.filename)}/download`, { fallbackName: b.filename }).catch(e => setMsg('Download failed: ' + e.message))}
                       className="inline-block px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-500 transition-colors"
                     >
                       Download
-                    </a>
+                    </button>
+                    <button
+                      onClick={() => { setRestoreTarget(b); setRestoreTyped(''); setMsg('') }}
+                      className="ml-2 inline-block px-3 py-1.5 rounded-lg border border-amber-700 text-amber-400 text-xs font-medium hover:bg-amber-900/30 transition-colors"
+                    >
+                      Restore
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {restoreTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-amber-700/50 rounded-xl p-6 w-full max-w-lg">
+            <h2 style={{ fontFamily: "'Oswald', sans-serif" }} className="text-xl font-bold text-white mb-3 uppercase">Restore Backup</h2>
+            <p className="text-slate-300 text-sm mb-2">
+              This replaces the LIVE database with <span className="font-mono text-amber-300">{restoreTarget.filename}</span> ({fmtTimestamp(restoreTarget.created_at)}).
+              Every change made since that backup will be lost.
+            </p>
+            <p className="text-slate-400 text-xs mb-2">A safety backup of the current database is taken automatically before restoring.</p>
+            <p className="text-amber-300 text-sm font-semibold mb-4">The server must be restarted after the restore for the change to take effect. On Railway, trigger a redeploy/restart from the dashboard.</p>
+            <label className="block text-xs text-slate-400 mb-1 uppercase tracking-wider">Type the backup filename to confirm</label>
+            <input
+              className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono outline-none focus:border-amber-500 mb-4"
+              value={restoreTyped}
+              onChange={e => setRestoreTyped(e.target.value)}
+              placeholder={restoreTarget.filename}
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setRestoreTarget(null)} className="flex-1 px-4 py-2 rounded-lg border border-slate-600 text-slate-300 text-sm hover:bg-slate-700 transition-colors">Cancel</button>
+              <button
+                onClick={handleRestore}
+                disabled={restoring || restoreTyped !== restoreTarget.filename}
+                className="flex-1 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {restoring ? 'Restoring...' : 'Restore This Backup'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

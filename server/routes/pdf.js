@@ -6,6 +6,13 @@ const { queryAll, queryOne } = require('../db/schema');
 const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
 const { requireAuth } = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
+
+// ── Auth policy (v1.25.00, A-2) ─────────────────────────────────────────────
+// PDF endpoints reachable from the PUBLIC Scoreboard remain public by design:
+//   POST /event-results-detailed, POST /dual-bracket, POST /dual-results,
+//   GET  /logo/:meetId (public image fetch).
+// EVERY other PDF endpoint requires auth. When adding a new endpoint, default
+// to requireAuth unless the public Scoreboard genuinely needs it.
 const { normalizeGender } = require('../utils/gender');
 const { computeDualFfsp } = require('../dual/ffsp');
 const { rankDualPlacements } = require('../dual/placement_ranking');
@@ -945,7 +952,7 @@ function safeFilename(event, suffix) {
 // ===========================================================================
 // GET /api/pdf/results/:eventId  (legacy -- keep for backward compatibility)
 // ===========================================================================
-router.get('/results/:eventId', async (req, res) => {
+router.get('/results/:eventId', requireAuth, async (req, res) => {
   try {
     const { round = 'qualification' } = req.query;
     const data = await buildResultsData(req.params.eventId, round);
@@ -958,7 +965,7 @@ router.get('/results/:eventId', async (req, res) => {
 // ===========================================================================
 // POST /api/pdf/results  -- enhanced results with component breakdown
 // ===========================================================================
-router.post('/results', async (req, res) => {
+router.post('/results', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const round = options.round || 'qualification';

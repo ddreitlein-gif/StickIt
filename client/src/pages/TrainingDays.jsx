@@ -207,10 +207,9 @@ export default function TrainingDays() {
       if (includeAll) {
         await api.resetTrainingExclusions(selectedId)
       } else {
-        // Exclude everyone individually
-        for (const p of previous.filter(x => x.included)) {
-          await api.toggleTrainingExclusion(selectedId, p.athlete_id, true)
-        }
+        // v1.25.00 (C-17) — one bulk request instead of one per athlete
+        const ids = previous.filter(x => x.included).map(x => x.athlete_id)
+        if (ids.length) await api.toggleTrainingExclusionBulk(selectedId, ids, true)
       }
     } catch (err) {
       setParticipants(previous)

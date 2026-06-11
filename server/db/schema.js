@@ -340,6 +340,14 @@ async function initSchema() {
     console.log('[v1.6 migration] athletes.bib backfill skipped:', e.message);
   }
 
+  // v1.25.00 (A-3) -- unify the role model: event_admin is a legacy alias,
+  // migrate existing rows to system_admin. Idempotent.
+  try {
+    await c.execute(`UPDATE users SET role='system_admin', updated_at=datetime('now') WHERE role='event_admin'`);
+  } catch (e) {
+    console.log('[v1.25 migration] event_admin role migration skipped:', e.message);
+  }
+
   await seedJumpDDs();
   await seedAerialsDDs();
   await backfillAirScoreNoDd();

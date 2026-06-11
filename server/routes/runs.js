@@ -380,7 +380,7 @@ router.get('/:runId/scores', async (req, res) => {
     const scores = await queryAll(
       `SELECT js.id, js.judge_id, js.score_type, js.raw_score,
               js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction,
-              j.role, j.name
+              j.role, j.name, j.judge_number
        FROM judge_scores js JOIN judges j ON j.id=js.judge_id
        WHERE js.run_id=? ORDER BY j.role, js.score_type`,
       [run.id]
@@ -391,6 +391,129 @@ router.get('/:runId/scores', async (req, res) => {
 
 // POST /manual -- Create + immediately complete a run without entering 'scoring' state.
 // No run_started broadcast; overlay never shows "Now Scoring..." for this run.
+// v1.25.00 (C-7) — manual entry / edit for aerials v2 events.
+// Payload shape: { aerials_v2: true, judge_scores: [{ judge_number, jump, air, form, landing }],
+//                  jump1_code, jump2_code, run_status?, voice_transcript? }
+// Persists per-judge rows using the same ae_* score types the tablets use, then
+// scores through calcAerialsScoreV2 — identical math to the live tablet path.
+async function handleAerialsV2Manual(req, res, event, { mode, run, registration_id, run_number, round }) {
+  const panelSize = parseInt(event.aerials_panel_size) || 5;
+  const numJumps = event.num_jumps || 2;
+  const { jump1_code, jump2_code, judge_scores, voice_transcript = null } = req.body;
+
+  // Validate judge scores
+  if (!Array.isArray(judge_scores) || !judge_scores.length) {
+    return res.status(400).json({ error: 'judge_scores array is required for aerials v2 manual entry' });
+  }
+  const seen = new Set();
+  for (const s of judge_scores) {
+    const jn = parseInt(s.judge_number), jp = parseInt(s.jump);
+    if (!jn || jn < 1 || jn > panelSize) return res.status(400).json({ error: `judge_number must be 1-${panelSize}` });
+    if (!jp || jp < 1 || jp > numJumps) return res.status(400).json({ error: `jump must be 1-${numJumps}` });
+    const key = `${jn}-${jp}`;
+    if (seen.has(key)) return res.status(400).json({ error: `Duplicate entry for judge ${jn} jump ${jp}` });
+    seen.add(key);
+    if (s.air == null || s.air < 0 || s.air > 2.0) return res.status(400).json({ error: `Judge ${jn} jump ${jp}: Air must be 0.0-2.0` });
+    if (s.form == null || s.form < 0 || s.form > 5.0) return res.status(400).json({ error: `Judge ${jn} jump ${jp}: Form must be 0.0-5.0` });
+    if (s.landing == null || s.landing < 0 || s.landing > 3.0) return res.status(400).json({ error: `Judge ${jn} jump ${jp}: Landing must be 0.0-3.0` });
+  }
+  // Every judge must cover every required jump
+  for (let jn = 1; jn <= panelSize; jn++) {
+    for (let jp = 1; jp <= numJumps; jp++) {
+      if (!seen.has(`${jn}-${jp}`)) return res.status(400).json({ error: `Missing scores for judge ${jn} jump ${jp}` });
+    }
+  }
+
+  // Resolve DDs
+  const code1 = jump1_code || (run && run.jump1_code);
+  const code2 = numJumps >= 2 ? (jump2_code || (run && run.jump2_code)) : null;
+  if (!code1) return res.status(400).json({ error: 'Jump 1 code is required' });
+  if (numJumps >= 2 && !code2) return res.status(400).json({ error: 'Jump 2 code is required' });
+  let dd1, dd2 = null;
+  try { dd1 = await resolveJumpDD(code1, 'aerials', event.gender || 'M'); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  if (code2) {
+    try { dd2 = await resolveJumpDD(code2, 'aerials', event.gender || 'M'); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+  }
+
+  const result = calcAerialsScoreV2({
+    judgeScores: judge_scores.map(s => ({
+      judge_number: parseInt(s.judge_number), jump: parseInt(s.jump),
+      air: s.air, form: s.form, landing: s.landing,
+    })),
+    dd1: dd1 || 0,
+    dd2: dd2 || 0,
+    panelSize,
+    reductionMethod: event.aerials_reduction_method || 'sum_all',
+    numJumps,
+  });
+  const airNoDd = result.airNoDd ?? null;
+
+  let runId;
+  if (mode === 'create') {
+    runId = uuidv4();
+    await execute(
+      `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,hj_pending,
+         jump1_code,jump1_dd,jump2_code,jump2_dd,
+         turns_score,air_score,air_score_no_dd,speed_score,total_score,
+         aerials_model,manually_entered,voice_transcript)
+       VALUES (?,?,?,?,?,'complete',0,?,?,?,?,?,?,?,?,?,'v2',1,?)`,
+      [runId, event.id, registration_id, run_number, round,
+       code1, dd1, code2, dd2,
+       result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total,
+       voice_transcript || null]
+    );
+  } else {
+    runId = run.id;
+    await execute(`DELETE FROM judge_scores WHERE run_id=? AND score_type LIKE 'ae_%'`, [runId]);
+    await execute(
+      `UPDATE runs SET jump1_code=?, jump1_dd=?, jump2_code=?, jump2_dd=?,
+         turns_score=?, air_score=?, air_score_no_dd=?, speed_score=?, total_score=?,
+         aerials_model='v2', status='complete', hj_pending=0, run_status=NULL, manually_entered=1,
+         voice_transcript=?, updated_at=datetime('now') WHERE id=?`,
+      [code1, dd1, code2, dd2,
+       result.turnsContrib, result.airContrib, airNoDd, result.speedContrib, result.total,
+       voice_transcript || null, runId]
+    );
+  }
+
+  // Persist per-judge rows so the HJ grid / scoreboard breakdown / future edits read them
+  const judges = await queryAll(`SELECT id, judge_number FROM judges WHERE event_id=? AND judge_number IS NOT NULL`, [event.id]);
+  const judgeByNumber = new Map(judges.map(j => [parseInt(j.judge_number), j.id]));
+  // Paper-only events may not have seeded the panel — create any missing
+  // AeJudgeN slots so the per-judge rows (and later edits) have a judge to hang on.
+  for (let jn = 1; jn <= panelSize; jn++) {
+    if (judgeByNumber.has(jn)) continue;
+    const newJudgeId = uuidv4();
+    const sc = Math.random().toString(36).slice(2, 8);
+    await execute(
+      `INSERT INTO judges (id,event_id,name,role,pin,short_code,judge_number) VALUES (?,?,?,?,?,?,?)`,
+      [newJudgeId, event.id, `Judge ${jn}`, `AeJudge${jn}`, null, sc, jn]
+    );
+    judgeByNumber.set(jn, newJudgeId);
+  }
+  for (const s of judge_scores) {
+    const judgeId = judgeByNumber.get(parseInt(s.judge_number));
+    if (!judgeId) continue;
+    const suffix = parseInt(s.jump) === 1 ? 'j1' : 'j2';
+    for (const [comp, val] of [['air', s.air], ['form', s.form], ['land', s.landing]]) {
+      await execute(
+        `INSERT INTO judge_scores (id,run_id,judge_id,score_type,raw_score) VALUES (?,?,?,?,?)`,
+        [uuidv4(), runId, judgeId, `ae_${comp}_${suffix}`, val]
+      );
+    }
+  }
+
+  const saved = await queryOne('SELECT * FROM runs WHERE id=?', [runId]);
+  if (req.app.broadcast) {
+    req.app.broadcast(event.id, 'score_update', { runId });
+    req.app.broadcast(event.id, 'run_updated', { id: runId, manually_entered: 1 });
+  }
+  try { await logAudit(mode === 'create' ? 'manual_run_scored' : 'manual_score_edited', 'run', runId, null, { total: result.total, aerials_model: 'v2' }); } catch (_) {}
+  return res.status(mode === 'create' ? 201 : 200).json({ ok: true, run: saved });
+}
+
 router.post('/manual', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
@@ -437,11 +560,14 @@ router.post('/manual', requireAuth, async (req, res) => {
       return res.status(201).json({ ok: true, run: created });
     }
 
-    // v1.18.00 — block legacy-shape manual entry on v2 aerials events.
-    // The flat form_scores/landing_scores arrays can't carry per-judge-per-jump v2 data.
+    // v1.25.00 (C-7) — aerials v2 events take the per-judge-per-jump payload.
+    // Legacy flat form_scores/landing_scores arrays are still refused.
     if (event.discipline === 'aerials' && event.aerials_panel_size != null) {
+      if (req.body.aerials_v2) {
+        return handleAerialsV2Manual(req, res, event, { mode: 'create', registration_id, run_number, round });
+      }
       return res.status(400).json({
-        error: 'Manual score entry on aerials v2 events is not supported. Use the per-judge tablets, or score this event with the legacy aerials engine before v1.18.00.'
+        error: 'This aerials event uses the v2 per-judge model — use the v2 manual entry form or the per-judge tablets.'
       });
     }
 
@@ -593,10 +719,13 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
       return res.json({ ok: true, run: updated });
     }
 
-    // v1.18.00 — block legacy-shape edit-score on v2 aerials events.
+    // v1.25.00 (C-7) — aerials v2 events take the per-judge-per-jump payload.
     if (event.discipline === 'aerials' && event.aerials_panel_size != null) {
+      if (req.body.aerials_v2) {
+        return handleAerialsV2Manual(req, res, event, { mode: 'edit', run });
+      }
       return res.status(400).json({
-        error: 'Edit Score on aerials v2 events is not supported via the legacy form. Have judges resubmit via their tablets, or send the run back to Scoring from the HJ tablet.'
+        error: 'This aerials event uses the v2 per-judge model — use the v2 edit form or have judges resubmit via their tablets.'
       });
     }
 

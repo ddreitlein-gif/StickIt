@@ -20,6 +20,36 @@ export function checkApiResponse(r) {
   return r.json();
 }
 
+// v1.25.00 (A-1) — authenticated download helper. Anchors/window.open cannot
+// carry an Authorization header, so all download buttons go through this:
+// fetch with the token, then save (or open) the blob.
+export async function downloadAuthed(url, { method = 'GET', body, fallbackName = 'download', openInTab = false } = {}) {
+  const res = await fetch(url, {
+    method,
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...authHeaders() },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { handle401(); throw new Error('Authentication required'); }
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  if (openInTab) {
+    window.open(objectUrl, '_blank');
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    return;
+  }
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^";]+)"?/);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = m ? m[1] : fallbackName;
+  a.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
 async function apiFetch(path, options = {}) {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
@@ -59,6 +89,9 @@ export const api = {
 
   // Athletes
   getAthletes: (q) => apiFetch(`/athletes${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  // v1.25.00 (C-14) — paginated form returns { rows, total, page, limit }
+  getAthletesPaged: (q, page = 1, limit = 100) =>
+    apiFetch(`/athletes?page=${page}&limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
   getAthlete: (id) => apiFetch(`/athletes/${id}`),
   createAthlete: (data) => apiFetch('/athletes', { method: 'POST', body: data }),
   updateAthlete: (id, data) => apiFetch(`/athletes/${id}`, { method: 'PUT', body: data }),
@@ -154,7 +187,6 @@ export const api = {
   assignHeatsRandom: (eventId, data) => apiFetch(`/events/${eventId}/heats/assign-random`, { method: 'POST', body: data }),
   assignHeatsRanked: (eventId, data) => apiFetch(`/events/${eventId}/heats/assign-ranked`, { method: 'POST', body: data }),
   selectFinalists: (eventId, data) => apiFetch(`/events/${eventId}/heats/select-finals`, { method: 'POST', body: data }),
-  seedFromQualifier: (eventId, data) => apiFetch(`/events/${eventId}/registrations/seed-from-qualifier`, { method: 'POST', body: data }),
 
   // Phases (v1.9.00)
   getPhases: (eventId) => apiFetch(`/events/${eventId}/phases`),
@@ -196,21 +228,16 @@ export const api = {
   getTrainingParticipants: (id) => apiFetch(`/training-days/${id}/participants`),
   toggleTrainingExclusion: (id, athlete_id, exclude) =>
     apiFetch(`/training-days/${id}/exclusions`, { method: 'POST', body: { athlete_id, exclude } }),
+  // v1.25.00 (C-17) — bulk form: one request for many athletes
+  toggleTrainingExclusionBulk: (id, athlete_ids, exclude) =>
+    apiFetch(`/training-days/${id}/exclusions`, { method: 'POST', body: { athlete_ids, exclude } }),
   resetTrainingExclusions: (id) => apiFetch(`/training-days/${id}/reset`, { method: 'POST' }),
-  downloadTrainingDayPdf: async (id, suggestedName) => {
-    const res = await fetch(`/api/pdf/training-day/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `HTTP ${res.status}`);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = (suggestedName || `Training_Day_${id}`).replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf';
-    a.click();
-    URL.revokeObjectURL(url);
-  },
+  downloadTrainingDayPdf: (id, suggestedName) =>
+    downloadAuthed(`/api/pdf/training-day/${id}`, {
+      method: 'POST',
+      body: {},
+      fallbackName: (suggestedName || `Training_Day_${id}`).replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf',
+    }),
 };
 
 export function createWebSocket(eventId, onMessage) {

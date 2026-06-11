@@ -135,6 +135,10 @@ export default function Overlay() {
   // response that started before the WS message arrived (which would cause a
   // visible flicker on the broadcast overlay).
   const lastWsAtRef = useRef(0);
+  // v1.25.00 (E-1) — operator-hidden flag. While set, the polling fallback is a
+  // no-op (otherwise it would re-show the score within 3 seconds of a hide).
+  // Cleared by OVERLAY_SHOW, run_started, score_update, or dual_match_started.
+  const hiddenRef = useRef(false);
   useEffect(() => { dualActiveRef.current = dualActive; }, [dualActive]);
 
   const discipline = event?.discipline || null;
@@ -265,6 +269,8 @@ export default function Overlay() {
     if (!eventId || !discipline || resolving) return;
 
     const poll = async () => {
+      // E-1: operator hid the overlay — stay hidden until the next run/show.
+      if (hiddenRef.current) return;
       const pollStartedAt = Date.now();
       // If a WebSocket message arrived after this poll started, the poll's
       // data is stale relative to the WS state — skip the state mutation.
@@ -345,6 +351,7 @@ export default function Overlay() {
 
         if (msg.type === 'run_started') {
           if (dualActiveRef.current) return;
+          hiddenRef.current = false; // E-1: new run cancels operator hide
           lastWsAtRef.current = Date.now();
           const athlete = {
             bib_number: d.is_forerunner ? '' : (d.bib || d.bib_number || ''),
@@ -360,6 +367,7 @@ export default function Overlay() {
         }
 
         if (msg.type === 'score_update') {
+          hiddenRef.current = false; // E-1: fresh score cancels operator hide
           lastWsAtRef.current = Date.now();
           if (d.is_forerunner) {
             setSingleMode('idle');
@@ -432,18 +440,27 @@ export default function Overlay() {
         }
 
         if (msg.type === 'dual_match_started') {
+          hiddenRef.current = false; // E-1: new match cancels operator hide
           lastWsAtRef.current = Date.now();
           fetchActiveDual();
           return;
         }
 
         if (msg.type === 'OVERLAY_HIDE') {
+          hiddenRef.current = true; // E-1: stay hidden — also suppresses the 3s poll
           lastWsAtRef.current = Date.now();
           setSingleMode('idle');
           setCurrentAthlete(null);
           setCurrentScore(null);
           setDualActive(false);
           setDualState(null);
+          return;
+        }
+
+        if (msg.type === 'OVERLAY_SHOW') {
+          // E-1: resume — the next poll cycle (≤3s) re-displays current state
+          hiddenRef.current = false;
+          lastWsAtRef.current = 0;
         }
       } catch (_) {}
     };

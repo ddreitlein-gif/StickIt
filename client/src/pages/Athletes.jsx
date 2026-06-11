@@ -426,15 +426,24 @@ export default function Athletes() {
   const [showUsssAdd, setShowUsssAdd] = useState(false)
   const [usssAddMsg, setUsssAddMsg] = useState('')
 
-  const load = () => {
+  // v1.25.00 (C-14) — paginated, 100 per page (same as Admin → Athletes)
+  const PAGE_SIZE = 100
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+
+  const load = (pageVal = page) => {
     setLoading(true)
-    api.getAthletes(search).then(setAthletes).finally(() => setLoading(false))
+    api.getAthletesPaged(search, pageVal, PAGE_SIZE)
+      .then(data => { setAthletes(data.rows || []); setTotal(data.total || 0) })
+      .finally(() => setLoading(false))
   }
 
   useEffect(() => {
-    const t = setTimeout(load, search ? 300 : 0)
+    const t = setTimeout(() => load(page), search ? 300 : 0)
     return () => clearTimeout(t)
-  }, [search])
+  }, [search, page])
+
+  useEffect(() => { setPage(1) }, [search])
 
   const handleUsssSync = async () => {
     setUsssSyncing(true); setUsssSyncResult(null)
@@ -633,7 +642,29 @@ export default function Athletes() {
         </table>
       </div>
 
-      <div className="mt-4 text-slate-600 text-xs text-right">{athletes.length} athletes shown -- click a row to edit</div>
+      {/* v1.25.00 (C-14) — pagination */}
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between mt-4 text-sm">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="btn-ghost text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Prev
+          </button>
+          <div className="text-slate-400 text-xs">
+            Page <span className="text-white font-mono">{page}</span> of <span className="text-white font-mono">{Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+          </div>
+          <button
+            onClick={() => setPage(p => Math.min(Math.ceil(total / PAGE_SIZE), p + 1))}
+            disabled={page >= Math.ceil(total / PAGE_SIZE)}
+            className="btn-ghost text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Next →
+          </button>
+        </div>
+      )}
+      <div className="mt-4 text-slate-600 text-xs text-right">{total} athletes -- click a row to edit</div>
     </div>
   )
 }

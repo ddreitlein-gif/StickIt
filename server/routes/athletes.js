@@ -19,16 +19,32 @@ function toNameCase(str) {
 router.get('/', async (req, res) => {
   try {
     const { q } = req.query;
-    let athletes;
+    // v1.25.00 (C-14) — when ?page= is supplied, return { rows, total } paginated.
+    // Without it, the legacy plain-array shape is preserved for other callers.
+    const paged = req.query.page != null;
+    const where = ['deleted_at IS NULL'];
+    const args = [];
     if (q && q.trim()) {
       const s = `%${q.trim()}%`;
-      athletes = await queryAll(
-        `SELECT * FROM athletes WHERE deleted_at IS NULL AND (first_name LIKE ? OR last_name LIKE ? OR ussa_num LIKE ? OR fis_id LIKE ?) ORDER BY last_name, first_name LIMIT 50`,
-        [s, s, s, s]
-      );
-    } else {
-      athletes = await queryAll('SELECT * FROM athletes WHERE deleted_at IS NULL ORDER BY last_name, first_name LIMIT 500');
+      where.push('(first_name LIKE ? OR last_name LIKE ? OR ussa_num LIKE ? OR fis_id LIKE ?)');
+      args.push(s, s, s, s);
     }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+    if (paged) {
+      const page = Math.max(1, parseInt(req.query.page) || 1);
+      const limit = Math.min(500, Math.max(1, parseInt(req.query.limit) || 100));
+      const totalRow = await queryOne(`SELECT COUNT(*) AS c FROM athletes ${whereSql}`, args);
+      const rows = await queryAll(
+        `SELECT * FROM athletes ${whereSql} ORDER BY last_name, first_name LIMIT ? OFFSET ?`,
+        [...args, limit, (page - 1) * limit]
+      );
+      return res.json({ rows, total: parseInt(totalRow?.c) || 0, page, limit });
+    }
+    const limit = q && q.trim() ? 50 : 500;
+    const athletes = await queryAll(
+      `SELECT * FROM athletes ${whereSql} ORDER BY last_name, first_name LIMIT ${limit}`,
+      args
+    );
     res.json(athletes);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

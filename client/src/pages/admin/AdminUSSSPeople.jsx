@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { authHeaders, checkApiResponse } from '../../utils/api'
+import { authHeaders, checkApiResponse, downloadAuthed } from '../../utils/api'
 
 const TYPE_LABELS = { C: 'Competitor', CO: 'Coach/Comp', O: 'Official' }
 const TYPE_FILTERS = [
@@ -62,6 +62,62 @@ export default function AdminUSSSPeople() {
   const onSearch = (val) => { setQ(val); setPage(1) }
   const onType = (val) => { setTypeFilter(val); setPage(1) }
 
+  // v1.25.00 (B-4) — Sync Now / Upload File directly on the admin page,
+  // reusing the same endpoints as Officials → USSS Database.
+  const [updating, setUpdating] = useState(false)
+  const [updateMsg, setUpdateMsg] = useState('')
+  const uploadRef = useRef(null)
+  const refreshStatus = () =>
+    fetch('/api/usss/status', { headers: authHeaders() }).then(checkApiResponse).then(setStatus).catch(() => {})
+
+  const handleSync = async () => {
+    setUpdating(true); setUpdateMsg('')
+    try {
+      const r = await fetch('/api/usss/sync', { method: 'POST', headers: authHeaders() })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Sync failed')
+      setUpdateMsg(`Synced ${d.imported ?? d.count ?? ''} records.`)
+      refreshStatus(); fetchRows(q, typeFilter, 1); setPage(1)
+    } catch (e) { setUpdateMsg('Sync failed: ' + e.message) }
+    finally { setUpdating(false) }
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUpdating(true); setUpdateMsg('')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await fetch('/api/usss/upload', { method: 'POST', headers: authHeaders(), body: fd })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Upload failed')
+      setUpdateMsg(`Imported ${d.imported ?? d.count ?? ''} records from ${file.name}.`)
+      refreshStatus(); fetchRows(q, typeFilter, 1); setPage(1)
+    } catch (err) { setUpdateMsg('Upload failed: ' + err.message) }
+    finally { setUpdating(false); if (uploadRef.current) uploadRef.current.value = '' }
+  }
+
+  const updateButtons = (
+    <div className="flex items-center gap-2">
+      <input type="file" accept=".txt,.csv" ref={uploadRef} onChange={handleUpload} className="hidden" />
+      <button
+        onClick={handleSync}
+        disabled={updating}
+        className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 transition-colors"
+      >
+        {updating ? 'Working…' : 'Sync Now'}
+      </button>
+      <button
+        onClick={() => uploadRef.current?.click()}
+        disabled={updating}
+        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-50 transition-colors"
+      >
+        Upload File
+      </button>
+    </div>
+  )
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const downloadDisabled = (status?.counts?.total || 0) === 0
   const showingFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
@@ -73,20 +129,29 @@ export default function AdminUSSSPeople() {
         <h2 style={{ fontFamily: "'Oswald', sans-serif" }} className="text-2xl font-bold tracking-wide uppercase text-white">
           USSS People
         </h2>
-        <a
-          href="/api/admin/usss/people/download"
+        <button
+          disabled={downloadDisabled}
+          onClick={() => downloadAuthed('/api/admin/usss/people/download', { fallbackName: 'usss_people.csv' }).catch(e => setUpdateMsg('Download failed: ' + e.message))}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             downloadDisabled
-              ? 'bg-slate-700/50 text-slate-500 pointer-events-none'
+              ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-500'
           }`}
         >
           Download CSV
-        </a>
+        </button>
       </div>
+
+      {updateMsg && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm">{updateMsg}</div>
+      )}
 
       {/* Status card */}
       <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-4 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs text-slate-400 uppercase tracking-wider">Sync Status</div>
+          {updateButtons}
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Last Imported</div>
@@ -148,7 +213,7 @@ export default function AdminUSSSPeople() {
       ) : rows.length === 0 ? (
         <div className="text-slate-500 py-8 text-center">
           {total === 0 && !q && !typeFilter
-            ? 'No USSS people imported yet. Sync from the Athletes page.'
+            ? (<span>No USSS people imported yet. Use <span className="text-slate-300">Sync Now</span> or <span className="text-slate-300">Upload File</span> above, or the <a href="/dashboard/usss" className="text-blue-400 hover:text-blue-300 underline">Officials → USSS Database</a> page.</span>)
             : 'No records match your filters.'}
         </div>
       ) : (

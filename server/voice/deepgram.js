@@ -59,6 +59,20 @@ async function attachVoiceBridge(clientWs, eventId) {
     return;
   }
 
+  // v1.25.00 (A-9) -- only open the paid Deepgram leg for a real event.
+  try {
+    const ev = await queryOne('SELECT id FROM events WHERE id=?', [eventId]);
+    if (!ev) {
+      safeSend(clientWs, { type: 'voice_error', message: 'Unknown event' });
+      try { clientWs.close(1008, 'unknown event'); } catch (_) {}
+      return;
+    }
+  } catch (_) {
+    safeSend(clientWs, { type: 'voice_error', message: 'Event lookup failed' });
+    try { clientWs.close(1011, 'event lookup failed'); } catch (_) {}
+    return;
+  }
+
   const keyterms = await getKeytermsForEvent(eventId);
   const dgUrl = buildDeepgramUrl(keyterms);
 

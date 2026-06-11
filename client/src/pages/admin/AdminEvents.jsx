@@ -11,6 +11,7 @@ export default function AdminEvents() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedMeets, setExpandedMeets] = useState(new Set())
+  const [search, setSearch] = useState('')
 
   const fetchEvents = () => {
     setLoading(true)
@@ -29,9 +30,28 @@ export default function AdminEvents() {
     fetchEvents()
   }
 
-  const toggleLockAll = async (meetId, shouldLock) => {
+  const toggleLockAll = async (meet, shouldLock) => {
+    // v1.25.00 (B-5) — confirm bulk lock changes
+    const n = meet.events.length
+    const verb = shouldLock ? 'Lock' : 'Unlock'
+    if (!window.confirm(`${verb} all ${n} event${n !== 1 ? 's' : ''} in ${meet.meet_name}?`)) return
     const action = shouldLock ? 'lock-all' : 'unlock-all'
-    await fetch(`/api/admin/meets/${meetId}/${action}`, { method: 'PUT', headers: authHeaders() })
+    await fetch(`/api/admin/meets/${meet.meet_id}/${action}`, { method: 'PUT', headers: authHeaders() })
+    fetchEvents()
+  }
+
+  // v1.25.00 (B-9b) — deliberately re-open a finalized event
+  const [reopenMsg, setReopenMsg] = useState('')
+  const reopenEvent = async (event) => {
+    if (!window.confirm(`Re-open "${event.name}"? Its status returns to In Progress so scores can be corrected. The event will need to be finalized again.`)) return
+    setReopenMsg('')
+    const r = await fetch(`/api/admin/events/${event.id}/reopen`, { method: 'POST', headers: authHeaders() })
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}))
+      setReopenMsg(d.error || 'Re-open failed')
+    } else {
+      setReopenMsg(`Re-opened "${event.name}".`)
+    }
     fetchEvents()
   }
 
@@ -53,14 +73,40 @@ export default function AdminEvents() {
       }
       map.get(e.meet_id).events.push(e)
     }
-    return [...map.values()]
-  }, [events])
+    let groups = [...map.values()]
+    // v1.25.00 (B-5) — client-side search over meet + event names
+    const t = search.trim().toLowerCase()
+    if (t) {
+      groups = groups
+        .map(g => {
+          const meetHit = (g.meet_name || '').toLowerCase().includes(t)
+          const evs = meetHit ? g.events : g.events.filter(e => (e.name || '').toLowerCase().includes(t))
+          return evs.length ? { ...g, events: evs } : null
+        })
+        .filter(Boolean)
+    }
+    return groups
+  }, [events, search])
 
   return (
     <div>
-      <h2 style={{ fontFamily: "'Oswald', sans-serif" }} className="text-2xl font-bold tracking-wide uppercase text-white mb-6">
+      <h2 style={{ fontFamily: "'Oswald', sans-serif" }} className="text-2xl font-bold tracking-wide uppercase text-white mb-2">
         Event Management
       </h2>
+      {/* v1.25.00 (B-5) — explain what locking does */}
+      <p className="text-xs text-slate-400 mb-4">
+        Locked events are hidden from the Officials dashboard and reject all changes. They remain visible on public scoreboards.
+      </p>
+      <input
+        type="text"
+        placeholder="Search meets and events…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className="w-full max-w-md bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 mb-4"
+      />
+      {reopenMsg && (
+        <div className="mb-4 px-4 py-2 rounded-lg bg-blue-900/30 border border-blue-700/50 text-blue-200 text-sm">{reopenMsg}</div>
+      )}
 
       {loading ? (
         <div className="text-slate-500 py-8 text-center">Loading...</div>
@@ -94,7 +140,7 @@ export default function AdminEvents() {
                   </button>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => toggleLockAll(meet.meet_id, !allLocked)}
+                      onClick={() => toggleLockAll(meet, !allLocked)}
                       className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                         allLocked
                           ? 'text-green-400 hover:bg-green-500/20 border border-green-500/30'
@@ -140,6 +186,14 @@ export default function AdminEvents() {
                             )}
                           </td>
                           <td className="px-4 py-3 text-right">
+                            {event.status === 'complete' && (
+                              <button
+                                onClick={() => reopenEvent(event)}
+                                className="mr-2 px-3 py-1 rounded text-xs font-medium text-blue-400 hover:bg-blue-500/20 border border-blue-500/30 transition-colors"
+                              >
+                                Re-open
+                              </button>
+                            )}
                             <button
                               onClick={() => toggleLock(event)}
                               className={`px-3 py-1 rounded text-xs font-medium transition-colors ${

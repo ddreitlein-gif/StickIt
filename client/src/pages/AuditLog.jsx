@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authHeaders } from '../utils/api'
 
-const ENTITIES = ['', 'run', 'athlete', 'athletes', 'event', 'registration']
-const ACTIONS  = ['', 'score_submitted', 'run_status_set', 'hj_approved',
-                  'athlete_created', 'athlete_updated', 'import', 'export']
 
 function fmtTimestamp(ts) {
   if (!ts) return '--'
@@ -84,12 +81,25 @@ export default function AuditLog() {
   const [action,  setAction]    = useState('')
   const [limit,   setLimit]     = useState(200)
   const [detail,  setDetail]    = useState(null)
+  // v1.25.00 (B-6) — filter options come from the log itself, plus a date range
+  const [filterOpts, setFilterOpts] = useState({ actions: [], entities: [] })
+  const [fromDate, setFromDate] = useState('')
+  const [toDate,   setToDate]   = useState('')
+
+  useEffect(() => {
+    fetch('/api/audit/filters', { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : { actions: [], entities: [] })
+      .then(setFilterOpts)
+      .catch(() => {})
+  }, [])
 
   const load = () => {
     setLoading(true)
     const params = new URLSearchParams({ limit })
     if (entity) params.set('entity', entity)
     if (action) params.set('action', action)
+    if (fromDate) params.set('from', fromDate)
+    if (toDate) params.set('to', toDate)
     fetch(`/api/audit?${params}`, { headers: authHeaders() })
       .then(r => r.json())
       .then(data => setEntries(Array.isArray(data) ? data : []))
@@ -97,7 +107,7 @@ export default function AuditLog() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [entity, action, limit])
+  useEffect(() => { load() }, [entity, action, limit, fromDate, toDate])
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -105,10 +115,10 @@ export default function AuditLog() {
 
       <div className="flex items-start justify-between mb-6">
         <div>
-          <h1 className="font-display text-4xl text-white">Audit Log</h1>
-          <p className="text-slate-500 mt-1">System activity history -- newest first</p>
+          <h1 style={{ fontFamily: "'Oswald', sans-serif" }} className="text-2xl font-bold tracking-wide uppercase text-white">Audit Log</h1>
+          <p className="text-slate-500 mt-1 text-sm">System activity history — newest first</p>
         </div>
-        <button onClick={load} className="btn-ghost text-sm">Refresh</button>
+        <button onClick={load} className="px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 text-sm hover:bg-slate-700 transition-colors">Refresh</button>
       </div>
 
       {/* Filters */}
@@ -116,14 +126,24 @@ export default function AuditLog() {
         <div>
           <label className="label">Entity type</label>
           <select className="input text-sm" value={entity} onChange={e => setEntity(e.target.value)}>
-            {ENTITIES.map(e => <option key={e} value={e}>{e || 'All'}</option>)}
+            <option value="">All</option>
+            {filterOpts.entities.map(e => <option key={e} value={e}>{e}</option>)}
           </select>
         </div>
         <div>
           <label className="label">Action</label>
           <select className="input text-sm" value={action} onChange={e => setAction(e.target.value)}>
-            {ACTIONS.map(a => <option key={a} value={a}>{a || 'All'}</option>)}
+            <option value="">All</option>
+            {filterOpts.actions.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="label">From</label>
+          <input type="date" className="input text-sm" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">To</label>
+          <input type="date" className="input text-sm" value={toDate} onChange={e => setToDate(e.target.value)} />
         </div>
         <div>
           <label className="label">Limit</label>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { authHeaders, checkApiResponse } from '../../utils/api'
 
 function fmtUptime(secs) {
@@ -207,7 +208,10 @@ export default function AdminDashboard() {
           className="w-full flex items-center justify-between p-5 text-left"
         >
           <span className="text-xs text-slate-400 uppercase tracking-wider">Recent Activity</span>
-          <span className="text-slate-500">{auditOpen ? '\u25B2' : '\u25BC'}</span>
+          <span className="flex items-center gap-3">
+            <Link to="/admin/audit" onClick={e => e.stopPropagation()} className="text-xs text-blue-400 hover:text-blue-300">View full log →</Link>
+            <span className="text-slate-500">{auditOpen ? '\u25B2' : '\u25BC'}</span>
+          </span>
         </button>
         {auditOpen && (
           <div className="px-5 pb-5">
@@ -257,6 +261,25 @@ export default function AdminDashboard() {
             <span className="text-xs text-yellow-400 ml-1">(STICKIT_AUTH=off env override active)</span>
           )}
         </div>
+        {/* v1.25.00 (B-8) — server configuration indicators */}
+        {data.env && (
+          <div className="mt-3 space-y-1.5 text-sm">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${data.env.deepgram_configured ? 'bg-green-400' : 'bg-amber-400'}`} />
+              <span className="text-slate-400">Voice (Deepgram):</span>
+              <span className={data.env.deepgram_configured ? 'text-green-400' : 'text-amber-400'}>
+                {data.env.deepgram_configured ? 'Configured' : 'Not configured — voice entry will be unavailable'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-400" />
+              <span className="text-slate-400">Session secret:</span>
+              <span className="text-slate-300">
+                {data.env.jwt_secret_set ? 'From environment variable' : 'Generated and persisted (survives restarts)'}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

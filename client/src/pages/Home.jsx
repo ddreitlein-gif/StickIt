@@ -5,9 +5,12 @@ import LiveDot from '../components/public/LiveDot';
 
 export default function Home() {
   const [version, setVersion] = useState('');
+  // v1.25.00 (D-3) — only claim LOGIN REQUIRED when protection is actually on
+  const [authEnabled, setAuthEnabled] = useState(false);
 
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => setVersion(d.version)).catch(() => {});
+    fetch('/api/auth/status').then(r => r.json()).then(d => setAuthEnabled(!!d.enabled)).catch(() => {});
   }, []);
 
   return (
@@ -103,7 +106,7 @@ export default function Home() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', maxWidth: 380, marginBottom: 24 }}>
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
             <span className="sk-display" style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--fg-dim)' }}>
-              LOGIN REQUIRED
+              {authEnabled ? 'LOGIN REQUIRED' : 'OFFICIALS & STAFF'}
             </span>
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
           </div>

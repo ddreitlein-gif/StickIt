@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import api, { authHeaders } from '../utils/api'
+import api, { authHeaders, downloadAuthed } from '../utils/api'
 import ImportConflictModal from '../components/ImportConflictModal'
 import MultiMeetImportModal from '../components/MultiMeetImportModal'
 
@@ -108,6 +108,8 @@ export default function Dashboard() {
   const [importMsg, setImportMsg] = useState('')
   const [conflictData, setConflictData] = useState(null)
   const [multiMeetData, setMultiMeetData] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null) // C-10: { meet, armed }
+  const [exporting, setExporting] = useState(false)
   const importRef = useRef(null)
 
   useEffect(() => {
@@ -121,10 +123,30 @@ export default function Dashboard() {
     setMeets([meet, ...meets])
   }
 
-  const handleDelete = async (id) => {
-    if (!confirm('Delete this meet and all its data?')) return
+  // v1.25.00 (C-10) — two-step arm/confirm modal instead of window.confirm
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    if (!deleteTarget.armed) {
+      setDeleteTarget({ ...deleteTarget, armed: true })
+      return
+    }
+    const id = deleteTarget.meet.id
+    setDeleteTarget(null)
     await api.deleteMeet(id)
     setMeets(meets.filter(m => m.id !== id))
+  }
+
+  // v1.25.00 (A-1) — Export All must carry the auth token; anchors can't.
+  const handleExportAll = async () => {
+    setExporting(true)
+    setImportMsg('')
+    try {
+      await downloadAuthed('/api/meets/export-all', { fallbackName: 'StickIt_AllMeets.zip' })
+    } catch (err) {
+      setImportMsg(`Error: ${err.message}`)
+    } finally {
+      setExporting(false)
+    }
   }
 
   const handleImport = async (e) => {
@@ -165,7 +187,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(
         `/api/meets/import?pending_import_id=${conflictData.pending_import_id}&conflict_action=${action}`,
-        { method: 'POST' }
+        { method: 'POST', headers: authHeaders() }
       )
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Import failed')
@@ -205,13 +227,14 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-2">
           <input type="file" accept=".zip,.json" ref={importRef} onChange={handleImport} className="hidden" />
-          <a
-            href="/api/meets/export-all"
+          <button
+            onClick={handleExportAll}
+            disabled={exporting}
             className="btn-secondary"
             title="Download a ZIP containing all currently-visible meets"
           >
-            Export All
-          </a>
+            {exporting ? 'Exporting...' : 'Export All'}
+          </button>
           <button
             onClick={() => importRef.current?.click()}
             disabled={importing}
@@ -277,12 +300,13 @@ export default function Dashboard() {
                   {meet.event_count > 0 && <span>🏁 {meet.event_count} event{meet.event_count !== 1 ? 's' : ''}</span>}
                 </div>
               </div>
-              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* v1.25.00 (C-9) — always visible so iPad users can see them */}
+              <div className="flex items-center gap-2">
                 <Link to={`/dashboard/meets/${meet.id}`} className="btn-secondary text-xs py-1.5 px-3">
                   Open
                 </Link>
                 <button
-                  onClick={() => handleDelete(meet.id)}
+                  onClick={() => setDeleteTarget({ meet, armed: false })}
                   className="btn-ghost text-xs py-1.5 px-2 text-red-500 hover:text-red-400"
                 >
                   Delete
@@ -298,6 +322,33 @@ export default function Dashboard() {
           onClose={() => setShowCreate(false)}
           onCreate={handleCreate}
         />
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md">
+            <h2 className="font-display text-2xl text-white mb-4">Delete Meet</h2>
+            <p className="text-slate-300 mb-2">
+              Permanently delete <span className="font-semibold text-white">{deleteTarget.meet.name}</span>?
+            </p>
+            <p className="text-slate-400 text-sm mb-4">
+              This erases {deleteTarget.meet.event_count || 0} event{(deleteTarget.meet.event_count || 0) !== 1 ? 's' : ''} and
+              every registration, run, and score in this meet. This cannot be undone.
+            </p>
+            {deleteTarget.armed && (
+              <p className="text-red-400 text-sm font-semibold mb-4">Click "Confirm Delete" to permanently delete.</p>
+            )}
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteTarget(null)} className="btn-secondary flex-1">Cancel</button>
+              <button
+                onClick={confirmDelete}
+                className={`flex-1 rounded-lg py-2 font-semibold text-white ${deleteTarget.armed ? 'bg-red-600 hover:bg-red-500' : 'bg-red-900 hover:bg-red-800'}`}
+              >
+                {deleteTarget.armed ? 'Confirm Delete' : 'Delete Meet'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {conflictData && (

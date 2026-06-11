@@ -6,6 +6,28 @@ const { requireAuth, isAuthEnabled, getJwtSecret } = require('../middleware/auth
 
 const router = express.Router();
 
+// v1.25.00 (A-7) — in-memory login throttle: 10 failures per username or IP per 15 minutes.
+const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_FAIL_LIMIT = 10;
+const loginFailures = new Map(); // key -> [timestamps]
+
+function recentFailures(key) {
+  const now = Date.now();
+  const arr = (loginFailures.get(key) || []).filter(t => now - t < LOGIN_FAIL_WINDOW_MS);
+  loginFailures.set(key, arr);
+  return arr.length;
+}
+
+function recordFailure(key) {
+  const arr = loginFailures.get(key) || [];
+  arr.push(Date.now());
+  loginFailures.set(key, arr);
+}
+
+function clearFailures(key) {
+  loginFailures.delete(key);
+}
+
 // POST /login
 router.post('/login', async (req, res) => {
   try {
@@ -13,21 +35,30 @@ router.post('/login', async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
+    const ipKey = `ip:${req.ip}`;
+    const userKey = `user:${String(username).toLowerCase()}`;
+    if (recentFailures(ipKey) >= LOGIN_FAIL_LIMIT || recentFailures(userKey) >= LOGIN_FAIL_LIMIT) {
+      return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
+    }
     const user = await queryOne(
       `SELECT id, username, password_hash, display_name, role, is_active FROM users WHERE username=? AND is_active=1`,
       [username]
     );
     if (!user || !user.password_hash) {
+      recordFailure(ipKey); recordFailure(userKey);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
+      recordFailure(ipKey); recordFailure(userKey);
       return res.status(401).json({ error: 'Invalid username or password' });
     }
+    clearFailures(ipKey); clearFailures(userKey);
+    // 12h expiry (A-6) so a long competition day doesn't expire tokens on-hill.
     const token = jwt.sign(
       { sub: user.id, role: user.role },
       getJwtSecret(),
-      { expiresIn: '8h' }
+      { expiresIn: '12h' }
     );
     res.json({ token, user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role } });
   } catch (e) {

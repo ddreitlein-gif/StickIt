@@ -17,6 +17,8 @@ export default function AdminAthletes() {
   const [byDivisionChoice, setByDivisionChoice] = useState('')
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState('')
+  // v1.25.00 (B-7) — view + restore soft-deleted athletes
+  const [showDeleted, setShowDeleted] = useState(false)
   const debounceRef = useRef(null)
 
   const fetchDivisions = () => {
@@ -26,11 +28,12 @@ export default function AdminAthletes() {
       .catch(() => setDivisions([]))
   }
 
-  const fetchRows = useCallback((qVal, divVal, pageVal) => {
+  const fetchRows = useCallback((qVal, divVal, pageVal, deletedVal) => {
     setLoading(true)
     const params = new URLSearchParams()
     if (qVal) params.set('q', qVal)
     if (divVal) params.set('division', divVal)
+    if (deletedVal) params.set('deleted', '1')
     params.set('page', String(pageVal))
     params.set('limit', String(PAGE_SIZE))
     fetch(`/api/admin/athletes?${params.toString()}`, { headers: authHeaders() })
@@ -47,9 +50,9 @@ export default function AdminAthletes() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => fetchRows(q, divisionFilter, page), 300)
+    debounceRef.current = setTimeout(() => fetchRows(q, divisionFilter, page, showDeleted), 300)
     return () => clearTimeout(debounceRef.current)
-  }, [q, divisionFilter, page, fetchRows])
+  }, [q, divisionFilter, page, showDeleted, fetchRows])
 
   const onSearch = (val) => { setQ(val); setPage(1) }
   const onDiv = (val) => { setDivisionFilter(val); setPage(1) }
@@ -117,7 +120,7 @@ export default function AdminAthletes() {
         setFlash(`Removed ${data.deleted} athlete${data.deleted === 1 ? '' : 's'} from master database. Past events are unaffected.`)
         setSelected(new Set())
         fetchDivisions()
-        fetchRows(q, divisionFilter, page)
+        fetchRows(q, divisionFilter, page, showDeleted)
       }
     } catch (e) {
       setFlash(`Error: ${e.message}`)
@@ -127,7 +130,7 @@ export default function AdminAthletes() {
     }
   }
 
-  const handleResetAll = () => previewDelete({ mode: 'reset' }, 'Reset Athlete List')
+  const handleResetAll = () => previewDelete({ mode: 'reset' }, 'Delete ALL Athletes')
   const handleDeleteSelected = () => {
     if (!selected.size) return
     previewDelete({ mode: 'selected', ids: Array.from(selected) }, 'Delete Selected Athletes')
@@ -139,6 +142,32 @@ export default function AdminAthletes() {
     setByDivisionChoice('')
   }
   const handleDeleteNonUsss = () => previewDelete({ mode: 'non-usss' }, 'Delete Non-USSS Athletes')
+
+  // v1.25.00 (B-7) — restore selected soft-deleted athletes
+  const handleRestoreSelected = async () => {
+    if (!selected.size) return
+    setBusy(true)
+    try {
+      const res = await fetch('/api/admin/athletes/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ids: Array.from(selected) }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setFlash(`Error: ${data.error || 'restore failed'}`)
+      } else {
+        setFlash(`Restored ${data.restored} athlete${data.restored === 1 ? '' : 's'} to the master database.`)
+        setSelected(new Set())
+        fetchDivisions()
+        fetchRows(q, divisionFilter, page, showDeleted)
+      }
+    } catch (e) {
+      setFlash(`Error: ${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const allOnPageSelected = rows.length > 0 && rows.every(r => selected.has(r.id))
 
@@ -171,14 +200,26 @@ export default function AdminAthletes() {
         </div>
       </div>
 
-      {/* Bulk action toolbar */}
+      {/* Bulk action toolbar — replaced by Restore when viewing deleted athletes (B-7) */}
+      {showDeleted ? (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <button
+            onClick={handleRestoreSelected}
+            disabled={busy || !selected.size}
+            className="px-3 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Restore Selected ({selected.size})
+          </button>
+          <span className="text-xs text-slate-400">Viewing deleted athletes — restored athletes return to the active list.</span>
+        </div>
+      ) : (
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <button
           onClick={handleResetAll}
           disabled={busy || total === 0}
           className="px-3 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Reset Athlete List
+          Delete ALL Athletes
         </button>
         <button
           onClick={handleDeleteSelected}
@@ -232,6 +273,7 @@ export default function AdminAthletes() {
           Delete Non-USSS Athletes
         </button>
       </div>
+      )}
 
       {flash && (
         <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 mb-4 text-sm text-blue-200 flex items-center justify-between">
@@ -261,6 +303,14 @@ export default function AdminAthletes() {
             </option>
           ))}
         </select>
+        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showDeleted}
+            onChange={e => { setShowDeleted(e.target.checked); setSelected(new Set()); setPage(1) }}
+          />
+          Show deleted
+        </label>
         <div className="text-xs text-slate-400 ml-auto">
           {total === 0 ? 'No results' : `${showingFrom}–${showingTo} of ${total}`}
         </div>
@@ -272,7 +322,7 @@ export default function AdminAthletes() {
       ) : rows.length === 0 ? (
         <div className="text-slate-500 py-8 text-center">
           {total === 0 && !q && !divisionFilter
-            ? 'No athletes in master database.'
+            ? (showDeleted ? 'No deleted athletes.' : 'No athletes in master database.')
             : 'No athletes match your filters.'}
         </div>
       ) : (

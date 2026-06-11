@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.24.00
+**Current version:** v1.25.00
 
 ## Commands
 
@@ -184,6 +184,80 @@ Auto-backup runs every 5 DB write operations, keeping a maximum of 10 timestampe
 ### Custom TailwindCSS Theme
 
 Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fonts: Bebas Neue (headings), DM Sans (body), JetBrains Mono (scores/numbers). Defined in `client/tailwind.config.js`.
+
+---
+
+### Access Model (v1.25.00, A-2/A-10)
+
+Which surfaces are public vs. protected when password protection is enabled:
+
+**Public by design (no login, ever):**
+- Judge / Head Judge / Timekeeper / Aerials judge tablets and all their scoring endpoints — secured only by unguessable short-code URLs. Auth work must never lock these out mid-meet.
+- Public pages: Home (`/`), Live Scores, Scoreboard, Overlay, Help, and the read-only Viewer API (`/api/viewer`).
+- PDF endpoints reachable from the public Scoreboard: `event-results-detailed`, `dual-bracket`, `dual-results`, plus `GET /api/pdf/logo/:meetId`. Every other PDF endpoint requires auth (policy comment at the top of `server/routes/pdf.js`).
+- `/api/jump-dds`, `/api/resolve`, `/api/version`, `/api/auth/status` and login.
+
+**Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
+
+**Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.25.00 Feature Notes
+
+### UI Usability & Access Review Fixes (v1.25.00)
+
+Implements the decisions from the 06-10-26 UI usability + access review (`StickIt_UI_Usability_Review_06-10-26.docx`, decisions recorded in `StickIt_UI_Review_Decisions_06-11-26.md`). David approved all 46 findings except B-9c (admin event links) and D-4 (scoreboard phase label). **No scoring math changes.** Tablet pages untouched.
+
+**A — Password protection unblocked end-to-end.**
+- **A-1** Every UI call now carries the login token. New `downloadAuthed()` helper in `client/src/utils/api.js` converts all anchor/window.open downloads (Export All, Export Meet, results CSV/XLSX/HTML, admin backups, USSS People CSV, training-day PDF) to fetch-blob-save; ~20 raw `fetch()` sites (all PDF posts, logo upload/delete, USSS transmit, dual manual-entry/paper-score/seeding/reset, import conflict resolution) gained `authHeaders()`.
+- **A-2** `POST /api/events/:eventId/return-to-scoring` now requires auth. `server/routes/pdf.js` has an explicit documented policy: Scoreboard-reachable PDFs stay public, everything else (`/results` GET+POST added) requires auth.
+- **A-3** Role model unified in new `server/auth/roles.js`: judge(1) < official(2) < system_admin(3); `event_admin` is a legacy alias ranked with system_admin and existing rows are migrated at startup. Client RequireAuth mirrors it; `/admin/*` route guard moved to system_admin; AdminUsers offers Judge/Official/System Admin (Judge creation now works), legacy roles render as a disabled option.
+- **A-4** Server refuses self-deactivation and last-active-admin deactivation; AdminUsers confirms Deactivate and surfaces guard errors (also B-3).
+- **A-5** `AUTH_TOGGLE_ENABLED = true` — the Enable Protection button on Admin → Security is live.
+- **A-6** JWT secret persisted in `app_settings.jwt_secret` via `initJwtSecret()` at boot (env var still wins) — restarts/deploys no longer log everyone out. Token life 8h → 12h.
+- **A-7** Login throttle: 10 failures per username or IP per 15 minutes → 429.
+- **A-8** Users table shows a Password Set/Not-set column (`has_password` in GET /users).
+- **A-9** Voice WS validates the eventId against the events table before opening the paid Deepgram leg.
+- **A-10** Access model documented (section above).
+
+**B — Admin panel.**
+- **B-4** USSS People page gained Sync Now / Upload File buttons (status card header) and a corrected empty-state that links to `/dashboard/usss`.
+- **B-5** Event Management explains what locking does, confirms Lock All/Unlock All, and has a meet/event search box.
+- **B-6** Audit log filter dropdowns populate from `GET /api/audit/filters` (SELECT DISTINCT), added From/To date filters (`from`/`to` query params), header restyled to the admin look.
+- **B-7** "Reset Athlete List" renamed "Delete ALL Athletes". New "Show deleted" toggle lists soft-deleted athletes (`GET /api/admin/athletes?deleted=1`) with Restore Selected (`POST /api/admin/athletes/restore`, audit-logged `athletes_restored`).
+- **B-8** Dashboard: Recent Activity links to the full audit log; new env indicators for `DEEPGRAM_API_KEY` and `STICKIT_JWT_SECRET` (`env` block in GET /dashboard).
+- **B-9a** In-app backup restore: `POST /api/admin/backups/:filename/restore` takes a pre-restore safety backup then copies over `data/scoring.db`; UI requires typing the filename and warns a server restart is required.
+- **B-9b** Re-open finalized event: `POST /api/admin/events/:eventId/reopen` sets status back to in_progress (clears `dual_bracket_review_status` for duals), audit-logged `event_reopened`; Re-open button on complete events in AdminEvents. Resolves the EventDetail TODO.
+- **B-10** Admin sidebar emoji icons replaced with inline SVGs; sidebar collapses to icon-only below 900px.
+
+**C — Officials.**
+- **C-1** Dead `LinkEventsPanel` deleted (superseded by Phases) along with the `seedFromQualifier` api helper. Server endpoints left in place.
+- **C-2** Bib input is a local-state `BibInput` that saves once on blur/Enter (red ring on failure) — no more per-keystroke writes/refreshes.
+- **C-3** Registration Remove and judge Remove confirm first.
+- **C-4** `JumpCodeInput` hoisted to module scope (codes passed as a prop) — no more remount/focus-loss per keystroke in ManualScoreModal.
+- **C-5** ManualScoreModal DNS/DNF/DSQ go through the shared `StatusConfirmDialog` (extracted to `client/src/components/StatusConfirmDialog.jsx`, also used by the voice modal).
+- **C-6** Run-history Flag dropdown confirms before applying (and before clearing) a status.
+- **C-7 (built, not hidden — David's ruling)** Aerials v2 manual entry: new `AerialsV2ManualModal` (per-judge × per-jump Air/Form/Landing grid mirroring the HJ tablet, jump-code datalists, range validation, DNS/DNF/DSQ with confirm). Server: `POST /runs/manual` and `POST /:runId/manual-score` accept `{ aerials_v2: true, judge_scores: [{judge_number, jump, air, form, landing}], jump1_code, jump2_code }` via new `handleAerialsV2Manual` — validates ranges/completeness, persists `ae_*` judge_scores rows keyed by judge_number, scores through `calcAerialsScoreV2` (engine untouched), sets `aerials_model='v2'`. Edit pre-populates from existing rows (`/scores` now returns `judge_number`). The legacy flat payload is still refused. Voice stays hidden on ALL aerials events (also F-2).
+- **C-8** Event/meet status dropdowns are labeled "Status" and confirm changes to/from Complete (manual Complete bypasses the HJ finalize flow).
+- **C-9** Dashboard meet-row Open/Delete buttons always visible (no hover-gating — iPad).
+- **C-10** Meet delete uses a modal showing the event count with a two-step arm/confirm pattern.
+- **C-11** MeetDetail header: TD Report / Export Meet / Clone Meet grouped under "More ▾"; container wraps.
+- **C-12** USSS/FIS pace toggle saves immediately when a course spec exists; hint shown when none saved yet.
+- **C-13** Aerials v2 event header shows "Scoring Judges: N (panel)" instead of legacy per-component judge counts.
+- **C-14** Officials Athletes page paginated 100/page (`GET /api/athletes?page=` returns `{rows,total}`; legacy array shape preserved without `page`).
+- **C-15** Inline judge edit (name + USSS ID) in the Assigned Judges table; "or use the API" help text removed.
+- **C-16** Dead code: unused AuditLog import removed from App.jsx; LinkEventsPanel removal per C-1. (The reported duplicate DIVISION_OPTIONS no longer exists — one declaration per file.)
+- **C-17** Training-day bulk uncheck sends one request: exclusions endpoint accepts `{ athlete_ids: [...], exclude }`.
+
+**D — Public pages.** **D-1** Live Scores silently re-fetches every 45s. **D-2** sticky header uses new `--bg-header` theme var (follows Sun Mode). **D-3** Home divider reads LOGIN REQUIRED only when `/api/auth/status` says protection is on; otherwise "OFFICIALS & STAFF". D-4 deferred.
+
+**E-1 — Overlay hide/show.** New `POST /api/events/:eventId/overlay/{hide,show}` (requireAuth) broadcast `OVERLAY_HIDE`/`OVERLAY_SHOW`. Overlay keeps a `hiddenRef` that suppresses the 3-second polling fallback while hidden (previously the poll would re-show the score within 3s); hide clears on OVERLAY_SHOW / run_started / score_update / dual_match_started. Compact "Broadcast Overlay: Hide / Show" control on the Scoring tab (both single and dual panels).
+
+**F — Voice entry.** **F-1** Hardware-key (F2 / Ctrl+,) stop on the bib screen fixed via `toggleRecordingRef` reassigned every render — the once-bound keydown listener no longer calls first-render closures, so the accumulated transcript and athlete list are current. Key assignments unchanged. **F-3** Typed Review-screen corrections get the same range check as spoken values (new `statusForField` export in `client/src/voice/parser.js`). **F-4** Dictation Cancel confirms when any field has a value. **F-5** Bib screen "Done" link → styled "Close" button. **F-6 (allow with warning — David's ruling)** Speaking a bib that already ran offers "will OVERWRITE their existing scores — Continue?"; on confirm the wizard proceeds and submits through the manual-score edit path against the existing run. Status overrides route the same way.
+
+**Files created:** `server/auth/roles.js`, `client/src/components/StatusConfirmDialog.jsx`, `client/src/components/AerialsV2ManualModal.jsx`.
+**Files modified:** `server/middleware/auth.js`, `server/routes/auth.js`, `server/routes/admin.js`, `server/routes/audit.js`, `server/routes/athletes.js`, `server/routes/pdf.js`, `server/routes/runs.js`, `server/routes/training.js`, `server/db/schema.js`, `server/index.js`, `server/voice/deepgram.js`, `server/version.js`, `client/src/utils/api.js`, `client/src/auth/RequireAuth.jsx`, `client/src/App.jsx`, `client/src/pages/Dashboard.jsx`, `client/src/pages/MeetDetail.jsx`, `client/src/pages/EventDetail.jsx`, `client/src/pages/Athletes.jsx`, `client/src/pages/AuditLog.jsx`, `client/src/pages/TrainingDays.jsx`, `client/src/pages/LiveScores.jsx`, `client/src/pages/Home.jsx`, `client/src/pages/Overlay.jsx`, `client/src/pages/admin/AdminUsers.jsx`, `client/src/pages/admin/AdminSecurity.jsx`, `client/src/pages/admin/AdminEvents.jsx`, `client/src/pages/admin/AdminAthletes.jsx`, `client/src/pages/admin/AdminBackups.jsx`, `client/src/pages/admin/AdminUSSSPeople.jsx`, `client/src/pages/admin/AdminDashboard.jsx`, `client/src/components/AdminLayout.jsx`, `client/src/components/VoiceManualEntryModal.jsx`, `client/src/components/public/PublicLayout.jsx`, `client/src/voice/parser.js`, `client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`.
 
 ---
 

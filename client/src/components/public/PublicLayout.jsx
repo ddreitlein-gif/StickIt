@@ -39,6 +39,7 @@ function injectFontsAndStyles() {
         --gradient-red: linear-gradient(135deg, #e63946 0%, #b02a36 100%);
         --gradient-blue: linear-gradient(135deg, #3b7dd8 0%, #1e4d8f 100%);
         --gradient-bg: radial-gradient(ellipse at top, #0e1628 0%, #070d1a 70%);
+        --bg-header: rgba(7,13,26,0.92); /* v1.25.00 (D-2) translucent sticky headers */
       }
       [data-stickit-public="1"][data-theme="sun"] {
         --bg: #fafbfc;
@@ -54,6 +55,7 @@ function injectFontsAndStyles() {
         --blue-dim: #18488f;
         --gold: #b8920d;
         --gradient-bg: linear-gradient(180deg, #ffffff 0%, #f1f4f8 100%);
+        --bg-header: rgba(250,251,252,0.92); /* v1.25.00 (D-2) */
       }
       [data-stickit-public="1"] {
         font-family: 'Inter Tight', system-ui, -apple-system, sans-serif;
