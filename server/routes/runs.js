@@ -481,9 +481,21 @@ async function handleAerialsV2Manual(req, res, event, { mode, run, registration_
   // Persist per-judge rows so the HJ grid / scoreboard breakdown / future edits read them
   const judges = await queryAll(`SELECT id, judge_number FROM judges WHERE event_id=? AND judge_number IS NOT NULL`, [event.id]);
   const judgeByNumber = new Map(judges.map(j => [parseInt(j.judge_number), j.id]));
+  // Paper-only events may not have seeded the panel — create any missing
+  // AeJudgeN slots so the per-judge rows (and later edits) have a judge to hang on.
+  for (let jn = 1; jn <= panelSize; jn++) {
+    if (judgeByNumber.has(jn)) continue;
+    const newJudgeId = uuidv4();
+    const sc = Math.random().toString(36).slice(2, 8);
+    await execute(
+      `INSERT INTO judges (id,event_id,name,role,pin,short_code,judge_number) VALUES (?,?,?,?,?,?,?)`,
+      [newJudgeId, event.id, `Judge ${jn}`, `AeJudge${jn}`, null, sc, jn]
+    );
+    judgeByNumber.set(jn, newJudgeId);
+  }
   for (const s of judge_scores) {
     const judgeId = judgeByNumber.get(parseInt(s.judge_number));
-    if (!judgeId) continue; // judge slot not seeded — score still counted via the run totals
+    if (!judgeId) continue;
     const suffix = parseInt(s.jump) === 1 ? 'j1' : 'j2';
     for (const [comp, val] of [['air', s.air], ['form', s.form], ['land', s.landing]]) {
       await execute(
