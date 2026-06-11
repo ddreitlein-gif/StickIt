@@ -6,6 +6,8 @@ const AdmZip = require('adm-zip');
 const multer = require('multer');
 const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
 const { requireAuth } = require('../middleware/auth');
+const { VERSION } = require('../version');
+const EXPORT_VERSION = VERSION.replace(/^v/, '');
 
 const MEET_LOGOS_DIR = path.join(__dirname, '..', 'data', 'logos');
 const importUpload = multer({ dest: path.join(__dirname, '..', 'data', 'tmp'), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -108,7 +110,7 @@ router.get('/export-all', requireAuth, async (req, res) => {
     }
 
     const manifest = {
-      stickit_version: '1.16.22',
+      stickit_version: EXPORT_VERSION,
       export_date: new Date().toISOString(),
       meet_count: manifestMeets.length,
       meets: manifestMeets,
@@ -689,8 +691,17 @@ async function buildMeetExportZip(meetId) {
   const officials = await queryAll(`SELECT * FROM officials WHERE meet_id=?`, [meetId]);
   const courseSpecs = await queryAll(`SELECT * FROM course_specs WHERE meet_id=?`, [meetId]);
 
+  // v1.25.01 — training days + per-day exclusions round-trip
+  const trainingDays = await queryAll(`SELECT * FROM training_days WHERE meet_id=?`, [meetId]);
+  let trainingDayExclusions = [];
+  const tdIds = trainingDays.map(t => t.id);
+  if (tdIds.length > 0) {
+    const tph = tdIds.map(() => '?').join(',');
+    trainingDayExclusions = await queryAll(`SELECT * FROM training_day_exclusions WHERE training_day_id IN (${tph})`, tdIds);
+  }
+
   const exportData = {
-    stickit_version: '1.16.22',
+    stickit_version: EXPORT_VERSION,
     export_date: new Date().toISOString(),
     meet,
     events,
@@ -707,6 +718,8 @@ async function buildMeetExportZip(meetId) {
     event_phases: eventPhases,
     phase_run_order: phaseRunOrder,
     run_round_status: runRoundStatus,
+    training_days: trainingDays,
+    training_day_exclusions: trainingDayExclusions,
   };
 
   const zip = new AdmZip();
@@ -816,6 +829,7 @@ async function executeImport(data, zipPath, opts = {}) {
   const meetName = opts.meetNameOverride || data.meet.name || 'Imported Meet';
   const athleteMap = await deduplicateAthletes(data.athletes);
   const eventMap = {}, regMap = {}, judgeMap = {}, heatMap = {}, phaseMap = {}, bracketMap = {}, runMap = {};
+  const trainingDayMap = {};
 
   const newMeetId = uuidv4();
   for (const e of (data.events || [])) eventMap[e.id] = uuidv4();
@@ -900,6 +914,26 @@ async function executeImport(data, zipPath, opts = {}) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [uuidv4(), newMeetId, cs.course_name ?? null, cs.width_m ?? null, cs.length_m ?? null,
        cs.pitch_deg ?? null, cs.pace_time_override_m ?? null, cs.pace_time_override_f ?? null, cs.pace_standard ?? 'usss']
+    );
+  }
+
+  // Insert training days + per-day exclusions (v1.25.01)
+  for (const td of (data.training_days || [])) {
+    const newTdId = uuidv4();
+    trainingDayMap[td.id] = newTdId;
+    await execute(
+      `INSERT INTO training_days (id, meet_id, name, date, created_at, updated_at)
+       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [newTdId, newMeetId, td.name ?? '', td.date ?? null]
+    );
+  }
+  for (const tde of (data.training_day_exclusions || [])) {
+    const newTdId = trainingDayMap[tde.training_day_id];
+    const newAthleteId = athleteMap[tde.athlete_id];
+    if (!newTdId || !newAthleteId) continue; // skip orphaned exclusion rows
+    await execute(
+      `INSERT OR IGNORE INTO training_day_exclusions (training_day_id, athlete_id) VALUES (?, ?)`,
+      [newTdId, newAthleteId]
     );
   }
 
@@ -1223,6 +1257,39 @@ async function executeMerge(existingMeetId, data, zipPath) {
          cs.pitch_deg ?? null, cs.pace_time_override_m ?? null, cs.pace_time_override_f ?? null, cs.pace_standard ?? 'usss']
       );
     }
+  }
+
+  // 7b. Training days — match by meet_id + name (v1.25.01)
+  const trainingDayMap = {};
+  for (const td of (data.training_days || [])) {
+    const existing = await queryOne('SELECT * FROM training_days WHERE meet_id=? AND name=?', [existingMeetId, td.name ?? '']);
+    if (existing) {
+      trainingDayMap[td.id] = existing.id;
+      if (isNewer(td.updated_at, existing.updated_at)) {
+        await execute(
+          `UPDATE training_days SET date=?, updated_at=datetime('now') WHERE id=?`,
+          [td.date ?? existing.date, existing.id]
+        );
+      }
+    } else {
+      const newId = uuidv4();
+      trainingDayMap[td.id] = newId;
+      await execute(
+        `INSERT INTO training_days (id, meet_id, name, date, created_at, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        [newId, existingMeetId, td.name ?? '', td.date ?? null]
+      );
+    }
+  }
+  // Exclusions are additive-only on merge; composite PK keeps this idempotent.
+  for (const tde of (data.training_day_exclusions || [])) {
+    const mappedTd = trainingDayMap[tde.training_day_id] ?? null;
+    const mappedAthlete = athleteMap[tde.athlete_id] ?? null;
+    if (!mappedTd || !mappedAthlete) continue;
+    await execute(
+      `INSERT OR IGNORE INTO training_day_exclusions (training_day_id, athlete_id) VALUES (?, ?)`,
+      [mappedTd, mappedAthlete]
+    );
   }
 
   // 8. Heats
