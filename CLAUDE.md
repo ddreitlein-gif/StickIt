@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.25.00
+**Current version:** v1.25.01
 
 ## Commands
 
@@ -200,6 +200,43 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.25.01 Feature Notes
+
+### Training Days in Meet Export/Import Round-Trip (v1.25.01)
+
+Closed the last known data-loss gap in meet export/import: training days (v1.22.00) were not included
+in the export, so exporting a meet and importing it on another server silently dropped every training
+day and its participant exclusion list. All changes are in `server/routes/meets.js`; no client changes.
+
+**Export.** `buildMeetExportZip` now SELECTs `training_days` (by meet_id) and `training_day_exclusions`
+(by the collected training-day IDs) and adds both arrays to `meet_export.json`. The multi-meet Export
+All bundle inherits this automatically since it reuses `buildMeetExportZip`.
+
+**Fresh import.** `executeImport` gains a `trainingDayMap` (old id → new uuid). Training days insert
+after course specs; exclusion rows are remapped through `trainingDayMap` + `athleteMap` with
+`INSERT OR IGNORE` (composite PK) and orphaned rows skipped — same orphan-protection pattern as
+v1.16.05. Old exports without the new keys import cleanly via the standard `|| []` tolerance.
+
+**Merge.** `executeMerge` matches training days by `meet_id + name` (source IDs don't exist on the
+destination). On match, the date updates only when the import row is newer (`isNewer` on
+`updated_at`); otherwise a new row is inserted. Exclusions are additive-only and idempotent —
+re-merging the same export changes nothing. Merge never deletes exclusions.
+
+**Export version string fixed.** Both `stickit_version` sites (the per-meet `meet_export.json` and the
+multi-meet `manifest.json`) had been hardcoded at `'1.16.22'`; they now derive from
+`server/version.js` (`EXPORT_VERSION`, leading `v` stripped) so they can never drift again.
+
+**Verification.** 27-check integration test against a scratch server: seed → export (arrays + version
+present) → delete → fresh import (IDs remapped, included/excluded flags identical) → tampered merge
+(newer date applied, new day added, exclusions not duplicated, orphan rows skipped, second identical
+merge is a no-op) → legacy export without the new keys imports with zero training days.
+`verify_v16.js` still 60/60 (no scoring paths touched).
+
+**Files modified:** `server/routes/meets.js`, `server/version.js`, `client/src/components/Layout.jsx`,
+`client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
@@ -502,7 +539,7 @@ The participants query mirrors the dedup pattern at [server/routes/pdf.js](serve
 
 **API helpers.** Seven new entries in [client/src/utils/api.js](client/src/utils/api.js): `listTrainingDays`, `createTrainingDay`, `updateTrainingDay`, `deleteTrainingDay`, `getTrainingParticipants`, `toggleTrainingExclusion`, `resetTrainingExclusions`, `downloadTrainingDayPdf`.
 
-**Out of scope.** Meet export/import (`buildMeetExportZip` / `POST /api/meets/import`) does NOT round-trip training days yet — if you export a meet then import it elsewhere, the training-day rows do not survive. Adding this is a future small change (additive INSERT columns mirroring the v1.16.22 pattern).
+**Export/import round-trip:** added in v1.25.01 — training days and exclusions now survive meet export → import (see v1.25.01 Feature Notes).
 
 **Files created:** `server/routes/training.js`, `client/src/pages/TrainingDays.jsx`
 **Files modified:** `server/db/schema.js`, `server/routes/meets.js`, `server/routes/pdf.js`, `server/index.js`, `client/src/App.jsx`, `client/src/pages/MeetDetail.jsx`, `client/src/utils/api.js`
