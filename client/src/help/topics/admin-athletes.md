@@ -15,12 +15,16 @@ If a soft-deleted athlete is re-added via **Add from USSS Database** or re-impor
 
 ### Four bulk operations
 
-1. **Reset Athlete List** (red) — soft-delete every active athlete. Use after a full season to start fresh.
+1. **Delete ALL Athletes** (red) — soft-delete every active athlete. Use after a full season to start fresh.
 2. **Delete Selected Athletes** (red) — checkbox table; bulk soft-delete the chosen rows.
 3. **Delete by Division** (dark) — dropdown of distinct divisions; soft-delete all in the picked division (or the "(No Division)" bucket).
 4. **Delete Non-USSS Athletes** (dark) — soft-delete every athlete whose `ussa_num` is NULL/blank OR whose USSA# is not in the `usss_people` master file.
 
 All four operations show a confirmation modal with the count and a sample of athletes before executing.
+
+### Viewing and restoring deleted athletes
+
+Flip the **Show deleted** toggle to list soft-deleted athletes instead of active ones. Select any of them and click **Restore Selected** to bring them back to the active list — no re-import needed. Restores are audit-logged.
 
 ### Page layout
 
@@ -41,14 +45,14 @@ All require admin auth:
 
 ### When to use each operation
 
-- **Reset Athlete List** — end of season, full reset.
+- **Delete ALL Athletes** — end of season, full reset.
 - **Delete Selected** — small batch of obvious duplicates or test data.
 - **Delete by Division** — when a division spun off or merged and you're consolidating.
 - **Delete Non-USSS Athletes** — pre-season cleanup; any athlete who isn't licensed isn't going to compete.
 
 ### Don't fear the delete
 
-Soft-delete is reversible — re-adding via USSS picker or SkiReg CSV restores the row. Past events are unaffected. The only thing you lose by deleting is the visibility in the master list; the data is still there if you need it back.
+Soft-delete is reversible three ways — the **Show deleted → Restore Selected** flow on this page, re-adding via the USSS picker, or re-importing via SkiReg CSV. Past events are unaffected. The only thing you lose by deleting is visibility in the master list; the data is still there if you need it back.
 
 ### Hard-delete (real removal)
 

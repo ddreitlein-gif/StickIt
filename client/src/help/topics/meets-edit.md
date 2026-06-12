@@ -21,6 +21,14 @@ Meet name, location, and start date can be changed at any time without affecting
 - **Course length / pace standard** — those live on the meet's [Course specifications](./meets-course-specs) panel.
 - **The meet's short code** — auto-generated, stable for the life of the meet. Sharing the same `/scoreboard/<short>` link before and after an edit always works.
 
+### The More ▾ menu
+
+The meet header groups its less-frequent actions — **TD Report**, **Export Meet**, **Clone Meet** — under a **More ▾** button to keep the header compact.
+
+### Status changes
+
+The meet and event **Status** dropdowns ask for confirmation when changing to or from **Complete**, since manually completing an event bypasses the Head Judge finalize flow.
+
 ### Visibility
 
 Edits to a meet's name or date are immediate. Officials viewing the dashboard at the same moment will see the change on their next page-refresh. Public scoreboards refresh automatically — anyone watching `/scoreboard/<short>` sees the new title within a few seconds via the live polling cycle.

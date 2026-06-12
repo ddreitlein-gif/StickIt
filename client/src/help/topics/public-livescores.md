@@ -50,9 +50,9 @@ Filter narrows to meets and events with athletes from the selected division.
 
 `GET /api/meets/livescores?page=&limit=10&division=` returns a paginated list of meets with nested event arrays. Each event includes status and a link short code.
 
-### Polling
+### Auto-refresh
 
-The Live Scores page polls every 5 seconds for updates. The LIVE NOW strip refreshes as events start and stop being active. No manual refresh needed.
+The Live Scores page silently re-fetches every 45 seconds, so the LIVE NOW strip and event statuses stay current on an unattended display. No manual refresh needed.
 
 ### Sun Mode
 
@@ -68,8 +68,8 @@ The page is responsive — meet cards stack vertically on narrow viewports. The 
 
 ### What's NOT shown
 
-- Locked meets (where every event is locked) — hidden from the Officials dashboard but **visible** on Live Scores. Public spectators should still see the final state.
-- Meets with no events — not yet shown (an empty meet card would be useless).
+- **Events hidden by an admin** — the Hide toggle on [Admin → Events](./admin-events) removes an event from this page (and a meet whose every event is hidden disappears entirely). Used to keep test events out of public view. Direct scoreboard links still work.
+- Locked events are **visible** here — locking hides events from the Officials dashboard only; public spectators should still see the final state.
 - Events with a status of `setup` and no athletes — shown with a gray indicator; spectators can see what's scheduled.
 
 ### When to share this URL

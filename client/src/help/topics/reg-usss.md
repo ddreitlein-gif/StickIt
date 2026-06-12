@@ -4,18 +4,18 @@ The **USSS People file** (a master roster of every USSS-licensed athlete, coach,
 
 ### Syncing the USSS People file
 
-The Officials sidebar's **Information** section has a **USSS Database** subsection with two buttons:
+The Officials sidebar's **USSS Database** entry opens a dedicated page (`/dashboard/usss`) with two buttons:
 
 - **Sync Now** — fetches the current USSS People file from USSS servers and replaces the local copy.
 - **Upload File** — manual upload of a `people.txt` file you downloaded yourself. Useful when the auto-sync URL changes or you have access to a pre-release file.
 
-After sync, the panel displays:
+After sync, the page displays:
 - Last sync timestamp
 - List year + identifier (e.g. `2026 Fall`)
 - Total record count + athletes count
 - Source (`auto-sync` or `manual-upload`)
 
-The sync is throttled — if the file hasn't changed since your last sync, the server returns `skipped: true` and shows "Already current" in the panel.
+The sync is throttled — if the file hasn't changed since your last sync, the server returns `skipped: true` and shows "Already current". (Admins also have the same Sync Now / Upload File controls on the [Admin → USSS People](./admin-usss-people) page.)
 
 ### Add an athlete from the USSS database
 

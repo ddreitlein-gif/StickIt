@@ -1,6 +1,6 @@
 ## Exporting a meet
 
-Every meet can be exported as a self-contained `.zip` file. The export includes the meet, every event, every registration, every run, every judge score, every dual bracket match, every phase, and the entire audit trail for that meet.
+Every meet can be exported as a self-contained `.zip` file. The export includes the meet, every event, every registration, every run, every judge score, every dual bracket match, every phase, every [training day](./meets-training-days) (with its participant exclusion list), and the entire audit trail for that meet.
 
 ### Single meet
 

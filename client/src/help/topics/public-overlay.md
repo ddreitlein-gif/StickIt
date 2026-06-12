@@ -54,7 +54,7 @@ When the overlay loads (e.g., OBS just started the browser source), it hydrates 
 
 ### Hiding the overlay
 
-Send the WebSocket message `OVERLAY_HIDE` from the server to hide the overlay's content (useful between events). Or simply mute the OBS browser source.
+The Scoring tab has a compact **Broadcast Overlay: Hide / Show** control (on both the single-mogul and dual panels). **Hide** blanks the overlay's content — useful between events or during a delay — and the overlay stays blank until you click **Show** or the next run starts (a new run, score, or dual match automatically un-hides it). While hidden, the overlay's fallback polling is suppressed so a score can't flicker back on screen.
 
 ### Tablet / mobile
 

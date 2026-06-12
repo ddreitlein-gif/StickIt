@@ -48,9 +48,7 @@ Internal values remain `TL1` etc. for routing/permissions. Only the display labe
 
 ### Editing a judge
 
-Click the pencil icon next to any judge row. Edit name, role, or PIN. Save.
-
-> **Caveat:** changing a role mid-event is unsafe — a partial scoring submission with the old role is now orphaned. Avoid unless absolutely necessary; delete & re-add is cleaner.
+Edit a judge's **name** and **USSS ID** inline, right in the Assigned Judges table — click into the field, type, and save. Roles aren't editable after creation; to change a judge's role, remove and re-add them (changing a role mid-event would orphan partial submissions).
 
 ### Removing a judge
 

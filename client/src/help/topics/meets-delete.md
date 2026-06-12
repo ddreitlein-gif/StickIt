@@ -6,8 +6,8 @@ Deleting a meet is permanent and **cascades**. Every event, registration, run, j
 
 1. Open the meet from the dashboard.
 2. Click **Delete Meet** in the meet header.
-3. A confirmation modal appears showing the meet name. Type the meet name to confirm (or, depending on version, click the destructive **Delete** button — never gated on accidental clicks).
-4. Click **Delete**. You're returned to the dashboard.
+3. A confirmation modal appears showing the meet name and **how many events it contains** — a quick sanity check that you're deleting the right meet.
+4. The delete is two-step: arm the action first, then click the final destructive **Delete** button. You're returned to the dashboard.
 
 ### What you should do *first*
 

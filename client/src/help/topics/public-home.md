@@ -8,18 +8,17 @@ The Home page at `/` is the public landing page — the first thing anyone sees 
 - **Big StickIt logo** with drop shadow.
 - **"FREESTYLE SCORING" tagline** in tracking-widened Bebas Neue.
 - **Primary CTA — Live Scores** — large red-gradient button. Click takes you to `/livescores`.
-- **"LOGIN REQUIRED" divider** — separates public from authenticated entry points.
+- **Divider** — reads **LOGIN REQUIRED** when password protection is enabled, otherwise **OFFICIALS & STAFF**.
 - **Two secondary buttons** — Officials (`/dashboard`) and Admin (`/admin`).
-- **Help & User Guide button** below — opens this guide.
 - **Footer** — `© Rocky Mountain Freestyle` + current version (fetched from `/api/version`).
 
 ### Why the Live Scores CTA is so prominent
 
 Most visitors to a StickIt instance are spectators looking for live results. The home page funnels them straight to `/livescores` with one tap. The Officials and Admin buttons are visually de-emphasized — they're for the small group of operators.
 
-### No login required
+### Login behavior
 
-The home page itself has no authentication. The Live Scores button leads to public surfaces (also no login). The Officials / Admin buttons take you to surfaces that will gain authentication in a future build — they're already wired with a placeholder.
+The home page itself has no authentication, and the Live Scores button leads to public surfaces (also no login). When [password protection](./admin-security) is enabled, the Officials / Admin buttons route through the login page; when it's off, they go straight in.
 
 ### Sun Mode toggle
 

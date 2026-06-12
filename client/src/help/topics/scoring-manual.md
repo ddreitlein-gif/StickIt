@@ -13,7 +13,7 @@ The standard scoring path is tablet-based: judges enter scores on their tablets,
 
 Several entry points:
 
-- **Scoring tab → top of page → 🎙 Voice Manual Entry** — opens the voice modal in paper-entry batch mode (mogul + legacy aerials only). See [Voice manual score entry](./scoring-voice).
+- **Scoring tab → top of page → 🎙 Voice Manual Entry** — opens the voice modal in paper-entry batch mode (mogul only; voice is hidden on aerials and dual mogul). See [Voice manual score entry](./scoring-voice).
 - **Scoring tab → "Currently Scoring" panel → Manual Entry button** — opens the keyboard modal for the currently-scoring athlete.
 - **Scoring tab → "Up Next" row → Manual Entry button** — opens the keyboard modal for the first up-next athlete.
 - **Results tab → per-row Manual Entry button** — opens the keyboard modal pre-populated with the existing scores for editing (this is also accessible via [Editing a finalized score](./scoring-edit)).
@@ -32,13 +32,13 @@ The modal lays out one section per scoring component:
 
 Each input has +/- buttons for fine tune. The running calculated total updates live at the bottom.
 
-A **Submit** button persists the run. A **Cancel** button discards. A **Status Override** lets you submit DNS / DNF / DSQ instead of a numeric score.
+A **Submit** button persists the run. A **Cancel** button discards. A **Status Override** lets you submit DNS / DNF / DSQ instead of a numeric score — each asks for confirmation first, so a stray tap can't zero out an athlete.
 
-### Aerials v2 — refused
+### Aerials manual entry
 
-Manual Score Entry's legacy-shape modal **does not work** for aerials v2 events (panel size set, per-judge-per-jump data). The server returns an error directing the operator to use the per-judge tablets instead. There's no way to encode per-judge-per-jump Air/Form/Landing scores into the simple flat modal — and forcing it would silently corrupt the v2 data model. This refusal was added in v1.18.02.
+Aerials events (panel size set, per-judge-per-jump scoring) get their own manual entry modal: a grid of one column per scoring judge × one row group per jump, with Air / Form / Landing inputs mirroring the Head Judge tablet's layout. Jump-code pickers, range validation, and confirmed DNS/DNF/DSQ overrides are all built in. Editing an existing run pre-populates every judge's values. The total is computed by the exact same engine path as tablet scoring.
 
-To enter aerials v2 scores manually, open each per-judge tablet URL on the scoring laptop and use the tablet UI directly — the URLs are listed on the event's Links tab.
+(Older releases refused aerials manual entry and required the per-judge tablets — that limitation was removed in v1.25.00.)
 
 ### Dual mogul
 

@@ -12,8 +12,10 @@ The Admin → Audit Log page at `/admin/audit` displays every system mutation ca
 - **Event config** — phase changes, course spec updates, panel size changes, lock toggles.
 - **Meet operations** — create / edit / import / export / delete.
 - **User management** (Admin) — create / edit / deactivate.
+- **Security** — password changes and enabling / disabling password protection.
+- **Admin event actions** — re-opening finalized events, hiding / showing events on Live Scores.
 - **USSS sync** — sync runs, upload events.
-- **Athletes bulk operations** — bulk soft-deletes.
+- **Athletes bulk operations** — bulk soft-deletes and restores.
 - **Backups** — manual backup triggers, auto-backup failures.
 
 ### Columns
@@ -21,29 +23,24 @@ The Admin → Audit Log page at `/admin/audit` displays every system mutation ca
 Each row shows:
 
 - **Timestamp** — UTC, displayed in local time
-- **User** — the username who performed the action (or `system` for auto-triggered events)
-- **Action** — short identifier (e.g., `run_finalized`, `athletes_bulk_deleted`, `event_locked`)
-- **Target** — what was changed (e.g., `event:abc123`, `run:def456`)
+- **Action** — short identifier (e.g., `run_finalized`, `athletes_bulk_deleted`, `event_reopened`)
+- **Entity** — the kind of thing changed (event, run, athlete, meet…)
+- **ID** — the specific record's identifier
 - **Detail** — JSON payload with old / new values
 
 ### Filtering
 
 Filters at the top of the page:
 
-- **Action** — pick from a dropdown of known action types.
-- **User** — filter by who.
-- **Timestamp range** — start / end dates.
-- **Target** — search by target ID.
+- **Entity** and **Action** — dropdowns populated live from the values actually present in your log, so they always match your data.
+- **From / To dates** — limit the result to a date range.
+- **Row limit** — how many entries to load.
 
 Combine filters with AND logic.
 
 ### Inspecting a row
 
 Click any row to expand the **Detail** JSON. For score edits, you'll see the before/after values for every changed field. For bulk operations, you'll see the count + a sample of affected rows.
-
-### Export
-
-There's a CSV export button at the top of the page — downloads the filtered set as `audit_log_<timestamp>.csv`. Useful for sharing with TDs or for off-site archive.
 
 ### Touch / mouse support
 
@@ -60,7 +57,7 @@ There's no automatic retention policy. The `audit_log` table grows indefinitely.
 ### What's NOT logged
 
 - Read access — viewing pages, opening modals, viewing PDFs.
-- Authentication events — there's no login yet, so no failed/successful auth events.
+- Individual sign-ins — login attempts aren't logged (repeated failures are rate-limited at the server instead).
 - Backup file creations (success path) — only failures are logged.
 - WebSocket connection events.
 - Server boot / shutdown events.

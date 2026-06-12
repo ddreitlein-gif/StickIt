@@ -30,11 +30,13 @@ The Admin Dashboard is the system administrator's landing page at `/admin/dashbo
 - Errors are pushed by the error-capturing Express middleware and the auto-backup error callback
 
 **Recent activity**
-- Collapsible table of the last 20 audit log entries
-- Shows what was changed, by whom, when
+- Collapsible table of the last 20 audit log entries, with a link to the full [Audit log](./admin-audit)
+- Shows what was changed and when
 
-**Auth status**
-- Placeholder indicator. Will show authenticated user info once authentication is enabled.
+**Environment indicators**
+- Whether **password protection** is enabled (see [Password protection & login](./admin-security))
+- Whether a **voice service key** (`DEEPGRAM_API_KEY`) is configured — required for [Voice manual entry](./scoring-voice)
+- Whether a fixed **JWT secret** (`STICKIT_JWT_SECRET`) is set via environment (optional; StickIt persists its own otherwise)
 
 ### Server endpoint
 

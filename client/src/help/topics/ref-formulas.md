@@ -13,7 +13,7 @@ Capped at 100.0. Truncated to 2dp.
 ### Turns (max 60)
 
 **5-judge format (3 counting + 2 reference):** sum the 3 counting T&L judge scores.
-**7-judge format (5 counting + 2 reference):** drop high and low, sum the middle 3.
+**7-judge format (5 counting + 2 reference):** drop the high and low **turns** scores and the high and low **deductions** independently, then sum the kept values (per FIS JH 6203.1.1 — the drops are per column, not per judge's net).
 
 Per FIS JH 6203.
 
@@ -31,19 +31,28 @@ judge_total = clamp(raw − deduction, 0.1, 20)
 
 ### Air (max 20)
 
+Per FIS JH 6203.2.2 / 6204.3 (order matters — average first, then DD):
+
 ```
-per_jump_air = sum(floorToHundredth(judge_score × DD)) / num_air_judges
+per_jump_air = floorToHundredth(avg(judge raw scores)) × DD, capped at 10.0
 air_total = floorToHundredth(jump1_air + jump2_air)
 ```
 
-If only 1 jump (Devo), double the single-jump value:
+A jump whose averaged score is below 0.1 earns no points. If only 1 jump (Devo), double the single-jump value:
 ```
 air_total = floorToHundredth(2 × per_jump_air)
 ```
 
 Capped at 20.0. Single-jump-in-2-jump-event capped at 10 per USSS 4210.2.2.
 
-Per FIS JH 6204.
+### Repeated jumps
+
+When an athlete performs the same jump twice in a run, only one counts:
+
+- **RQS-EQS:** the higher-**scoring** jump counts; the lower-scoring jump is zeroed (tie → jump 1 counts).
+- **All other divisions:** the first jump counts per USSS 4210.2.1; the second is zeroed.
+
+The dropped jump is also excluded from the Air-no-DD tie-break value.
 
 ### Air-no-DD (tie-break only)
 

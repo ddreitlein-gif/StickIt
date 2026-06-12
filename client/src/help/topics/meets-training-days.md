@@ -57,6 +57,6 @@ Hover any day in the left list — the ✎ button opens an edit modal for name/d
 
 Training days and their exclusion lists are removed along with the meet. There's nothing to clean up manually.
 
-### Not in meet export/import yet
+### Included in meet export/import
 
-Currently, exporting a meet ZIP does not include its training days. Re-importing the same meet on another machine will not bring training days along. This is a known limitation tracked for a future release.
+Exporting a meet ([Exporting a meet](./meets-export)) includes its training days and each day's participant exclusion list, and they survive the round-trip: a fresh import recreates them exactly, and merging an updated export into an existing meet matches training days by name, keeps the newer date, and never loses exclusions.

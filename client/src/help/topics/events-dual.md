@@ -12,7 +12,7 @@ Pick from 4, 8, 16, 32, or 64 athletes. The bracket size must be ≥ the number 
 
 ### Optional fields
 
-- **Runoff to 8th** — if checked, the bracket includes a 5/6 match and a 7/8 match in addition to the standard 3rd/4th. Useful when FFSP points need to extend down to 8th place.
+- **Runoff to 8th** — if checked, the bracket runs a true 5–8 mini-bracket per USSS 4310.3.2: the four quarterfinal losers meet in two **consolation semifinals**, whose winners play the **5/6 final** and losers the **7/8 final** — in addition to the standard 3rd/4th. The finals run in order 7/8 → 5/6 → 3rd/4th → Championship at the end of the event. Useful when FFSP points need to extend down to 8th place.
 - **Random seed (optional)** — used by the **Random Seed** seeding button to make seedings reproducible. Leave blank for true randomness; set a value if you want to be able to re-seed identically later.
 
 ### Seeding the bracket

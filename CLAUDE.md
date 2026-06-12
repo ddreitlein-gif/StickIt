@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.25.02
+**Current version:** v1.25.03
 
 ## Commands
 
@@ -200,6 +200,57 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.25.03 Feature Notes
+
+### User Guide Refresh — v1.22.01 → v1.25.02 Catch-Up (v1.25.03)
+
+The in-app User Guide (`/help`, last touched at v1.22.00) was brought current through v1.25.02.
+Docs/content only — no server code, no scoring paths, no UI components changed (topic-title tweaks in
+`topicsIndex.js` aside). Now 64 topics.
+
+**Two new topics:**
+- `admin-security` — "Password protection & login" (Admin group, after Dashboard): what's always
+  public vs. protected, the judge/official/system_admin role ladder, how to enable/disable
+  protection (admin password prerequisite), 12h sessions surviving restarts, login throttling,
+  `STICKIT_AUTH=off` lockout escape hatch.
+- `ref-viewer-api` — "Viewer API (third-party apps)" (Reference group): the six `/api/viewer`
+  endpoints, hidden-event listing exclusion, active-round fallback, 404 shape, pointer to README.
+
+**Voice topic rewritten** (`scoring-voice` — per David's explicit request): adds the F1–F4 hardware
+keys with macOS Ctrl-alias table (v1.22.01/02), SpeechMike Device Control Center setup, Next =
+next-*blank*-field semantics, the overwrite-warning flow for re-entering athletes who already ran,
+typed Review corrections range-checked, cancel confirm, voice hidden on ALL aerials, Deepgram env
+indicator on Admin Dashboard.
+
+**Updated topics (accuracy fixes + new features):** `admin-users` (real auth replaces "placeholder"
+copy; Password Set column; self/last-admin guards), `admin-events` (retitled "Event Management:
+locking, hiding, re-opening" — search box, Re-open, full hide-from-Live-Scores section),
+`admin-backups` (in-app Restore with typed-filename confirm + safety backup), `admin-audit` (live
+filter dropdowns, From/To dates, real table columns; removed never-built CSV-export and User-column
+claims), `admin-athletes` ("Delete ALL Athletes" rename, Show deleted → Restore Selected),
+`admin-dashboard` (env indicators replace auth placeholder), `admin-usss-people` (on-page Sync
+Now/Upload File), `scoring-manual` (aerials v2 manual entry modal replaces the "refused" section),
+`events-dual` (runoff-to-8th true 5–8 mini-bracket + finals order), `events-lock` (locking vs.
+hiding section), `public-livescores` (45s auto-refresh, hidden events), `public-overlay`
+(Scoring-tab Hide/Show control), `public-home` (conditional LOGIN REQUIRED divider, dead Help-link
+removed), `overview` (sidebar names, no judge "PIN", admin duties), `ref-formulas` (v1.24.00: air
+avg-then-DD order + 10.0 cap, 7-judge separate turns/deduction drops, repeated-jumps section),
+`reports-transmit` (FS_notclassified for DNS/DNF/DSQ/RNS), `reports-csv-xlsx` (UTF-8 BOM),
+`meets-export` + `meets-training-days` (training days round-trip — removed "known limitation"),
+`meets-edit` (More ▾ menu, status-change confirms), `meets-delete` (two-step modal with event
+count), `judges-add` (inline name/USSS-ID edit; removed fictional PIN), `reg-usss` (USSS Database
+page at /dashboard/usss replaces removed Information sidebar group), `athletes-db` (100/page).
+
+**Verification:** all internal `(./slug)` links resolve across all 64 topics (scripted check);
+scratch-server boot serves `/help/admin-security` 200 and the built bundle contains the new topic
+titles; `/api/version` v1.25.03.
+
+**Files created:** `client/src/help/topics/admin-security.md`, `client/src/help/topics/ref-viewer-api.md`
+**Files modified:** `client/src/help/topicsIndex.js`, 24 topic `.md` files, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

@@ -1,60 +1,46 @@
-## Locking events from the Admin panel
+## Event Management (Admin)
 
-The Admin → Events page at `/admin/events` is where every event in the system can be locked or unlocked. It's also the canonical view of all events across all meets — a useful audit lens.
+The Admin → Events page at `/admin/events` is where every event in the system can be **locked**, **hidden from Live Scores**, or **re-opened** after finalization. It's also the canonical view of all events across all meets — a useful audit lens.
 
 ### Meet-grouped layout
 
 Events are grouped by meet. Each meet appears as a collapsible section:
 
-- **Header row** — meet name + date.
-- **Chevron** to expand / collapse (collapsed by default).
-- **Lock status summary** when collapsed — "All locked", "Partially locked", or "None locked".
-- **Lock All / Unlock All button** — bulk-toggle every event under this meet.
+- **Header row** — meet name + date, with status badges when collapsed ("All locked" / "Partially locked", "Hidden from Live Scores" / "Partially hidden").
+- **Lock All / Unlock All** and **Hide All / Show All** bulk buttons (each asks for confirmation).
+- A **search box** above the list filters by meet or event name.
 
-Expand a meet to see its event rows. Each row shows event name, discipline, gender, category, status, and a per-event **Lock / Unlock** toggle.
+Expand a meet to see its event rows: event name, discipline, status, a Lock indicator, a Live Scores indicator (Visible / Hidden), and the action buttons.
 
 ### Locking an event
 
-Click **Lock** on a row. The event's `events.locked` column is set to `1`. Immediate effects:
+Click **Lock** on a row. Immediate effects:
 
-- The event becomes read-only — every mutation endpoint returns HTTP 403.
-- The event is hidden from the Officials Dashboard (and from the meet detail page if all events under the meet are locked).
-- Judge tablets attempting to score on the event get a "Locked" error.
-- Public scoreboards and the broadcast overlay continue to display the final state.
+- The event becomes read-only — every mutation endpoint is refused.
+- The event is hidden from the Officials Dashboard (and the whole meet disappears from the Dashboard if every event under it is locked).
+- Public scoreboards and the broadcast overlay continue to display the final state — locking is invisible to the public.
 
-### Bulk Lock All / Unlock All
+Locking is **reversible and non-destructive**; the data stays intact.
 
-Per meet, the **Lock All** / **Unlock All** button hits:
+**When to lock:** end-of-meet after PDFs and USSS XML are out; pre-archive; or mid-meet to protect a finalized event while later events are still running. **When to unlock:** a TD-approved correction, a re-opened protest, or fixing a typo.
 
-- `PUT /api/admin/meets/:meetId/lock-all` — locks every event in the meet.
-- `PUT /api/admin/meets/:meetId/unlock-all` — unlocks every event in the meet.
+### Hiding an event from Live Scores
 
-Useful at end-of-meet to lock the entire weekend's worth of events in one click.
+Click **Hide** on a row (or **Hide All** on a meet) to remove the event from the public **Live Scores** page and from third-party apps using the public event list. This is the tool for keeping **test events** out of public view.
 
-### When to lock
+- Hiding is **completely independent of locking** — an event can be locked, hidden, both, or neither.
+- Hiding affects *listings only*. Anyone with the direct scoreboard short-code link can still view the event, the broadcast Overlay keeps working, and judge tablets are unaffected — so you can fully test a hidden event.
+- If **every** event in a meet is hidden, the meet itself disappears from the Live Scores page.
+- New events are always visible by default. Click **Show** (or **Show All**) to restore visibility.
 
-- End-of-meet, after all PDFs are generated and USSS XML is transmitted.
-- Pre-archive — lock + export + delete from active server.
-- Mid-meet, to protect a finalized event from accidental edits while later events are still in progress.
+### Re-opening a finalized event
 
-### When to unlock
+Events with status **complete** show a **Re-open** button. Click it (and confirm) to set the event back to *in progress* so scores can be corrected — for example after an upheld protest. For dual mogul events this also clears the bracket's Head-Judge approval so the review flow runs again. The event must be finalized again afterward. Every re-open is recorded in the [Audit log](./admin-audit).
 
-- A correction needs to be made post-finalization (rare; should be TD-approved).
-- The event is being re-opened for a re-do (e.g., a protest was upheld).
-- You realized a typo in the event name needs fixing.
+### Bulk actions
 
-### Note: locking is not deletion
-
-Locking is **reversible** and **non-destructive**. The event data stays intact. Public scoreboards continue to display the event's final state — locking is invisible to the public.
-
-### Filtering
-
-The Admin → Events page doesn't currently have a filter input. To find a specific event, expand the meet by name. A search field is on the future roadmap.
-
-### Audit log
-
-Every lock / unlock toggle is logged in `audit_log`. View on the [Audit log](./admin-audit) page.
+Per meet, **Lock All / Unlock All** and **Hide All / Show All** toggle every event under the meet in one click — useful at end-of-meet, or to drop a whole test meet off Live Scores.
 
 ### Compare with the Officials sidebar
 
-The Officials Dashboard respects the `excludeLocked=1` filter automatically — so locked events disappear from the operator's view but stay visible here in Admin. This is intentional: Admin should be able to see and manage locked events; Officials should be focused on what's actively being scored.
+The Officials Dashboard automatically filters out locked events — they disappear from the operator's view but stay visible here in Admin. This is intentional: Admin should be able to see and manage everything; Officials should be focused on what's actively being scored.

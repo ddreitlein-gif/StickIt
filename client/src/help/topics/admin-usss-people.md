@@ -1,6 +1,6 @@
 ## USSS People database (Admin viewer)
 
-The Admin → USSS People page at `/admin/usss-people` is a read-only viewer for the imported USSS People file (master USSS roster). Sync and upload happen on the Officials sidebar; this page is for browsing and downloading.
+The Admin → USSS People page at `/admin/usss-people` is a viewer for the imported USSS People file (master USSS roster), with **Sync Now** and **Upload File** buttons in the status card header for refreshing the data directly.
 
 ### Status card
 
@@ -64,9 +64,4 @@ The **Download CSV** link streams the full table (no pagination, all records, cu
 
 ### Re-syncing or uploading
 
-To refresh the data:
-
-1. Open the Officials sidebar's **Information → USSS Database** section.
-2. Click **Sync Now** (auto-fetch) or **Upload File** (manual upload of a `people.txt` you downloaded).
-
-The Admin page auto-refreshes its status card on the next page load.
+Click **Sync Now** (auto-fetch) or **Upload File** (manual upload of a `people.txt` you downloaded) in the status card header. The same controls also live on the Officials side at **USSS Database** (`/dashboard/usss`) — both update the same data.
