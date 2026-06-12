@@ -6,7 +6,7 @@ Each freestyle jump has a **code** and a **Degree of Difficulty (DD)** multiplie
 
 Two places in the app:
 
-1. **Officials sidebar → Information → Jump DDs** — opens a modal listing DDs for the selected discipline + gender (filter dropdowns at the top).
+1. **Officials sidebar → Jump DDs** — opens a modal listing DDs for the selected discipline + gender (filter dropdowns at the top).
 2. **Air Judge tablet** — each picked code shows its DD in the AthleteBar.
 
 ### Mogul DD chart (USSS / FIS)

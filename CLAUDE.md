@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.25.03
+**Current version:** v1.25.04
 
 ## Commands
 
@@ -31,6 +31,14 @@ cd server && npm start
 
 ### Build & Package (Release Zip)
 
+If any help topic (`client/src/help/topics/*.md`), `topicsIndex.js`, or guide script changed,
+regenerate the printable PDF guides first (requires `client/` — run locally, never on Railway)
+and commit the regenerated PDFs in `server/public/docs/guides/`:
+
+```bash
+node server/scripts/build_guide_pdfs.js
+```
+
 After building, copy client assets to server:
 
 ```bash
@@ -39,6 +47,7 @@ cp client/dist/index.html server/public/index.html
 rm -f server/public/assets/index-*   # clear stale hashed bundles from prior builds
 cp client/dist/assets/* server/public/assets/
 # Note: logo.png in server/public/ is read-only — use targeted copy, not cp -r dist/* server/public/
+# If cp/rm hit "Operation not permitted" (macOS), do the same copies via node fs (copyFileSync) — that works.
 ```
 
 Then create the zip directly from the `StickIt/` parent (never use a staging folder):
@@ -56,7 +65,7 @@ zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
-# Verify size — should be ~2MB. If it's >5MB, an exclusion is missing.
+# Verify size — should be ~3MB (incl. ~0.6MB of guide PDFs). If it's >5MB, an exclusion is missing.
 ls -lh /tmp/StickIt_X_X_XX.zip
 
 # Deliver
@@ -200,6 +209,60 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.25.04 Feature Notes
+
+### Printable PDF Guides — Role Quick Starts + Complete User Guide (v1.25.04)
+
+Six downloadable/viewable PDFs surfaced at the new **/help/printable-guides** page (sidebar group
+"Printable Guides", custom card-grid page — the only non-markdown help topic). Each card has View
+(opens inline in a new tab) and Download buttons. All PDFs live as static files in
+`server/public/docs/guides/` served by the existing `express.static` — public, no auth, like /help.
+
+**The six PDFs.** Five role Quick Starts in plain non-technical language (cover + 2–4 content
+pages, big type, drawn diagrams — flow charts, simplified tablet mockups, numbered steps, color
+callouts; all three disciplines covered): **Judges** (connection, mogul T&L/Air, dual 5-point
+split, aerials Air/Form/Landing, rejection flow), **Chief of Score** (day-at-a-glance flow, manual
+entry/edits/statuses/event-day registration fixes, **printing reports during the event** per
+David's explicit requirement, end-of-day), **Event Secretary** (before-meet setup from home, USSS
+sync + registration + bibs + run order, training days, after-meet transmit/export — role framing:
+secretary = before/after, chief = during), **Timekeeper** (annotated tablet mockup, NT, manual
+top/bottom calc, paper-mode start, DNS), **Live Stream Crew** (scoreboard vs overlay, OBS/YoloBox
+setup, Hide/Show control, Sun Mode, troubleshooting). Plus the **Complete User Guide**: all 64 help
+topics (145 pages) with cover, two-pass TOC with real page numbers + dotted leaders, per-group
+divider pages, PDF outline bookmarks, and clickable internal cross-topic links (named destinations
++ goTo).
+
+**Build-time generation (key architecture).** Railway deploys only `server/`, so the server can't
+read `client/src/help/topics/*.md` at runtime. All six PDFs are generated locally by
+`node server/scripts/build_guide_pdfs.js` (also `npm run build:guides` in server/) and committed.
+The script fails loudly (and exits non-zero) on unresolved internal links or if `client/` is
+missing. Modules in `server/scripts/guides/`: `style.js` (palette/cover/two-pass footers — note the
+switchToPage bottom-margin=0 trick to avoid phantom page adds), `draw.js` (flowRow/flowColumn,
+step, callout, tabletFrame, chip, urlBar, numpadSketch, vector `check` — built-in fonts are
+WinAnsi-only so NO unicode symbols like ✓→⌫ in quick-start strings), `markdown.js` (md→pdfkit
+renderer mirroring MarkdownRenderer.jsx's exact dialect, with a GLYPH_MAP sanitizer for non-WinAnsi
+chars in topic text), `topics_loader.js` (regex-extracts GROUPS/RAW_TOPICS from topicsIndex.js
+source; skips `custom: true` topics), `complete_guide.js`, and one `qs_*.js` per role guide.
+
+**Help UI.** `topicsIndex.js` gains the `printable` group + `printable-guides` topic with
+`custom: true`; `HelpContent.jsx` renders `<PrintableGuides/>` for custom topics;
+`client/src/help/topics/printable-guides.md` exists only to feed sidebar search. New
+`.help-guide-*` styles in help.css. `client/vite.config.js` proxies `/docs` to :3001 for dev.
+
+**Verification.** Script runs twice cleanly, zero unresolved links, page counts stable; every page
+of all five quick starts visually inspected (drawn diagrams, footers "Page N of M"); complete-guide
+TOC page numbers match actual topic pages; widest table (ref-jump-dds) breaks sanely; scratch
+server serves all six at `/docs/guides/*.pdf` with application/pdf and `/help/printable-guides`
+200; verify_v16.js still passes.
+
+**Files created:** `server/scripts/build_guide_pdfs.js`, `server/scripts/guides/{style,draw,markdown,topics_loader,complete_guide,qs_judges,qs_chief_of_score,qs_event_secretary,qs_timekeeper,qs_live_stream}.js`,
+`server/public/docs/guides/*.pdf` (6), `client/src/help/PrintableGuides.jsx`, `client/src/help/topics/printable-guides.md`
+**Files modified:** `client/src/help/topicsIndex.js`, `client/src/help/HelpContent.jsx`, `client/src/help/help.css`,
+`client/src/help/topics/ref-jump-dds.md` (stale "Information" sidebar path), `client/vite.config.js`, `server/package.json`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`, `CLAUDE.md`
 
 ---
 

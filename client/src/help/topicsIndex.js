@@ -21,6 +21,7 @@ function loadBody(slug) {
 
 export const GROUPS = [
   { id: 'getting-started', label: 'Getting Started' },
+  { id: 'printable',       label: 'Printable Guides' },
   { id: 'meets',           label: 'Officials — Meets' },
   { id: 'events',          label: 'Officials — Events' },
   { id: 'registration',    label: 'Officials — Athletes & Registration' },
@@ -38,6 +39,9 @@ const RAW_TOPICS = [
   { slug: 'welcome',                  group: 'getting-started', title: 'Welcome' },
   { slug: 'overview',                 group: 'getting-started', title: 'App overview & user roles' },
   { slug: 'quick-start',              group: 'getting-started', title: 'Quick start: Run your first meet' },
+
+  // Printable Guides (custom-rendered card page — see HelpContent.jsx)
+  { slug: 'printable-guides',         group: 'printable', title: 'Printable PDF guides', custom: true },
 
   // Officials — Meets
   { slug: 'meets-create',             group: 'meets', title: 'Creating a meet' },
