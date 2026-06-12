@@ -50,6 +50,10 @@ For multi-phase events, the ZIP export bundles:
 
 Useful when you need to deliver multiple views to a webmaster who'll merge them into a season aggregate.
 
+### Accented names in Excel
+
+CSV exports include a UTF-8 byte-order mark, so Excel on Windows renders accented athlete names correctly when you double-click the file — no import wizard needed.
+
 ### Nation column
 
 As of v1.19.01, the **Nation column is removed** from CSV / Excel / HTML print exports. Earlier versions emitted an empty `Nation` column because the v1.16.12 Athletes UI removed Nation. The underlying `athletes.nation` DB column is preserved for USSS transmit XML and meet import/export round-trip — just no longer in exports.

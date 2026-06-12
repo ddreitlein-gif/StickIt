@@ -100,8 +100,9 @@ const RAW_TOPICS = [
 
   // Admin Panel
   { slug: 'admin-dashboard',          group: 'admin', title: 'Admin Dashboard' },
+  { slug: 'admin-security',           group: 'admin', title: 'Password protection & login' },
   { slug: 'admin-users',              group: 'admin', title: 'User management' },
-  { slug: 'admin-events',             group: 'admin', title: 'Locking events from the Admin panel' },
+  { slug: 'admin-events',             group: 'admin', title: 'Event Management: locking, hiding, re-opening' },
   { slug: 'admin-usss-people',        group: 'admin', title: 'USSS People database (Admin viewer)' },
   { slug: 'admin-athletes',           group: 'admin', title: 'Athletes database management' },
   { slug: 'admin-backups',            group: 'admin', title: 'Backups' },
@@ -116,6 +117,7 @@ const RAW_TOPICS = [
   // Reference
   { slug: 'ref-jump-dds',             group: 'reference', title: 'Jump codes & DDs' },
   { slug: 'ref-formulas',             group: 'reference', title: 'Scoring formulas' },
+  { slug: 'ref-viewer-api',           group: 'reference', title: 'Viewer API (third-party apps)' },
   { slug: 'ref-glossary',             group: 'reference', title: 'Glossary' },
 ]
 

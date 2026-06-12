@@ -7,7 +7,7 @@ Locking an event makes it **read-only** to officials and judges but leaves it fu
 When an event is locked:
 
 - Every API endpoint that mutates the event data (score submissions, status changes, registration changes, judge assignments) returns HTTP 403.
-- The event is **completely hidden** from the Officials Dashboard (and from the meet detail page if all events under it are locked — see [Hide locked events](./events-lock)).
+- The event is **completely hidden** from the Officials Dashboard (and from the meet detail page if all events under it are locked).
 - Judge tablets that try to score on a locked event get a "Locked" error.
 - Public scoreboards and the broadcast overlay continue to display the final state.
 
@@ -26,6 +26,10 @@ There is no Lock button in the regular Officials interface — that's intentiona
 - It doesn't end the event for public viewers — they continue to see live scores and final results.
 - It doesn't affect other events under the same meet — only the event you locked.
 - It doesn't affect exports / PDFs / CSV — those still work normally.
+
+### Locking vs. hiding from Live Scores
+
+Locking never removes an event from the public **Live Scores** page — spectators should still see a finalized event's results. If you want an event off the public listing (e.g., a **test event**), that's a separate, independent toggle: **Hide** on the [Admin → Events page](./admin-events). An event can be locked, hidden, both, or neither.
 
 ### Locking the whole meet
 

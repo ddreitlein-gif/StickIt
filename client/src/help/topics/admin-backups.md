@@ -38,21 +38,24 @@ Click **Create Backup Now** to invoke `doBackup()` directly, outside the every-5
 
 Newest first. Each Download link streams the SQLite file with `Content-Disposition: attachment`. The filename regex is validated server-side (`^scoring_[\w-]+\.db$`) to prevent path traversal.
 
-### Restoring from a backup
+### Restoring from a backup (in-app)
 
-There is no UI restore button. To restore:
+Each row in the backups table has a **Restore** action:
 
-1. **Stop the server** (`Ctrl+C` if running locally; Railway: restart the service after the swap).
-2. Replace `data/scoring.db` with the downloaded backup file.
-3. **Restart the server**.
+1. Click **Restore** on the backup you want.
+2. Type the backup's **filename** exactly into the confirmation box — this is deliberate friction, since restore replaces the live database.
+3. Before copying anything, the server takes a **pre-restore safety backup** of the current database, so even a mistaken restore is recoverable.
+4. The backup is copied over `data/scoring.db`. **Restart the server** to load the restored data — the page warns you of this.
 
-The server will pick up the restored data on next boot. All connected tablets and scoreboards will refetch from the new database.
+All connected tablets and scoreboards will refetch from the restored database after the restart.
 
-**On Railway:** restore requires shell access to the persistent volume. If you don't have that, contact the StickIt operator team for a manual restore.
+### Restoring manually (alternative)
+
+The file-swap path still works if you prefer it: stop the server, replace `data/scoring.db` with the downloaded backup file, restart. On Railway this requires access to the persistent volume; the in-app Restore button avoids that need.
 
 ### Recovery instructions on-page
 
-The Admin → Backups page shows an amber static callout documenting the restore procedure, with a note about the Railway caveat.
+The Admin → Backups page shows an amber static callout documenting the restore procedure.
 
 ### Auto-backup failure handling
 
@@ -63,6 +66,7 @@ If an auto-backup fails (disk full, file system error), the error is captured in
 - `GET /api/admin/backups` — returns `{ backups, stats }`.
 - `POST /api/admin/backups/create` — manual backup trigger.
 - `GET /api/admin/backups/:filename/download` — streams the `.db` file.
+- `POST /api/admin/backups/:filename/restore` — in-app restore (takes a safety backup first).
 
 ### Best practice
 

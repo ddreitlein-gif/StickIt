@@ -41,6 +41,10 @@ For the XML to be accepted by USSS:
 
 Missing data will produce XML with empty fields — USSS will likely reject. Use the [Athletes database](./athletes-db) and [Importing from USSS People database](./reg-usss) flows to ensure data completeness before transmit.
 
+### Athletes with no valid result (DNS / DNF / DSQ / RNS)
+
+Athletes whose **every** run carried a status are not silently dropped — they appear in the XML's not-classified block (`<FS_notclassified>`) with their bib, competitor info, and the status of their latest run. For dual mogul, an athlete who never won a match and was eliminated by status appears not-classified; an athlete who won at least one match before losing by status keeps their bracket placement in the classified list. The first three status codes are FIS-standard; `RNS` is USSS-specific.
+
 ### Tie-break in the XML
 
 Ranks in the XML use the FIS-compliant tie-break (see [Tie-break rules](./results-tiebreak)), so the order matches the PDF Event Results Summary.

@@ -4,7 +4,7 @@ StickIt keeps a **master Athletes table** that lives independently of any single
 
 ### Where to find it
 
-The **Athletes** entry in the Officials sidebar opens the master list. Columns:
+The **Athletes** entry in the Officials sidebar opens the master list, paginated at 100 athletes per page. Columns:
 
 - **First, Last**
 - **Bib** (default bib, can be overridden per event)
