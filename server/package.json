@@ -1,11 +1,12 @@
 {
   "name": "stickit-server",
-  "version": "1.25.03",
+  "version": "1.25.04",
   "private": true,
   "license": "CC-BY-NC-SA-4.0",
   "scripts": {
     "dev": "nodemon index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "build:guides": "node scripts/build_guide_pdfs.js"
   },
   "dependencies": {
     "@libsql/client": "*",

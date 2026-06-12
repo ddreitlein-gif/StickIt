@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import MarkdownRenderer from './MarkdownRenderer'
+import PrintableGuides from './PrintableGuides'
 import { neighbors, TOPICS_BY_SLUG, GROUPS } from './topicsIndex'
 
 export default function HelpContent({ slug, notFound }) {
@@ -31,7 +32,7 @@ export default function HelpContent({ slug, notFound }) {
         <span className="help-breadcrumb-current">{topic.title}</span>
       </div>
       <article className="help-article">
-        <MarkdownRenderer source={topic.body} />
+        {topic.custom ? <PrintableGuides /> : <MarkdownRenderer source={topic.body} />}
       </article>
       <nav className="help-prev-next">
         {prev ? (

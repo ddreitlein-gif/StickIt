@@ -7,7 +7,8 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3001',
       '/ws': { target: 'ws://localhost:3001', ws: true },
-      '/images': 'http://localhost:3001'
+      '/images': 'http://localhost:3001',
+      '/docs': 'http://localhost:3001'
     }
   },
   build: {
