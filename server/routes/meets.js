@@ -36,10 +36,14 @@ router.get('/livescores', async (req, res) => {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
 
-    let meetWhere = '';
+    // v1.25.02 -- exclude meets whose every event is hidden from Live Scores
+    // (zero-event meets keep current behavior and still appear)
+    const visClause = `((SELECT COUNT(*) FROM events WHERE meet_id = m.id AND hide_livescores = 0) > 0
+        OR (SELECT COUNT(*) FROM events WHERE meet_id = m.id) = 0)`;
+    let meetWhere = `WHERE ${visClause}`;
     const meetParams = [];
     if (division) {
-      meetWhere = 'WHERE m.meet_ranking = ?';
+      meetWhere = `WHERE m.meet_ranking = ? AND ${visClause}`;
       meetParams.push(division);
     }
 
@@ -59,7 +63,7 @@ router.get('/livescores', async (req, res) => {
       const placeholders = meetIds.map(() => '?').join(',');
       events = await queryAll(
         `SELECT e.id, e.meet_id, e.name, e.discipline, e.division, e.gender, e.status, e.short_code
-         FROM events e WHERE e.meet_id IN (${placeholders})
+         FROM events e WHERE e.meet_id IN (${placeholders}) AND e.hide_livescores = 0
          ORDER BY e.discipline, e.gender`,
         meetIds
       );
@@ -856,10 +860,10 @@ async function executeImport(data, zipPath, opts = {}) {
         pace_time, bracket_size, has_small_final, usss_code, runoff_option, dual_seed_method,
         score_spread_threshold, component_scoring, score_entry_mode, course_length,
         qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
-        short_code, pace_time_override, dual_random_seed, order_locked,
+        short_code, pace_time_override, dual_random_seed, order_locked, hide_livescores,
         event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [eventMap[e.id], newMeetId, e.discipline ?? null, e.division ?? null, e.gender ?? null, e.name ?? 'Unnamed Event', e.status ?? 'setup',
        e.num_tl_judges ?? 3, e.num_air_judges ?? 2, e.has_speed ?? 1,
        e.turns_weight ?? 0.6, e.air_weight ?? 0.2, e.speed_weight ?? 0.2,
@@ -870,7 +874,7 @@ async function executeImport(data, zipPath, opts = {}) {
        e.qualifier_event_id ? (eventMap[e.qualifier_event_id] ?? null) : null,
        e.finals_event_id ? (eventMap[e.finals_event_id] ?? null) : null,
        e.event_date ?? null, e.num_jumps ?? 2, e.is_divisional ?? 0, e.locked ?? 0,
-       shortCode(), e.pace_time_override ?? null, e.dual_random_seed ?? null, e.order_locked ?? 0,
+       shortCode(), e.pace_time_override ?? null, e.dual_random_seed ?? null, e.order_locked ?? 0, e.hide_livescores ?? 0,
        e.event_type ?? 'usa_regional', e.aerials_panel_size ?? null, e.aerials_hj_scores ?? 0, e.aerials_reduction_method ?? null]
     );
   }
@@ -1117,6 +1121,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
             pace_time=?, bracket_size=?, has_small_final=?, usss_code=?, runoff_option=?, dual_seed_method=?,
             score_spread_threshold=?, component_scoring=?, score_entry_mode=?, course_length=?,
             event_date=?, num_jumps=?, is_divisional=?, pace_time_override=?, dual_random_seed=?, order_locked=?,
+            hide_livescores=?,
             updated_at=datetime('now') WHERE id=?`,
           [ie.name ?? match.name, ie.status ?? match.status, ie.division ?? match.division,
            ie.num_tl_judges ?? match.num_tl_judges, ie.num_air_judges ?? match.num_air_judges, ie.has_speed ?? match.has_speed,
@@ -1127,7 +1132,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
            ie.score_entry_mode ?? match.score_entry_mode, ie.course_length ?? match.course_length,
            ie.event_date ?? match.event_date, ie.num_jumps ?? match.num_jumps, ie.is_divisional ?? match.is_divisional,
            ie.pace_time_override ?? match.pace_time_override, ie.dual_random_seed ?? match.dual_random_seed,
-           ie.order_locked ?? match.order_locked, match.id]
+           ie.order_locked ?? match.order_locked, ie.hide_livescores ?? match.hide_livescores, match.id]
         );
         summary.events_updated++;
       }
@@ -1142,10 +1147,10 @@ async function executeMerge(existingMeetId, data, zipPath) {
           pace_time, bracket_size, has_small_final, usss_code, runoff_option, dual_seed_method,
           score_spread_threshold, component_scoring, score_entry_mode, course_length,
           qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
-          short_code, pace_time_override, dual_random_seed, order_locked,
+          short_code, pace_time_override, dual_random_seed, order_locked, hide_livescores,
           event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, existingMeetId, ie.discipline ?? null, ie.division ?? null, ie.gender ?? null, ie.name ?? 'Unnamed Event', ie.status ?? 'setup',
          ie.num_tl_judges ?? 3, ie.num_air_judges ?? 2, ie.has_speed ?? 1,
          ie.turns_weight ?? 0.6, ie.air_weight ?? 0.2, ie.speed_weight ?? 0.2,
@@ -1154,7 +1159,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
          ie.score_spread_threshold ?? 2.0, ie.component_scoring ?? 1, ie.score_entry_mode ?? 'tablet',
          ie.course_length ?? null, null, null,
          ie.event_date ?? null, ie.num_jumps ?? 2, ie.is_divisional ?? 0, ie.locked ?? 0,
-         shortCode(), ie.pace_time_override ?? null, ie.dual_random_seed ?? null, ie.order_locked ?? 0,
+         shortCode(), ie.pace_time_override ?? null, ie.dual_random_seed ?? null, ie.order_locked ?? 0, ie.hide_livescores ?? 0,
          ie.event_type ?? 'usa_regional', ie.aerials_panel_size ?? null, ie.aerials_hj_scores ?? 0, ie.aerials_reduction_method ?? null]
       );
       summary.events_added++;

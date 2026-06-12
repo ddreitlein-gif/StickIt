@@ -154,7 +154,7 @@ router.put('/auth-settings', async (req, res) => {
 router.get('/events', async (req, res) => {
   try {
     const events = await queryAll(
-      `SELECT e.id, e.name, e.discipline, e.division, e.gender, e.status, e.locked, e.created_at,
+      `SELECT e.id, e.name, e.discipline, e.division, e.gender, e.status, e.locked, e.hide_livescores, e.created_at,
               m.id as meet_id, m.name as meet_name, m.date as meet_date, m.location as meet_location
        FROM events e JOIN meets m ON m.id = e.meet_id
        ORDER BY m.date DESC, e.name`
@@ -187,6 +187,54 @@ router.put('/meets/:meetId/lock-all', async (req, res) => {
 router.put('/meets/:meetId/unlock-all', async (req, res) => {
   try {
     await execute(`UPDATE events SET locked=0, updated_at=datetime('now') WHERE meet_id=?`, [req.params.meetId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Live Scores Visibility (v1.25.02) ───────────────────────────────────────
+// Independent of lock: hidden events drop off the public /livescores listing
+// and the Viewer API event list; direct scoreboard/overlay URLs keep working.
+
+router.put('/events/:eventId/hide', async (req, res) => {
+  try {
+    await execute(`UPDATE events SET hide_livescores=1, updated_at=datetime('now') WHERE id=?`, [req.params.eventId]);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('event_hidden_livescores', 'event', req.params.eventId, null, { hide_livescores: 1 });
+    } catch (_) {}
+    res.json({ ok: true, hide_livescores: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/events/:eventId/show', async (req, res) => {
+  try {
+    await execute(`UPDATE events SET hide_livescores=0, updated_at=datetime('now') WHERE id=?`, [req.params.eventId]);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('event_shown_livescores', 'event', req.params.eventId, null, { hide_livescores: 0 });
+    } catch (_) {}
+    res.json({ ok: true, hide_livescores: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/meets/:meetId/hide-all', async (req, res) => {
+  try {
+    await execute(`UPDATE events SET hide_livescores=1, updated_at=datetime('now') WHERE meet_id=?`, [req.params.meetId]);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('meet_events_hidden_livescores', 'meet', req.params.meetId, null, { hide_livescores: 1 });
+    } catch (_) {}
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/meets/:meetId/show-all', async (req, res) => {
+  try {
+    await execute(`UPDATE events SET hide_livescores=0, updated_at=datetime('now') WHERE meet_id=?`, [req.params.meetId]);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('meet_events_shown_livescores', 'meet', req.params.meetId, null, { hide_livescores: 0 });
+    } catch (_) {}
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

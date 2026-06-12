@@ -284,6 +284,8 @@ async function initSchema() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (training_day_id, athlete_id)
     )`,
+    // v1.25.02 -- hide event from public Live Scores + Viewer API listings (independent of locked)
+    `ALTER TABLE events ADD COLUMN hide_livescores INTEGER NOT NULL DEFAULT 0`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

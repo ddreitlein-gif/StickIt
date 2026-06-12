@@ -40,6 +40,22 @@ export default function AdminEvents() {
     fetchEvents()
   }
 
+  // v1.25.02 — hide/show events on the public Live Scores listing (independent of lock)
+  const toggleHide = async (event) => {
+    const action = event.hide_livescores ? 'show' : 'hide'
+    await fetch(`/api/admin/events/${event.id}/${action}`, { method: 'PUT', headers: authHeaders() })
+    fetchEvents()
+  }
+
+  const toggleHideAll = async (meet, shouldHide) => {
+    const n = meet.events.length
+    const verb = shouldHide ? 'Hide' : 'Show'
+    if (!window.confirm(`${verb} all ${n} event${n !== 1 ? 's' : ''} in ${meet.meet_name} on Live Scores?`)) return
+    const action = shouldHide ? 'hide-all' : 'show-all'
+    await fetch(`/api/admin/meets/${meet.meet_id}/${action}`, { method: 'PUT', headers: authHeaders() })
+    fetchEvents()
+  }
+
   // v1.25.00 (B-9b) — deliberately re-open a finalized event
   const [reopenMsg, setReopenMsg] = useState('')
   const reopenEvent = async (event) => {
@@ -96,6 +112,8 @@ export default function AdminEvents() {
       {/* v1.25.00 (B-5) — explain what locking does */}
       <p className="text-xs text-slate-400 mb-4">
         Locked events are hidden from the Officials dashboard and reject all changes. They remain visible on public scoreboards.
+        Hidden events do not appear on the public Live Scores page or the Viewer API list, but direct scoreboard links still work.
+        Locking and hiding are independent — an event can be either, both, or neither.
       </p>
       <input
         type="text"
@@ -118,6 +136,8 @@ export default function AdminEvents() {
             const isExpanded = expandedMeets.has(meet.meet_id)
             const allLocked = meet.events.every(e => e.locked)
             const someLocked = meet.events.some(e => e.locked)
+            const allHidden = meet.events.every(e => e.hide_livescores)
+            const someHidden = meet.events.some(e => e.hide_livescores)
             return (
               <div key={meet.meet_id} className="rounded-xl border border-slate-700/50 overflow-hidden">
                 {/* Meet Header */}
@@ -135,6 +155,9 @@ export default function AdminEvents() {
                         {!isExpanded && someLocked && (
                           <span className="text-amber-400">{allLocked ? 'All locked' : 'Partially locked'}</span>
                         )}
+                        {!isExpanded && someHidden && (
+                          <span className="text-purple-400">{allHidden ? 'Hidden from Live Scores' : 'Partially hidden from Live Scores'}</span>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -149,6 +172,16 @@ export default function AdminEvents() {
                     >
                       {allLocked ? 'Unlock All' : 'Lock All'}
                     </button>
+                    <button
+                      onClick={() => toggleHideAll(meet, !allHidden)}
+                      className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                        allHidden
+                          ? 'text-green-400 hover:bg-green-500/20 border border-green-500/30'
+                          : 'text-purple-400 hover:bg-purple-500/20 border border-purple-500/30'
+                      }`}
+                    >
+                      {allHidden ? 'Show All' : 'Hide All'}
+                    </button>
                   </div>
                 </div>
 
@@ -161,6 +194,7 @@ export default function AdminEvents() {
                         <th className="px-4 py-2 text-xs text-slate-400 uppercase tracking-wider font-medium">Discipline</th>
                         <th className="px-4 py-2 text-xs text-slate-400 uppercase tracking-wider font-medium">Status</th>
                         <th className="px-4 py-2 text-xs text-slate-400 uppercase tracking-wider font-medium">Lock</th>
+                        <th className="px-4 py-2 text-xs text-slate-400 uppercase tracking-wider font-medium">Live Scores</th>
                         <th className="px-4 py-2 text-xs text-slate-400 uppercase tracking-wider font-medium text-right">Actions</th>
                       </tr>
                     </thead>
@@ -185,6 +219,13 @@ export default function AdminEvents() {
                               <span className="text-slate-500 text-sm" title="Unlocked">&#128275;</span>
                             )}
                           </td>
+                          <td className="px-4 py-3">
+                            {event.hide_livescores ? (
+                              <span className="text-purple-400 text-xs font-medium" title="Hidden from Live Scores">Hidden</span>
+                            ) : (
+                              <span className="text-slate-500 text-xs" title="Visible on Live Scores">Visible</span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-right">
                             {event.status === 'complete' && (
                               <button
@@ -203,6 +244,16 @@ export default function AdminEvents() {
                               }`}
                             >
                               {event.locked ? 'Unlock' : 'Lock'}
+                            </button>
+                            <button
+                              onClick={() => toggleHide(event)}
+                              className={`ml-2 px-3 py-1 rounded text-xs font-medium transition-colors ${
+                                event.hide_livescores
+                                  ? 'text-green-400 hover:bg-green-500/20 border border-green-500/30'
+                                  : 'text-purple-400 hover:bg-purple-500/20 border border-purple-500/30'
+                              }`}
+                            >
+                              {event.hide_livescores ? 'Show' : 'Hide'}
                             </button>
                           </td>
                         </tr>

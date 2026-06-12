@@ -36,7 +36,11 @@ router.get('/events', async (req, res) => {
   try {
     const { status } = req.query;
     const args = [];
-    const where = status ? (args.push(status), 'WHERE e.status = ?') : '';
+    // v1.25.02 -- hidden events are excluded from the public listing only;
+    // resolve/status/results endpoints stay open for direct short-code access
+    const where = status
+      ? (args.push(status), 'WHERE e.hide_livescores = 0 AND e.status = ?')
+      : 'WHERE e.hide_livescores = 0';
     const events = await queryAll(
       `SELECT e.id, e.name, e.status, e.event_date, e.discipline,
               m.name AS meet_name, m.location AS venue, m.date AS meet_date

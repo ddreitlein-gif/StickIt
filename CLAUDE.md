@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.25.01
+**Current version:** v1.25.02
 
 ## Commands
 
@@ -200,6 +200,58 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.25.02 Feature Notes
+
+### Hide Event from Live Scores (v1.25.02)
+
+New per-event **Live Scores visibility** flag, toggled from Admin → Event Management, so test events
+can be excluded from the public Live Scores page. Fully independent of `events.locked` — an event can
+be locked, hidden, both, or neither (locking governs the Officials dashboard + mutations; hiding
+governs public listings only).
+
+**Hide scope — listings only (David's ruling).** A hidden event disappears from `GET
+/api/meets/livescores` (so both the meet cards and the LIVE NOW strip on `/livescores` — the strip is
+client-filtered from the same payload, no LiveScores.jsx change) and from the Viewer API event list
+`GET /api/viewer/events` (with and without `?status=`). Direct access stays open everywhere else:
+`/scoreboard/:shortCode`, `/overlay`, `GET /api/resolve`, viewer `resolve`/`status`/`results`/`rounds`,
+and all tablets. If **every** event in a meet is hidden, the meet itself drops off `/livescores`
+(visibility clause added to both the count and page queries so pagination totals stay consistent);
+zero-event meets keep their existing behavior and still appear.
+
+**Database.** `events.hide_livescores INTEGER NOT NULL DEFAULT 0` via the standard try/catch
+migration in `server/db/schema.js`. Default 0 = visible; new events are always visible.
+
+**Admin endpoints** (inherit system_admin auth from the `/api/admin` mount): `PUT
+/api/admin/events/:eventId/hide` / `show` and bulk `PUT /api/admin/meets/:meetId/hide-all` /
+`show-all`, mirroring lock/unlock. All four write audit rows (`event_hidden_livescores`,
+`event_shown_livescores`, `meet_events_hidden_livescores`, `meet_events_shown_livescores`) via the
+`logAudit` nested-try/catch pattern — note lock/unlock still don't audit. `GET /api/admin/events`
+now returns `hide_livescores`.
+
+**Admin UI (AdminEvents.jsx).** New "Live Scores" column (purple "Hidden" / gray "Visible"), a
+Hide/Show button next to Lock/Unlock on each row, a "Hide All / Show All" bulk button in each meet
+header (with confirm, like Lock All), a collapsed-state "Hidden from Live Scores / Partially hidden"
+badge, and updated explainer text clarifying that locking and hiding are independent.
+
+**Export/import round-trip.** Export needs nothing (`SELECT *`); the column was added to the three
+event insert/update sites in `server/routes/meets.js` (`executeImport` INSERT, `executeMerge` UPDATE
++ INSERT) with `?? 0` legacy tolerance — the recurring v1.16.05 missing-column trap. **Clone
+deliberately does NOT copy the flag** (clone already resets `locked`; a cloned meet defaults visible).
+
+**Verification.** 31-check integration test against a scratch server: seed 3 meets → hide one event
+(absent from livescores, sibling still present) → hide-all (meet drops off, totals consistent,
+zero-event meet unaffected) → lock × hide independence → viewer list filtered while
+resolve/status/results stay 200 → `/api/resolve` + short-code access intact → show/show-all restore
+→ all four audit actions logged → export carries the flag, delete + fresh import preserves it.
+Double-boot confirms the migration is idempotent. `verify_v16.js` still passes (no scoring paths
+touched).
+
+**Files modified:** `server/db/schema.js`, `server/routes/meets.js`, `server/routes/viewer.js`,
+`server/routes/admin.js`, `client/src/pages/admin/AdminEvents.jsx`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
