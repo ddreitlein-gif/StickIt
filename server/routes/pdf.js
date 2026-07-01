@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { queryAll, queryOne } = require('../db/schema');
-const { rankResults, pickBestRun, applyTierRanks } = require('../scoring/engine');
+const { rankResults, pickBestRun, assembleTieredResults, makeTierKeyForRun, orderFlaggedForTier, resolveEffectiveStatus } = require('../scoring/engine');
 const { requireAuth } = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
 
@@ -873,6 +873,18 @@ async function buildResultsData(eventId, round) {
       );
     };
 
+    // v1.26.00 Part A: flagged (statused) athletes are ordered by the shared
+    // engine assembler so printed reports match the results endpoints exactly.
+    const flaggedQuery = () => queryAll(
+      `SELECT r.*, reg.bib_number, reg.seed, a.first_name, a.last_name,
+              a.ussa_num, a.club, a.birth_year, a.gender
+       FROM runs r
+       JOIN registrations reg ON reg.id = r.registration_id
+       JOIN athletes a ON a.id = reg.athlete_id
+       WHERE r.event_id = ? AND r.status = 'complete' AND r.run_status IS NOT NULL`,
+      [eventId]
+    );
+
     let results;
     let phaseLabel = 'Results';
 
@@ -880,40 +892,43 @@ async function buildResultsData(eventId, round) {
       const runNumbers = phases.map(p => p.run_number);
       const runs = await runQuery(runNumbers);
       const best = pickBestRun(runs, event.discipline);
-      results = rankResults(Object.values(best), event.discipline);
+      results = assembleTieredResults({
+        tiers: [{ key: null, label: null, scoredRuns: Object.values(best) }],
+        flaggedRuns: await flaggedQuery(),
+        discipline: event.discipline,
+      });
       phaseLabel = 'Best of 2 Results';
     } else if (isQualFinals) {
       const f2 = phases.find(p => p.phase_type === 'final_2');
       const f1 = phases.find(p => p.phase_type === 'final_1');
       const qualRunNumbers = phases.filter(p => p.phase_type === 'run' || p.phase_type === 'qualifier_2').map(p => p.run_number);
-      const tiers = [];
-      let globalRank = 1;
-      const rankedIds = new Set();
+      const tierDescs = [];
 
       if (f2 && f2.status === 'finalized') {
-        const runs = await runQuery([f2.run_number]);
-        const f2Tier = rankResults(runs, event.discipline);
-        globalRank = applyTierRanks(f2Tier, event.discipline, globalRank);
-        for (const r of f2Tier) { tiers.push(r); rankedIds.add(r.registration_id); }
+        tierDescs.push({ key: 'final_2', label: 'Final 2', runNumbers: [f2.run_number],
+          scoredRuns: await runQuery([f2.run_number]) });
       }
       if (f1) {
-        const runs = await runQuery([f1.run_number]);
-        const f1Tier = rankResults(runs, event.discipline).filter(r => !rankedIds.has(r.registration_id));
-        globalRank = applyTierRanks(f1Tier, event.discipline, globalRank);
-        for (const r of f1Tier) { tiers.push(r); rankedIds.add(r.registration_id); }
+        tierDescs.push({ key: 'final_1', label: 'Final 1', runNumbers: [f1.run_number],
+          scoredRuns: await runQuery([f1.run_number]) });
       }
       if (qualRunNumbers.length > 0) {
         const runs = await runQuery(qualRunNumbers);
-        const best = pickBestRun(runs, event.discipline);
-        const qTier = rankResults(Object.values(best), event.discipline).filter(r => !rankedIds.has(r.registration_id));
-        globalRank = applyTierRanks(qTier, event.discipline, globalRank);
-        for (const r of qTier) { tiers.push(r); rankedIds.add(r.registration_id); }
+        tierDescs.push({ key: 'qualifier', label: 'Qualification', runNumbers: qualRunNumbers,
+          scoredRuns: Object.values(pickBestRun(runs, event.discipline)) });
       }
-      results = tiers;
+      results = assembleTieredResults({
+        tiers: tierDescs, flaggedRuns: await flaggedQuery(),
+        tierKeyForRun: makeTierKeyForRun(tierDescs), discipline: event.discipline,
+      });
       phaseLabel = 'Overall Results';
     } else {
       const runs = await runQuery([1]);
-      results = rankResults(runs, event.discipline);
+      results = assembleTieredResults({
+        tiers: [{ key: null, label: null, scoredRuns: runs }],
+        flaggedRuns: await flaggedQuery(),
+        discipline: event.discipline,
+      });
     }
 
     return { meet, event, round: phaseLabel, is_final: event.status === 'complete', results };
@@ -930,14 +945,20 @@ async function buildResultsData(eventId, round) {
     [eventId, round]
   );
 
-  const best = pickBestRun(runs, event.discipline);
+  const flagged = runs.filter(r => r.run_status);
+  const scored  = runs.filter(r => !r.run_status);
+  const best = pickBestRun(scored, event.discipline);
 
   return {
     meet,
     event,
     round,
     is_final: event.status === 'complete',
-    results:  rankResults(Object.values(best), event.discipline),
+    results: assembleTieredResults({
+      tiers: [{ key: null, label: null, scoredRuns: Object.values(best) }],
+      flaggedRuns: flagged,
+      discipline: event.discipline,
+    }),
   };
 }
 
@@ -1583,7 +1604,12 @@ router.post('/run-results', requireAuth, async (req, res) => {
         if (!runIds.has(sr.id)) runs.push(sr);
       }
 
-      ranked = rankResults(runs, event.discipline);
+      // One run = one tier: scored -> DNF -> RNS -> DNS, then DSQ (v1.26.00 Part A)
+      ranked = assembleTieredResults({
+        tiers: [{ key: null, label: null, scoredRuns: runs.filter(r => !r.run_status) }],
+        flaggedRuns: runs.filter(r => r.run_status),
+        discipline: event.discipline,
+      });
       judgeScores = await fetchRunJudgeScores(eventId, runNumber);
     }
 
@@ -2289,13 +2315,11 @@ router.post('/event-results-group-summary', requireAuth, async (req, res) => {
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
     });
 
-    // Re-rank within each group
+    // Re-rank within each group. The global rank already encodes tier +
+    // status ordering (scored, DNF, RNS, DNS, then DSQ last — v1.26.00
+    // Part A), so sort by it before assigning per-group display ranks.
     for (const key of sortedKeys) {
-      const grp = groups[key].sort((a, b) => {
-        if (a.run_status && !b.run_status) return 1;
-        if (!a.run_status && b.run_status) return -1;
-        return (b.total_score || 0) - (a.total_score || 0);
-      });
+      const grp = groups[key].sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999));
       let rank = 1;
       for (const r of grp) {
         if (r.run_status) { r.rank = r.run_status; }
@@ -2366,13 +2390,11 @@ router.post('/event-results-group-detailed', requireAuth, async (req, res) => {
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
     });
 
-    // Re-rank within each group
+    // Re-rank within each group. The global rank already encodes tier +
+    // status ordering (scored, DNF, RNS, DNS, then DSQ last — v1.26.00
+    // Part A), so sort by it before assigning per-group display ranks.
     for (const key of sortedKeys) {
-      const grp = groups[key].sort((a, b) => {
-        if (a.run_status && !b.run_status) return 1;
-        if (!a.run_status && b.run_status) return -1;
-        return (b.total_score || 0) - (a.total_score || 0);
-      });
+      const grp = groups[key].sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999));
       let rank = 1;
       for (const r of grp) {
         if (r.run_status) { r.rank = r.run_status; }
@@ -3108,7 +3130,7 @@ router.post('/dual-bracket', async (req, res) => {
     // -----------------------------------------------------------------------
     // drawAthleteRow — one half of a match box
     // -----------------------------------------------------------------------
-    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place) {
+    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place, nj) {
       const barClr = course === 'blue' ? BLUE : RED;
       const bgClr  = isTBD    ? '#f8fafc'
                    : isWinner ? (course === 'blue' ? '#bfdbfe' : '#fecaca')  // darker winner bg
@@ -3127,9 +3149,11 @@ router.post('/dual-bracket', async (req, res) => {
         return;
       }
       const bibStr  = bib  ? String(bib)  : '—';
-      const nameStr = (last || first)
+      // v1.26.00 (FS-18): [NJ] tag marks a chop violation (bottom air past
+      // the landing zone) on this competitor.
+      const nameStr = ((last || first)
         ? `${(last || '').toUpperCase()}, ${first || ''}`
-        : '—';
+        : '—') + (nj ? '  [NJ]' : '');
       const bibX    = x + BAR_W + 3;
       const bibW    = 18;
       const nameX   = bibX + bibW + 3;
@@ -3210,6 +3234,7 @@ router.post('/dual-bracket', async (req, res) => {
         const topScore   = redOnTop ? redScore     : blueScore;
         const topLoser   = redOnTop ? redLoserStatus  : blueLoserStatus;
         const topPlace   = redOnTop ? redPlace        : bluePlace;
+        const topNj      = redOnTop ? !!m.nj_red      : !!m.nj_blue;
         const botFirst   = redOnTop ? m.blue_first : m.red_first;
         const botLast    = redOnTop ? m.blue_last  : m.red_last;
         const botBib     = redOnTop ? m.blue_bib   : m.red_bib;
@@ -3218,8 +3243,9 @@ router.post('/dual-bracket', async (req, res) => {
         const botScore   = redOnTop ? blueScore    : redScore;
         const botLoser   = redOnTop ? blueLoserStatus : redLoserStatus;
         const botPlace   = redOnTop ? bluePlace       : redPlace;
-        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace);
-        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace);
+        const botNj      = redOnTop ? !!m.nj_blue     : !!m.nj_red;
+        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace, topNj);
+        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace, botNj);
       }
 
       // Pairing number — just above the match box (compact layout has no

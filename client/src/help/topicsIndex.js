@@ -82,7 +82,7 @@ const RAW_TOPICS = [
   { slug: 'scoring-manual',           group: 'scoring', title: 'Manual score entry' },
   { slug: 'scoring-voice',            group: 'scoring', title: 'Voice manual score entry' },
   { slug: 'scoring-edit',             group: 'scoring', title: 'Editing a finalized score' },
-  { slug: 'scoring-statuses',         group: 'scoring', title: 'Run statuses: DNS, DNF, DSQ, RNS, NT' },
+  { slug: 'scoring-statuses',         group: 'scoring', title: 'Run statuses: DNS, DNF, DSQ, NT' },
   { slug: 'scoring-hj-review',        group: 'scoring', title: 'Head Judge review & approval' },
 
   // Officials — Results & Reports

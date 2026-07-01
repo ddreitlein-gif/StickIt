@@ -1817,7 +1817,10 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
-    const { winner_registration_id, loser_status, judges, time_tied } = req.body;
+    const { winner_registration_id, loser_status, judges, time_tied, nj_blue, nj_red } = req.body;
+    // v1.26.00 (FS-18): normalize the chop NJ flags — 1 when checked, NULL otherwise.
+    const njBlueVal = nj_blue ? 1 : null;
+    const njRedVal  = nj_red ? 1 : null;
 
     // --- Path A: DNS/DNF/DSQ ---
     if (winner_registration_id && loser_status) {
@@ -1826,8 +1829,8 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
         : match.registration_id_blue;
 
       await execute(
-        `UPDATE dual_bracket SET winner_registration_id=?, loser_status=?, status='complete', updated_at=datetime('now') WHERE id=?`,
-        [winner_registration_id, loser_status, req.params.matchId]
+        `UPDATE dual_bracket SET winner_registration_id=?, loser_status=?, nj_blue=?, nj_red=?, status='complete', updated_at=datetime('now') WHERE id=?`,
+        [winner_registration_id, loser_status, njBlueVal, njRedVal, req.params.matchId]
       );
 
       // Delete any existing judge points for this match
@@ -1948,8 +1951,8 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
 
     // Mark match complete with winner
     await execute(
-      `UPDATE dual_bracket SET winner_registration_id=?, status='complete', updated_at=datetime('now') WHERE id=?`,
-      [winnerId, req.params.matchId]
+      `UPDATE dual_bracket SET winner_registration_id=?, nj_blue=?, nj_red=?, status='complete', updated_at=datetime('now') WHERE id=?`,
+      [winnerId, njBlueVal, njRedVal, req.params.matchId]
     );
 
     await advanceWinner(req.params.eventId, match, winnerId, loserId);
@@ -1996,6 +1999,34 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     } catch (_) {}
 
     res.json({ ok: true, result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /:matchId/nj -- v1.26.00 (FS-18) chop rule: set/clear the bottom-air
+// landing zone No Jump flags on a match, independent of scoring. The point
+// consequences (J4 0/5 or Time Tied 2.5/2.5) are entered by the Time Judge /
+// operator through the normal judge point flow — not auto-forced.
+// ---------------------------------------------------------------------------
+router.put('/:matchId/nj', requireAuth, async (req, res) => {
+  try {
+    const match = await queryOne(
+      'SELECT * FROM dual_bracket WHERE id=? AND event_id=?',
+      [req.params.matchId, req.params.eventId]
+    );
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    const njBlue = req.body.nj_blue ? 1 : null;
+    const njRed  = req.body.nj_red ? 1 : null;
+    await execute(
+      `UPDATE dual_bracket SET nj_blue=?, nj_red=?, updated_at=datetime('now') WHERE id=?`,
+      [njBlue, njRed, req.params.matchId]
+    );
+
+    if (req.app.broadcast) {
+      req.app.broadcast(req.params.eventId, 'run_updated', { matchId: req.params.matchId, njChanged: true });
+    }
+    res.json({ ok: true, nj_blue: njBlue, nj_red: njRed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

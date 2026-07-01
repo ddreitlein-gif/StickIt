@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.25.04
+**Current version:** v1.26.00
 
 ## Commands
 
@@ -79,15 +79,9 @@ Zip destination: `/Users/daviddreitlein/Desktop/Scoring Server/Scoring Zip Files
 
 ### Version String
 
-The version string lives in **two** places in `server/index.js` (~line 111 and ~line 194):
-```js
-app.get('/api/version', (req, res) => res.json({ version: 'v1.18.00' }));
-// ...
-server.listen(PORT, () => console.log(`StickIt v1.18.00 ready on port ${PORT}`));
-```
-Also displayed in `client/src/components/Layout.jsx` sidebar (~line 185). The About modal reads from `/api/version` automatically. Bump all three on every release.
+Single source of truth: `server/version.js` (exports `{ VERSION }`, since v1.22.00). Every server-side reference (`/api/version`, startup log, admin endpoints, export version strings) reads from it. The Officials sidebar (`client/src/components/Layout.jsx`, ~line 85) fetches `/api/version` on mount; its `useState('v1.XX.XX')` default is cosmetic-only but is bumped on release for tidiness. The About modal reads from `/api/version` automatically.
 
-`package.json` versions in `client/` and `server/` are kept in sync with the app version too (set to `1.18.00` as of v1.18.00).
+Bump procedure per release: `server/version.js`, the Layout.jsx useState default, and both `package.json` versions (`client/` + `server/`, kept in sync with the app version).
 
 ### Verification
 
@@ -209,6 +203,117 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.26.00 Feature Notes
+
+### Results Status Ordering + RNS Soft Removal (v1.26.00, Part A)
+
+Implements David's ruling on statused-athlete placement (spec:
+`StickIt_1_26_00_Implementation_Spec_07-01-26.md`). Previously any DNS/DNF/DSQ/RNS run was appended
+to the bottom of results unordered with `rank: null`. Now, per USSS 4012.3: **DNF/RNS/DNS are
+phase-scoped** — bottom of the tier the status occurred in, ahead of all lower tiers, in-tier order
+scored → DNF → RNS → DNS; **DSQ is event-scoped** — absolute bottom of the event. Statused athletes
+**consume numeric places** (competition ranking) so lower tiers continue numbering after them (F1-of-8
+with 6 scored + DNF + DNS → places 1-6, DNF 7th, DNS 8th, qualification starts at 9th); the status
+code still prints in Place columns. Same-status ties share a place, listed bib-ascending, next place
+skips. Multi-run statuses resolve by precedence DSQ > DNF > RNS > DNS; a scored run in the status's
+own tier ranks normally. Qualifier/finals tier claims go to the HIGHEST phase the athlete appeared in
+(scored-Q-then-DNS-F1 sits at F1 bottom, excluded from the qual tier). Dual moguls unchanged.
+
+**Shared engine helpers** (`server/scoring/engine.js`): `STATUS_PRECEDENCE`, `resolveEffectiveStatus`,
+`orderFlaggedForTier`, `assembleTieredResults` (the query-free composite every consumer feeds its own
+SELECTs into, so surfaces can't diverge), `makeTierKeyForRun`. Consumers rewired: `results.js` (legacy,
+best_of_2, qualifier_finals, and single-phase paths), `phases.js` GET results (public scoreboard now
+matches `/results` exactly; DSQ group gets `tier:'flagged'` / `tier_label:'DSQ'`), `pdf.js`
+`buildResultsData` (**flagged athletes now appear on phase-format PDFs — previously omitted
+entirely**; group variants sort by the new global rank; per-run report ordered), `transmit.js`
+(effective-status resolution replaces highest-run_number pick; FS_notranked ordered DNF → DNS → DSQ).
+
+**RNS soft removal.** RNS is a legacy Winfree convention absent from the 2026 USSS Comp Guide and FIS
+ICR. Entry paths closed: HJ tablet `RunStatusGrid` is now a 3-button DNS/DNF/DSQ grid; the EventDetail
+Flag dropdown renders RNS only when the stored value is RNS (clear/change allowed, re-select not);
+`PUT /:runId/status` refuses RNS server-side. Full read-side support retained — historical RNS renders
+everywhere, orders between DNF and DNS, and **transmits to USSS as DNF** (`xmlStatus()` in
+transmit.js, output-only; stored data untouched). No DB migration. Scoreboard's event-bottom tier
+group is now labeled "DSQ" (only DSQs land there).
+
+### Spring 2026 FIS Rule Changes (v1.26.00, Part B)
+
+**FS-13 — basic vs advanced grabs.** Per FIS JH 6204.3.7, lowercase `g` = basic grab (+0.05),
+uppercase `G` = advanced grab (+0.12, was +0.14). All 12 existing G codes re-valued −0.02 (3G
+0.82→0.80/0.90 M/F etc.) and 12 lowercase-g siblings added at newG−0.07 (bg 0.73/0.83, 7og 0.92/1.02 —
+David ruled the uniform rule over the spec's inconsistent 0.94 example); dual mogul ×1.25. Fresh seed
+updated + FS-13 sentinel migration in `schema.js` (UPDATE gated on 3G=0.82, INSERT OR IGNORE gated on
+`bg` missing — idempotent, hand-edits not stomped). **DD lookup is now case-EXACT for mogul/dual_mogul**:
+the v1.24.00 COLLATE NOCASE fallback is removed there (kept for aerials — no grab split, Tk/Pk
+tolerance, David's ruling) and replaced by `canonicalizeJumpCode()` (engine export) which runs only on
+an exact-case miss and never folds meaning-bearing letters (g/G, p/P — bp Back Position vs bP Back
+Pike): BG→bG, Bg→bg, 7OG→7oG, BTF→btF, ss→SS. `parseJumpCode` keeps g/G distinct in repeat keys
+(spin + new stand-alone `grab_g`/`grab_G` branch), and `areJumpsRepeats` canonicalizes first — so
+**bg vs bG are NOT repeats, bG vs bG ARE** (USSS 4210.2.1 identical-codes rule). Voice: "grab" = basic
+g, "big grab"/"advanced grab" = G ('back grab'→bg re-pointed, advanced phrase variants added for
+back/front/loop/3/7/10/o-families); exact-case pass added before the case-insensitive allowed-set scan
+so letter-dictation deterministically resolves lowercase; grab phrases added to Deepgram
+STATIC_KEYTERMS. Known cosmetic consequence: lowercase codes stored pre-1.26 (scored via NOCASE at the
+G value) now read as basic grabs; stored DDs/scores untouched. MAG will conduct a full DD chart review
+at the start of the quad — values editable via Admin → Jump DDs.
+
+**FS-18 — dual moguls chop (landing zone) NJ flags.** New nullable `dual_bracket.nj_blue`/`nj_red`
+columns. Record-keeping only: NJ checkboxes on the live active-match card (new
+`PUT /api/events/:eventId/dual/:matchId/nj`, requireAuth, broadcasts `run_updated`) and in the
+paper-score/manual-entry modal (flags ride the existing `POST /:matchId/paper-score` body on both
+paths). Advisory text — one checked: "Chop violation: J4 awards 0 to [color], 5 to opponent."; both:
+"Both past chop: use Time Tied (2.5 / 2.5)." — values never auto-forced; the existing time_tied
+mechanism produces 2.5/2.5. NJ badges on EventDetail match rows + bracket tree, the public scoreboard
+match view + bracket tab, and the dual bracket PDF (`[NJ]` name tag). Judge tablets untouched. Meet
+export/import round-trip carries the flags (executeImport + executeMerge INSERT/UPDATE sites — the
+recurring v1.16.05 trap).
+
+**FS-4/FS-7 — Phased Finals Q2 field cap.** New nullable `event_phases.q2_field_limit` (NULL = no cap,
+current behavior). When set on a Qualifier 2 phase, only athletes ranked pass_through+1 through the
+limit after Q1 get Q2 run-order slots (`takeUpToRank` band — ties at the limit expand per ICR
+4207.3.4, David's ruling); athletes below the limit take no Q2 run and rank on Q1 in the qualification
+tier (existing best-score logic, no results change needed). Optional "Q2 field limit" input in the
+add-phase modal with WC preset hints; phase summary shows "Q2 limit: N"; export/import round-trip
+carries the column. Format presets documented in the events-phases help topic (WC Phased Moguls pass 8
+/ limit 32 / F1 16 / F2 6; Championship Moguls pass 10 / no limit / F1 20 / F2 8; WC Phased Aerials
+pass 6 / limit 18 / F1 12 / F2 6).
+
+**FS-10 — gate fault:** documentation only (gate fault = DNF; intentional re-entry after any DNF =
+DSQ) — one line in scoring-statuses. **Verified no-change:** FS-1 (Chief of Course already in role
+list), FS-3 (Major Competitions only), FS-8 (course_specs stores no bump distances), FS-9 (USA repeat
+exemption — existing USSS first-counts / RQS higher-counts logic unchanged), FS-14/15/16/20
+(administrative).
+
+### Viewer API — Dual Score Breakdown (v1.26.00, Part C)
+
+Per `StickIt_Viewer_API_Changes.md`: the viewer dual bracket SELECT now returns `db.id AS id` (the
+match primary key the iOS app needs) plus `nj_blue`/`nj_red`. New public endpoint
+`GET /api/viewer/events/:eventId/dual-matches/:matchId/judge-points` → `{ match_id, nj_blue, nj_red,
+judges: [{ judge_number, blue_points, red_points, time_tied }] }` ordered by judge_number; 404
+`Match not found` when the match doesn't belong to the event. Keeps the iOS app off the internal
+/dual API. README Viewer API Reference updated.
+
+**Verification.** `verify_v16.js` extended 60 → 100 checks: resolveEffectiveStatus precedence,
+orderFlaggedForTier ordering/tie/skip semantics, assembleTieredResults walks of spec edge cases
+1/2/3/4/5/8, areJumpsRepeats grab cases, canonicalizeJumpCode 16 cases. Scratch-DB test: FS-13 seed
+values (mogul + dual ×1.25), double-boot idempotence, legacy-DB upgrade path (3G 0.82→0.80, g codes
+seeded), case-exact lookup with canonicalization fallback. Help topics updated (scoring-statuses
+rewritten, tablet-hj/scoring-hj-review 3-button grid, reports-transmit RNS→DNF, ref-glossary,
+ref-jump-dds grabs + v1.24 air-order accuracy fix, scoring-voice grab vocabulary, events-dual chop
+section, events-phases Q2 limit + presets, ref-viewer-api) and guide PDFs regenerated.
+
+**Files modified:** `server/scoring/engine.js`, `server/routes/results.js`, `server/routes/phases.js`,
+`server/routes/pdf.js`, `server/routes/transmit.js`, `server/routes/runs.js`, `server/routes/dual.js`,
+`server/routes/meets.js`, `server/routes/viewer.js`, `server/db/schema.js`, `server/voice/deepgram.js`,
+`server/scripts/verify_v16.js`, `server/scripts/guides/qs_chief_of_score.js`, `server/version.js`,
+`client/src/components/tablet/RunStatusGrid.jsx`, `client/src/pages/EventDetail.jsx`,
+`client/src/pages/Scoreboard.jsx`, `client/src/components/public/DualMatchCard.jsx`,
+`client/src/voice/parser.js`, `client/src/components/Layout.jsx`, `client/src/help/topicsIndex.js`,
+10 help topic `.md` files, `server/public/docs/guides/*.pdf`, `README.md`, `client/package.json`,
+`server/package.json`, `CLAUDE.md`
 
 ---
 

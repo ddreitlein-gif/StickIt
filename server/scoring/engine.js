@@ -361,12 +361,18 @@ function parseJumpCode(code) {
   if (spinMatch) {
     const degrees = spinMatch[1];           // '3', '7', '10', '14'
     const offAxis = spinMatch[2] ? 'o' : ''; // 'o' or ''
-    // Normalize modifier: p/P -> 'p', g/G -> 'G', empty -> ''
+    // Normalize modifier: p/P -> 'p'. Grab case is PRESERVED: since v1.26.00
+    // (FS-13) basic 'g' (+0.05) and advanced 'G' (+0.12) are distinct jumps,
+    // so 3g vs 3G are NOT repeats under USSS 4210.2.1 (identical codes only).
     const rawMod = spinMatch[3];
-    const mod = rawMod === 'p' || rawMod === 'P' ? 'p'
-              : rawMod === 'g' || rawMod === 'G' ? 'G'
-              : '';
+    const mod = rawMod === 'p' || rawMod === 'P' ? 'p' : rawMod;
     return { key: `spin_${degrees}${offAxis}${mod}` };
+  }
+
+  // --- STAND-ALONE GRAB: basic 'g' and advanced 'G' are distinct jumps (FS-13).
+  // Must be matched before the spread branch, which would uppercase 'g' -> 'G'.
+  if (/^[gG]$/.test(s)) {
+    return { key: `grab_${s}` };
   }
 
   // --- FLIP CODES: start with b, f, or l ---
@@ -411,6 +417,10 @@ function parseJumpCode(code) {
  *   d   vs dr   -> spread_D  vs spread_D    -> repeats (r stripped)
  *   fF  vs fF   -> flip_f_F  vs flip_f_F   -> repeats
  *   fF  vs fp   -> flip_f_F  vs flip_f_p   -> NOT repeats
+ *   bg  vs bG   -> flip_b_g  vs flip_b_G   -> NOT repeats (basic vs advanced grab, FS-13)
+ *   bG  vs bG   -> flip_b_G  vs flip_b_G   -> repeats
+ *   3g  vs 3G   -> spin_3g   vs spin_3G    -> NOT repeats
+ *   g   vs G    -> grab_g    vs grab_G     -> NOT repeats
  *
  * @param {string} code1
  * @param {string} code2
@@ -418,8 +428,10 @@ function parseJumpCode(code) {
  */
 function areJumpsRepeats(code1, code2) {
   if (!code1 || !code2) return false;
-  const p1 = parseJumpCode(code1);
-  const p2 = parseJumpCode(code2);
+  // Canonicalize first so cosmetic case slips (7OG vs 7oG) still compare,
+  // while meaning-bearing case (g vs G, p vs P) is preserved (v1.26.00).
+  const p1 = parseJumpCode(canonicalizeJumpCode(code1));
+  const p2 = parseJumpCode(canonicalizeJumpCode(code2));
   if (!p1 || !p2) return false;
   return p1.key === p2.key;
 }
@@ -962,6 +974,260 @@ function applyTierRanks(athletes, discipline, startRank) {
   return startRank + athletes.length;
 }
 
+/* ---------------------------------------------------------------------------
+ * Statused-athlete ordering (v1.26.00, Part A ruling).
+ *
+ * DNF, RNS (legacy), and DNS are PHASE-scoped: each places the athlete at the
+ * bottom of the tier in which the status occurred, ahead of all lower tiers
+ * (USSS 4012.3). Within a tier the order is scored -> DNF -> RNS -> DNS.
+ * DSQ is the only EVENT-scoped status: absolute bottom of the entire event.
+ * Statused athletes consume numeric places (standard competition ranking) so
+ * lower tiers continue numbering after them; display surfaces keep printing
+ * the status code via `run_status`.
+ * ------------------------------------------------------------------------- */
+
+// Phase-scoped in-tier precedence. DSQ is event-scoped and handled separately.
+const STATUS_PRECEDENCE = { DNF: 1, RNS: 2, DNS: 3 };
+
+/**
+ * Resolve a single effective status for an athlete with multiple statused runs
+ * and no scored run in the relevant tier (ruling A1.6). Precedence:
+ * DSQ > DNF > RNS > DNS. Accepts an array of run rows (reads .run_status) or
+ * plain status strings. Empty/unknown input resolves to 'DNS'.
+ */
+function resolveEffectiveStatus(runsOrStatuses) {
+  const statuses = (runsOrStatuses || [])
+    .map(r => String((r && typeof r === 'object' ? r.run_status : r) || '').toUpperCase())
+    .filter(Boolean);
+  if (statuses.includes('DSQ')) return 'DSQ';
+  if (statuses.includes('DNF')) return 'DNF';
+  if (statuses.includes('RNS')) return 'RNS';
+  return 'DNS';
+}
+
+/**
+ * Order a tier's flagged (statused, non-DSQ unless the caller passes a pure
+ * DSQ pool) athletes and assign competition ranks continuing from startRank.
+ *
+ * - Sorts in place by STATUS_PRECEDENCE of `effective_status` (DNF < RNS < DNS;
+ *   unknown statuses, incl. DSQ pools, compare equal), then bib_number asc.
+ * - Same effective status => shared rank (ruling A1.5), displayed bib-asc;
+ *   the next rank skips by the size of the tied group.
+ * - Returns startRank + flaggedAthletes.length so the next tier continues
+ *   numbering (ruling A1.4).
+ */
+function orderFlaggedForTier(flaggedAthletes, startRank) {
+  const prec = s => STATUS_PRECEDENCE[String(s || '').toUpperCase()] || 99;
+  const bibNum = a => {
+    const n = parseInt(a.bib_number, 10);
+    return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+  };
+  flaggedAthletes.sort((a, b) =>
+    (prec(a.effective_status) - prec(b.effective_status)) || (bibNum(a) - bibNum(b))
+  );
+  let rank = startRank;
+  for (let i = 0; i < flaggedAthletes.length; i++) {
+    if (i > 0 && prec(flaggedAthletes[i].effective_status) !== prec(flaggedAthletes[i - 1].effective_status)) {
+      rank = startRank + i;
+    }
+    flaggedAthletes[i].rank = rank;
+  }
+  return startRank + flaggedAthletes.length;
+}
+
+/**
+ * Assemble a complete ordered result list across tiers, placing statused
+ * athletes per the Part A ruling. Pure and query-free: every consumer
+ * (results.js, phases.js, pdf.js) supplies its own SELECT output so ordering
+ * can never diverge between surfaces.
+ *
+ * @param {Object[]} opts.tiers - ordered highest tier first, e.g.
+ *   [{ key:'final_2', label:'Final 2', scoredRuns:[...] },
+ *    { key:'final_1', label:'Final 1', scoredRuns:[...] },
+ *    { key:'qualifier', label:'Qualification', scoredRuns:[...] }]
+ *   `scoredRuns` are run rows with run_status IS NULL, already best-per-athlete
+ *   where the tier spans multiple run numbers. Legacy / best-of-2 events pass a
+ *   single tier (key may be null).
+ * @param {Object[]} opts.flaggedRuns - ALL completed runs with a run_status for
+ *   the event, each carrying registration_id, run_status, run_number, bib_number.
+ * @param {Function} [opts.tierKeyForRun] - maps a flagged run to the tier key it
+ *   belongs to (e.g. by run_number). Required when there is more than one tier.
+ * @param {string} opts.discipline
+ * @returns {Object[]} single ordered array; each row gains `tier`, `tier_label`,
+ *   numeric `rank`, and (flagged rows) `effective_status`. DSQ athletes are
+ *   tagged tier 'flagged' and appended at the absolute event bottom.
+ */
+function assembleTieredResults({ tiers, flaggedRuns, tierKeyForRun, discipline }) {
+  const out = [];
+  const rankedIds = new Set();
+  let globalRank = 1;
+
+  const tierIndexByKey = new Map(tiers.map((t, i) => [t.key, i]));
+  const keyForRun = tierKeyForRun || (() => tiers[0] && tiers[0].key);
+
+  // Which registrations have a scored run in each tier (for ruling A1.6:
+  // a scored run in the same tier as the status means the athlete ranks
+  // normally on it and is not flagged for that status).
+  const scoredTiersByReg = new Map();
+  for (const t of tiers) {
+    for (const r of (t.scoredRuns || [])) {
+      if (!scoredTiersByReg.has(r.registration_id)) scoredTiersByReg.set(r.registration_id, new Set());
+      scoredTiersByReg.get(r.registration_id).add(t.key);
+    }
+  }
+
+  // Group flagged runs by athlete; drop runs whose tier the athlete also
+  // scored in (ruling A1.6 — the scored run governs that tier).
+  const flaggedByReg = new Map();
+  for (const r of (flaggedRuns || [])) {
+    const tKey = keyForRun(r);
+    if (!tierIndexByKey.has(tKey)) continue; // run outside the tiers in play
+    const scoredIn = scoredTiersByReg.get(r.registration_id);
+    if (scoredIn && scoredIn.has(tKey)) continue;
+    if (!flaggedByReg.has(r.registration_id)) flaggedByReg.set(r.registration_id, []);
+    flaggedByReg.get(r.registration_id).push({ run: r, tierIdx: tierIndexByKey.get(tKey) });
+  }
+
+  // Effective status + claim tier per flagged athlete. DSQ is event-scoped;
+  // others claim the HIGHEST tier they appeared in (ruling A1.7).
+  const claims = []; // { regId, tierIdx, effective_status, row }
+  for (const [regId, entries] of flaggedByReg) {
+    const status = resolveEffectiveStatus(entries.map(e => e.run));
+    const bestTierIdx = Math.min(...entries.map(e => e.tierIdx));
+    // Representative row: the flagged run from the claim tier (highest
+    // run_number within it) so per-run fields reflect the status run shown.
+    const inTier = entries.filter(e => e.tierIdx === bestTierIdx)
+      .sort((a, b) => (b.run.run_number || 0) - (a.run.run_number || 0));
+    const row = inTier[0].run;
+    claims.push({ regId, tierIdx: bestTierIdx, effective_status: status, row });
+  }
+  const dsqRegIds = new Set(claims.filter(c => c.effective_status === 'DSQ').map(c => c.regId));
+
+  const dsqPool = [];
+  tiers.forEach((tier, ti) => {
+    // Scored athletes, excluding anyone already placed in a higher tier and
+    // anyone DSQ'd (event bottom) — ruling A1.7 exclusion.
+    const scored = (tier.scoredRuns || []).filter(r =>
+      !rankedIds.has(r.registration_id) && !dsqRegIds.has(r.registration_id)
+    );
+    const ranked = rankResults(scored, discipline);
+    globalRank = applyTierRanks(ranked, discipline, globalRank);
+    for (const r of ranked) {
+      r.tier = tier.key;
+      r.tier_label = tier.label;
+      out.push(r);
+      rankedIds.add(r.registration_id);
+    }
+    // This tier's flagged claims (non-DSQ), bottom of the tier.
+    const tierFlagged = [];
+    for (const c of claims) {
+      if (c.tierIdx !== ti || rankedIds.has(c.regId)) continue;
+      rankedIds.add(c.regId);
+      c.row.effective_status = c.effective_status;
+      if (c.effective_status === 'DSQ') {
+        dsqPool.push(c.row);
+      } else {
+        c.row.tier = tier.key;
+        c.row.tier_label = tier.label;
+        tierFlagged.push(c.row);
+      }
+    }
+    globalRank = orderFlaggedForTier(tierFlagged, globalRank);
+    out.push(...tierFlagged);
+  });
+
+  // DSQ: absolute event bottom, regardless of phase (ruling A1.3).
+  orderFlaggedForTier(dsqPool, globalRank);
+  for (const r of dsqPool) {
+    r.tier = 'flagged';
+    r.tier_label = 'DSQ';
+    out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Build a tierKeyForRun function for assembleTieredResults from tiers that
+ * carry runNumbers arrays. Flagged runs whose run_number belongs to a tier not
+ * currently displayed (e.g. Final 2 before it finalizes) fall back to the
+ * highest displayed tier so they are never silently dropped mid-event.
+ */
+function makeTierKeyForRun(tiers) {
+  const byRun = new Map();
+  for (const t of tiers) {
+    for (const rn of (t.runNumbers || [])) byRun.set(rn, t.key);
+  }
+  const fallback = tiers.length ? tiers[0].key : null;
+  return r => (byRun.has(r.run_number) ? byRun.get(r.run_number) : fallback);
+}
+
+/**
+ * Canonicalize a typed mogul / dual mogul jump code (v1.26.00, FS-13).
+ *
+ * DD lookup is case-exact; this helper runs ONLY after an exact-case miss and
+ * folds only letters whose case can never distinguish two real codes:
+ *   - direction prefixes b/f/l and the off-axis marker o -> lowercase
+ *   - the grab letter g/G is NEVER case-folded (basic vs advanced grab)
+ *   - p/P is NEVER folded inside flip codes (bp Back Position vs bP Back Pike)
+ *     but IS folded to 'p' in spin codes (no spin code uses capital P)
+ *   - L (Lay) and F (Full) -> uppercase; d/t before f/F are the double/triple
+ *     full markers -> lowercase; t elsewhere is Tuck -> uppercase
+ *   - all-alpha upright codes without g/G/p/P -> uppercase (ss -> SS)
+ * Codes that still miss after canonicalization are rejected by the caller.
+ */
+function canonicalizeJumpCode(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return s;
+
+  // Stand-alone grab: preserved exactly.
+  if (/^[gG]$/.test(s)) return s;
+
+  // Spin codes: digits + optional o + optional p/g modifier + optional r.
+  const spin = s.match(/^(\d+)([oO]?)([pPgG]?)([rR]?)$/);
+  if (spin) {
+    const mod = spin[3] === 'P' ? 'p' : spin[3]; // g/G preserved
+    return spin[1] + spin[2].toLowerCase() + mod + spin[4].toLowerCase();
+  }
+
+  // Flip / loop codes: direction letter + body.
+  const flip = s.match(/^([bBfFlL])([A-Za-z]+)$/);
+  if (flip) {
+    const dir = flip[1].toLowerCase();
+    const body = flip[2];
+    let outBody = '';
+    for (let i = 0; i < body.length; i++) {
+      const ch = body[i];
+      const next = body[i + 1] || '';
+      const isLast = i === body.length - 1;
+      if (ch === 'g' || ch === 'G' || ch === 'p' || ch === 'P') {
+        outBody += ch; // grab + position/pike: case is meaning-bearing
+      } else if (ch === 'l' || ch === 'L') {
+        outBody += 'L'; // Lay — no lowercase-l exists mid-code
+      } else if (ch === 'f' || ch === 'F') {
+        outBody += 'F'; // Full
+      } else if ((ch === 'd' || ch === 'D') && /[fF]/.test(next)) {
+        outBody += 'd'; // double-full marker (bdF)
+      } else if (ch === 't' || ch === 'T') {
+        outBody += /[fF]/.test(next) ? 't' : 'T'; // btF marker vs Tuck (bT)
+      } else if (ch === 'x' || ch === 'X') {
+        outBody += 'X';
+      } else if ((ch === 'r' || ch === 'R') && isLast) {
+        outBody += 'r'; // right-takeoff marker
+      } else {
+        outBody += ch;
+      }
+    }
+    return dir + outBody;
+  }
+
+  // Upright / special all-alpha codes with no case-sensitive letters.
+  if (/^[A-Za-z]+$/.test(s) && !/[gGpP]/.test(s)) {
+    return s.toUpperCase();
+  }
+
+  return s;
+}
+
 module.exports = {
   calcMogulScore,
   calcAerialsScore,
@@ -985,6 +1251,12 @@ module.exports = {
   tieBreakAerials,
   pickBestRun,
   applyTierRanks,
+  STATUS_PRECEDENCE,
+  resolveEffectiveStatus,
+  orderFlaggedForTier,
+  assembleTieredResults,
+  makeTierKeyForRun,
+  canonicalizeJumpCode,
   roundToHundredth,
   floorToHundredth,
 };

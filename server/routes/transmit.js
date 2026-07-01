@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const { queryAll, queryOne } = require('../db/schema');
-const { rankResults } = require('../scoring/engine');
+const { rankResults, resolveEffectiveStatus } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const archiver = require('archiver');
 const { normalizeGender } = require('../utils/gender');
@@ -23,6 +23,28 @@ function formatScore(val) {
 
 function indent(level) {
   return '  '.repeat(level);
+}
+
+// v1.26.00 — RNS is a legacy Winfree convention with no USSS/FIS status
+// vocabulary equivalent; map it to DNF at emission time only (stored data
+// is untouched).
+function xmlStatus(s) {
+  const up = String(s || 'DNS').toUpperCase();
+  return up === 'RNS' ? 'DNF' : up;
+}
+
+// Order FS_notranked entries: DNF (incl. mapped RNS) -> DNS -> DSQ, bib asc.
+// Cosmetic per the v1.26.00 spec; Status values take priority over order.
+function sortNotClassified(arr, statusOf, bibOf) {
+  const prec = { DNF: 1, DNS: 2, DSQ: 3 };
+  const bibNum = v => {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+  };
+  return [...arr].sort((a, b) =>
+    ((prec[xmlStatus(statusOf(a))] || 9) - (prec[xmlStatus(statusOf(b))] || 9)) ||
+    (bibNum(bibOf(a)) - bibNum(bibOf(b)))
+  );
 }
 
 async function buildJudgePointsMap(bracket) {
@@ -135,10 +157,10 @@ function generateSingleMogulXml(params) {
 
   lines.push(`${indent(2)}</FS_classified>`);
 
-  // FS_notclassified — DNS / DNF / DSQ / RNS athletes (no successful runs)
+  // FS_notclassified — DNS / DNF / DSQ (and legacy RNS -> DNF) athletes
   lines.push(`${indent(2)}<FS_notclassified>`);
-  for (const r of notClassified) {
-    const status = (r.runStatus || 'DNS').toUpperCase();
+  for (const r of sortNotClassified(notClassified, x => x.runStatus, x => x.bib_number)) {
+    const status = xmlStatus(r.runStatus);
     lines.push(`${indent(3)}<FS_notranked Status="${escapeXml(status)}">`);
     lines.push(`${indent(4)}<Bib>${r.bib_number || ''}</Bib>`);
     lines.push(`${indent(4)}<Competitor>`);
@@ -261,10 +283,10 @@ function generateDualMogulXml(params) {
 
   lines.push(`${indent(2)}</FS_classified>`);
 
-  // FS_notclassified — DNS / DNF / DSQ / RNS athletes
+  // FS_notclassified — DNS / DNF / DSQ (and legacy RNS -> DNF) athletes
   lines.push(`${indent(2)}<FS_notclassified>`);
-  for (const s of notClassifiedStandings) {
-    const status = (s.runStatus || 'DNS').toUpperCase();
+  for (const s of sortNotClassified(notClassifiedStandings, x => x.runStatus, x => x.bib)) {
+    const status = xmlStatus(s.runStatus);
     lines.push(`${indent(3)}<FS_notranked Status="${escapeXml(status)}">`);
     lines.push(`${indent(4)}<Bib>${s.bib || ''}</Bib>`);
     lines.push(`${indent(4)}<Competitor>`);
@@ -685,8 +707,9 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
           classified.push(data);
         } else {
           const byRun = athleteStatuses[regId] || {};
-          const runNums = Object.keys(byRun).map(Number).sort((a, b) => b - a);
-          const runStatus = runNums.length > 0 ? byRun[runNums[0]] : 'DNS';
+          // v1.26.00: resolve by precedence (DSQ > DNF > RNS > DNS), not
+          // by highest run_number.
+          const runStatus = resolveEffectiveStatus(Object.values(byRun));
           notClassified.push({ ...data, runStatus });
         }
       }

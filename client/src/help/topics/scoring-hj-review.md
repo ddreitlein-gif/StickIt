@@ -13,7 +13,7 @@ Center of screen, during pending state:
 - **Per-judge review rows** — one row per judge with score, jump codes (Air judges), and a small **Reject** button.
 
 Bottom of screen:
-- **Run Status grid** — four large buttons: DNS, DNF, RNS, DSQ. Each opens a confirmation dialog before submitting (see [Run statuses](./scoring-statuses)).
+- **Run Status grid** — three large buttons: DNS, DNF, DSQ. Each opens a confirmation dialog before submitting (see [Run statuses](./scoring-statuses)). RNS was retired in v1.26.00; legacy values still display.
 
 ### Once all judges have submitted
 

@@ -18,6 +18,9 @@ const STATIC_KEYTERMS = [
   'air judge 1', 'air judge 2', 'air judge 3',
   'DNS', 'DNF', 'DSQ', 'no time', 'NT',
   'correction', 'scratch that', 'bib',
+  // v1.26.00 (FS-13): grab phrases — "grab" = basic g, "big grab" /
+  // "advanced grab" = advanced G. Codes themselves come from the DD table.
+  'grab', 'big grab', 'advanced grab',
 ];
 
 async function getKeytermsForEvent(eventId) {

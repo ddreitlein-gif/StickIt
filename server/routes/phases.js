@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
-const { rankResults, pickBestRun, applyTierRanks, takeUpToRank } = require('../scoring/engine');
+const { rankResults, pickBestRun, takeUpToRank, assembleTieredResults, makeTierKeyForRun } = require('../scoring/engine');
 const { requireUnlocked } = require('../middleware/lockCheck');
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
@@ -126,7 +126,10 @@ router.post('/', async (req, res) => {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const { phase_type, run_order_method, pass_through_count = 0, final_size = 0 } = req.body;
+    const { phase_type, run_order_method, pass_through_count = 0, final_size = 0, q2_field_limit = null } = req.body;
+    // v1.26.00 (FS-4/FS-7): optional Q2 field cap — last Q1 rank eligible for
+    // a Q2 run. NULL/blank = no cap (Championship format + all USSS events).
+    const q2Limit = (q2_field_limit == null || q2_field_limit === '') ? null : parseInt(q2_field_limit, 10) || null;
 
     if (!phase_type) return res.status(400).json({ error: 'phase_type required' });
 
@@ -260,9 +263,10 @@ router.post('/', async (req, res) => {
     // Create the new phase
     const newId = uuidv4();
     await execute(
-      `INSERT INTO event_phases (id, event_id, phase_type, run_number, label, run_order_method, pass_through_count, final_size, status, sequence_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'not_started', ?)`,
-      [newId, eventId, phase_type, nextRunNumber, label, defaultMethod, pass_through_count || 0, final_size || 0, nextSequence]
+      `INSERT INTO event_phases (id, event_id, phase_type, run_number, label, run_order_method, pass_through_count, final_size, q2_field_limit, status, sequence_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_started', ?)`,
+      [newId, eventId, phase_type, nextRunNumber, label, defaultMethod, pass_through_count || 0, final_size || 0,
+       phase_type === 'qualifier_2' ? q2Limit : null, nextSequence]
     );
 
     // Determine eligible athletes and assign run order
@@ -284,7 +288,16 @@ router.post('/', async (req, res) => {
       const q1Ranked = await rankedRunResults(eventId, 1);
       const ptCount = pass_through_count || 0;
       const passThroughIds = new Set(takeUpToRank(q1Ranked, ptCount).map(r => r.registration_id));
-      eligible = allRegs.filter(r => !passThroughIds.has(r.id));
+      if (q2Limit && q2Limit > 0) {
+        // v1.26.00 (FS-4/FS-7): only ranks ptCount+1 .. q2Limit after Q1 take
+        // a Q2 run; athletes below the limit are finished and rank on their
+        // Q1 score in the qualification tier. Ties at the limit expand per
+        // ICR 4207.3.4 (takeUpToRank), consistent with every other cut.
+        const bandIds = new Set(takeUpToRank(q1Ranked, q2Limit).map(r => r.registration_id));
+        eligible = allRegs.filter(r => bandIds.has(r.id) && !passThroughIds.has(r.id));
+      } else {
+        eligible = allRegs.filter(r => !passThroughIds.has(r.id));
+      }
       priorRanked = q1Ranked;
     } else if (phase_type === 'final_1') {
       const fSize = final_size || 16;
@@ -691,23 +704,26 @@ router.get('/results', async (req, res) => {
         best_score: r.total_score,
       }));
 
-      // Get flagged athletes
+      // Flagged athletes: one tier spanning both runs — scored -> DNF -> RNS
+      // -> DNS, then DSQ at the bottom, with numeric ranks (v1.26.00 Part A).
       const flaggedRuns = await queryAll(
         `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club
          FROM runs r JOIN registrations reg ON reg.id=r.registration_id JOIN athletes a ON a.id=reg.athlete_id
          WHERE r.event_id=? AND r.status='complete' AND r.run_status IS NOT NULL`,
         [eventId]
       );
-      const scoredIds = new Set(results.map(r => r.registration_id));
-      const flagged = {};
-      for (const r of flaggedRuns) {
-        if (!scoredIds.has(r.registration_id)) flagged[r.registration_id] = r;
-      }
+      const discipline = await getDiscipline(eventId);
+      const ordered = assembleTieredResults({
+        tiers: [{ key: null, label: null, scoredRuns: enriched }],
+        flaggedRuns,
+        discipline,
+      });
+      ordered.forEach(r => { if (!r.runs) r.runs = runsByReg[r.registration_id] || {}; });
 
       res.json({
         format: 'best_of_2',
         phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type })),
-        results: [...enriched, ...Object.values(flagged).map(r => ({ ...r, rank: null, runs: runsByReg[r.registration_id] || {} }))],
+        results: ordered,
       });
     } else if (format === 'qualifier_finals') {
       // Phase-based tiered ranking
@@ -717,64 +733,35 @@ router.get('/results', async (req, res) => {
       const qualRunNumbers = phases.filter(p => p.phase_type === 'run' || p.phase_type === 'qualifier_2').map(p => p.run_number);
 
       const discipline = await getDiscipline(eventId);
-      const tiers = [];
-      let globalRank = 1;
-      const rankedIds = new Set();
 
-      // Tier 1: Final 2 athletes
+      // Tier descriptors, highest first (v1.26.00 Part A). Flagged athletes
+      // place at the bottom of the tier they claim (highest phase they
+      // appeared in, USSS 4012.3), consuming places so lower tiers continue
+      // numbering. DSQ is event-scoped: absolute bottom, tier 'flagged'.
+      const tierDescs = [];
       if (f2 && f2.status === 'finalized') {
-        const f2Results = await rankedRunResults(eventId, f2.run_number, discipline);
-        globalRank = applyTierRanks(f2Results, discipline, globalRank);
-        for (const r of f2Results) {
-          r.tier = 'final_2';
-          r.tier_label = 'Final 2';
-          tiers.push(r);
-          rankedIds.add(r.registration_id);
-        }
+        tierDescs.push({ key: 'final_2', label: 'Final 2', runNumbers: [f2.run_number],
+          scoredRuns: await rankedRunResults(eventId, f2.run_number, discipline) });
       }
-
-      // Tier 2: Final 1 athletes not in Final 2
       if (f1) {
-        const f1Results = await rankedRunResults(eventId, f1.run_number, discipline);
-        const f1Filtered = f1Results.filter(r => !rankedIds.has(r.registration_id));
-        globalRank = applyTierRanks(f1Filtered, discipline, globalRank);
-        for (const r of f1Filtered) {
-          r.tier = 'final_1';
-          r.tier_label = 'Final 1';
-          tiers.push(r);
-          rankedIds.add(r.registration_id);
-        }
+        tierDescs.push({ key: 'final_1', label: 'Final 1', runNumbers: [f1.run_number],
+          scoredRuns: await rankedRunResults(eventId, f1.run_number, discipline) });
       }
-
-      // Tier 3: Qualifier athletes not in Finals
       if (qualRunNumbers.length > 0) {
-        const qualResults = await bestScoreResults(eventId, qualRunNumbers, discipline);
-        const qFiltered = qualResults.filter(r => !rankedIds.has(r.registration_id));
-        globalRank = applyTierRanks(qFiltered, discipline, globalRank);
-        for (const r of qFiltered) {
-          r.tier = 'qualifier';
-          r.tier_label = q2 ? 'Qualification' : 'Qualifier 1';
-          tiers.push(r);
-          rankedIds.add(r.registration_id);
-        }
+        tierDescs.push({ key: 'qualifier', label: q2 ? 'Qualification' : 'Qualifier 1', runNumbers: qualRunNumbers,
+          scoredRuns: await bestScoreResults(eventId, qualRunNumbers, discipline) });
       }
 
-      // Flagged athletes (DNS/DNF/DSQ)
-      const allRuns = await queryAll(
+      const flaggedRuns = await queryAll(
         `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club
          FROM runs r JOIN registrations reg ON reg.id=r.registration_id JOIN athletes a ON a.id=reg.athlete_id
          WHERE r.event_id=? AND r.status='complete' AND r.run_status IS NOT NULL`,
         [eventId]
       );
-      for (const r of allRuns) {
-        if (!rankedIds.has(r.registration_id)) {
-          r.rank = null;
-          r.tier = 'flagged';
-          r.tier_label = r.run_status;
-          tiers.push(r);
-          rankedIds.add(r.registration_id);
-        }
-      }
+
+      const tiers = assembleTieredResults({
+        tiers: tierDescs, flaggedRuns, tierKeyForRun: makeTierKeyForRun(tierDescs), discipline,
+      });
 
       // Attach per-phase run data for display
       const allRunData = await queryAll(
@@ -796,12 +783,22 @@ router.get('/results', async (req, res) => {
         results: tiers,
       });
     } else {
-      // Single run - just return standard results
+      // Single run - standard results, statused athletes at the bottom in order
       const results = await rankedRunResults(eventId, 1);
+      const flaggedRuns = await queryAll(
+        `SELECT r.*, reg.bib_number, a.first_name, a.last_name, a.ussa_num, a.club
+         FROM runs r JOIN registrations reg ON reg.id=r.registration_id JOIN athletes a ON a.id=reg.athlete_id
+         WHERE r.event_id=? AND r.status='complete' AND r.run_status IS NOT NULL`, [eventId]
+      );
+      const discipline = await getDiscipline(eventId);
       res.json({
         format: 'single',
         phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type })),
-        results,
+        results: assembleTieredResults({
+          tiers: [{ key: null, label: null, scoredRuns: results }],
+          flaggedRuns,
+          discipline,
+        }),
       });
     }
   } catch (e) { res.status(500).json({ error: e.message }); }

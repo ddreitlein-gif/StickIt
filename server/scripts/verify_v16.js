@@ -574,6 +574,148 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// v1.26.00 Part A: statused-athlete ordering helpers
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('v1.26.00 status ordering (Part A):');
+try {
+  const engine = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+  const { resolveEffectiveStatus, orderFlaggedForTier, assembleTieredResults } = engine;
+
+  // resolveEffectiveStatus precedence (ruling A1.6)
+  check('A: [DNF,DNS] -> DNF', resolveEffectiveStatus([{ run_status: 'DNF' }, { run_status: 'DNS' }]) === 'DNF');
+  check('A: [DSQ,DNF] -> DSQ', resolveEffectiveStatus(['DSQ', 'DNF']) === 'DSQ');
+  check('A: [RNS,DNS] -> RNS', resolveEffectiveStatus(['RNS', 'DNS']) === 'RNS');
+  check('A: [] -> DNS', resolveEffectiveStatus([]) === 'DNS');
+  check('A: lowercase tolerated', resolveEffectiveStatus(['dnf']) === 'DNF');
+
+  // orderFlaggedForTier: DNF < RNS < DNS, bib asc, tie shares rank + skip
+  const fl = [
+    { effective_status: 'DNS', bib_number: '12' },
+    { effective_status: 'DNF', bib_number: '5' },
+    { effective_status: 'DNS', bib_number: '3' },
+    { effective_status: 'RNS', bib_number: '9' },
+  ];
+  const next = orderFlaggedForTier(fl, 7);
+  check('A: tier order DNF,RNS,DNS(bib asc)',
+    fl.map(f => f.effective_status + f.bib_number).join(',') === 'DNF5,RNS9,DNS3,DNS12',
+    fl.map(f => f.effective_status + f.bib_number).join(','));
+  check('A: ranks 7,8,9,9 (DNS tie shares)', fl.map(f => f.rank).join(',') === '7,8,9,9', fl.map(f => f.rank).join(','));
+  check('A: returns startRank+len (11)', next === 11, 'got ' + next);
+
+  // assembleTieredResults — synthetic qualifier/finals walk
+  const mk = (id, total, bib) => ({ registration_id: id, total_score: total, turns_score: 0, air_score: 0, speed_score: 0, bib_number: String(bib) });
+  const tiers2 = () => ([
+    { key: 'final_1', label: 'Final 1', scoredRuns: [1, 2, 3, 4, 5, 6].map(i => mk('a' + i, 90 - i, i)) },
+    { key: 'qualifier', label: 'Qualification', scoredRuns: [9, 10, 11].map(i => mk('a' + i, 80 - i, i)) },
+  ]);
+  const keyFn = r => r.run_number === 2 ? 'final_1' : 'qualifier';
+
+  // Edge case 1: F1-of-8 with DNF + DNS -> scored 1-6, DNF 7, DNS 8, qual starts at 9
+  const out1 = assembleTieredResults({
+    tiers: tiers2(),
+    flaggedRuns: [
+      { registration_id: 'a7', run_status: 'DNF', run_number: 2, bib_number: '7' },
+      { registration_id: 'a8', run_status: 'DNS', run_number: 2, bib_number: '8' },
+    ],
+    tierKeyForRun: keyFn, discipline: 'mogul',
+  });
+  const byId1 = Object.fromEntries(out1.map(r => [r.registration_id, r]));
+  check('A: edge 1 — DNF rank 7, DNS rank 8', byId1.a7.rank === 7 && byId1.a8.rank === 8,
+    JSON.stringify([byId1.a7.rank, byId1.a8.rank]));
+  check('A: edge 1 — qual continues at 9', byId1.a9.rank === 9 && byId1.a11.rank === 11);
+  check('A: edge 1 — flagged carry real tier', byId1.a7.tier === 'final_1' && byId1.a8.tier === 'final_1');
+
+  // Edge case 2/3: DSQ event bottom + scored-Q-then-DNS-F1 excluded from qual
+  const t2 = tiers2();
+  t2[1].scoredRuns.push(mk('a20', 85, 20)); // a20 scored Q well...
+  const out2 = assembleTieredResults({
+    tiers: t2,
+    flaggedRuns: [
+      { registration_id: 'a20', run_status: 'DNS', run_number: 2, bib_number: '20' }, // ...then DNS'd F1
+      { registration_id: 'a9', run_status: 'DSQ', run_number: 2, bib_number: '9' },   // Q-scored a9 DSQ'd in F1
+    ],
+    tierKeyForRun: keyFn, discipline: 'mogul',
+  });
+  const byId2 = Object.fromEntries(out2.map(r => [r.registration_id, r]));
+  check('A: edge 3 — Q-scorer DNS in F1 sits at F1 bottom', byId2.a20.tier === 'final_1' && byId2.a20.rank === 7);
+  check('A: edge 3 — excluded from qual tier', out2.filter(r => r.registration_id === 'a20').length === 1);
+  check('A: edge 2 — DSQ absolute event bottom',
+    byId2.a9.tier === 'flagged' && byId2.a9.rank === out2.length && out2[out2.length - 1].registration_id === 'a9',
+    JSON.stringify({ tier: byId2.a9.tier, rank: byId2.a9.rank }));
+
+  // Edge case 5: best-of-2 DNF r1 + DNS r2 -> effective DNF, above pure DNS
+  const out5 = assembleTieredResults({
+    tiers: [{ key: null, label: null, scoredRuns: [mk('s1', 70, 1)] }],
+    flaggedRuns: [
+      { registration_id: 'x1', run_status: 'DNS', run_number: 2, bib_number: '30' },
+      { registration_id: 'x1', run_status: 'DNF', run_number: 1, bib_number: '30' },
+      { registration_id: 'x2', run_status: 'DNS', run_number: 1, bib_number: '2' },
+    ],
+    discipline: 'mogul',
+  });
+  check('A: edge 5 — DNF+DNS resolves DNF, above pure DNS',
+    out5.map(r => r.registration_id).join(',') === 's1,x1,x2',
+    out5.map(r => r.registration_id + '/' + (r.effective_status || 'scored')).join(','));
+
+  // Edge case 4: scored run in the same tier as the status -> ranks normally, not flagged
+  const out4 = assembleTieredResults({
+    tiers: [{ key: null, label: null, scoredRuns: [mk('s1', 70, 1), mk('s2', 60, 2)] }],
+    flaggedRuns: [{ registration_id: 's2', run_status: 'DNF', run_number: 1, bib_number: '2' }],
+    discipline: 'mogul',
+  });
+  check('A: edge 4 — scored run wins over same-tier status',
+    out4.length === 2 && out4[1].registration_id === 's2' && out4[1].rank === 2 && !out4[1].effective_status);
+
+  // Edge case 8: legacy single tier order scored, DNF, RNS, DNS, DSQ
+  const out8 = assembleTieredResults({
+    tiers: [{ key: null, label: null, scoredRuns: [mk('s1', 70, 1)] }],
+    flaggedRuns: [
+      { registration_id: 'f1', run_status: 'DSQ', run_number: 1, bib_number: '4' },
+      { registration_id: 'f2', run_status: 'DNS', run_number: 1, bib_number: '5' },
+      { registration_id: 'f3', run_status: 'RNS', run_number: 1, bib_number: '6' },
+      { registration_id: 'f4', run_status: 'DNF', run_number: 1, bib_number: '7' },
+    ],
+    discipline: 'mogul',
+  });
+  check('A: edge 8 — legacy order scored,DNF,RNS,DNS,DSQ',
+    out8.map(r => r.registration_id).join(',') === 's1,f4,f3,f2,f1',
+    out8.map(r => r.registration_id).join(','));
+} catch (e) {
+  fail('Part A ordering tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
+// v1.26.00 Part B: FS-13 grab case sensitivity
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('v1.26.00 grab case sensitivity (FS-13):');
+try {
+  const engine = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+  const { areJumpsRepeats, canonicalizeJumpCode } = engine;
+
+  check('B: bg vs bG NOT repeats', areJumpsRepeats('bg', 'bG') === false);
+  check('B: bG vs bG ARE repeats', areJumpsRepeats('bG', 'bG') === true);
+  check('B: 3g vs 3G NOT repeats', areJumpsRepeats('3g', '3G') === false);
+  check('B: 3og vs 3oG NOT repeats', areJumpsRepeats('3og', '3oG') === false);
+  check('B: g vs G NOT repeats', areJumpsRepeats('g', 'G') === false);
+  check('B: g vs g ARE repeats', areJumpsRepeats('g', 'g') === true);
+  check('B: bL vs bp still NOT repeats', areJumpsRepeats('bL', 'bp') === false);
+
+  const canonCases = [
+    ['BG', 'bG'], ['Bg', 'bg'], ['BP', 'bP'], ['bp', 'bp'], ['3P', '3p'],
+    ['7OG', '7oG'], ['7Og', '7og'], ['ss', 'SS'], ['BTF', 'btF'], ['bt', 'bT'],
+    ['lgf', 'lgF'], ['LGF', 'lGF'], ['g', 'g'], ['G', 'G'], ['bdf', 'bdF'], ['BL', 'bL'],
+  ];
+  for (const [inp, want] of canonCases) {
+    check(`B: canonicalize ${inp} -> ${want}`, canonicalizeJumpCode(inp) === want,
+      'got ' + canonicalizeJumpCode(inp));
+  }
+} catch (e) {
+  fail('FS-13 grab tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log('');

@@ -22,6 +22,23 @@ The chart is based on:
   - `Y` (y-spread) → +0.01
   - `M`, `K` → +0.01 each
   - `Z` → 0
+  - `g` (basic grab) → +0.05
+  - `G` (advanced grab) → +0.12
+
+### Basic vs advanced grabs (v1.26.00, FIS JH 6204.3.7)
+
+Since the Spring 2026 FIS rule change, moguls distinguishes a **basic grab** (lowercase `g`, modifier +0.05) from an **advanced grab** (uppercase `G`, modifier +0.12 — previously +0.14). `bg` and `bG` are **different jumps with different DDs**, so jump-code entry is case-exact. Examples (men / women):
+
+| Code | DD (M / F) | What it is |
+|---|---|---|
+| `3g` | 0.73 / 0.83 | 360 with basic grab |
+| `3G` | 0.80 / 0.90 | 360 with advanced grab |
+| `bg` | 0.73 / 0.83 | Back flip with basic grab |
+| `bG` | 0.80 / 0.90 | Back flip with advanced grab |
+| `g` | 0.45 / 0.55 | Stand-alone basic grab |
+| `G` | 0.52 / 0.62 | Stand-alone advanced grab |
+
+Because only identical codes are repeats under USSS 4210.2.1, `bg` and `bG` are **not** repeats of each other. The FIS Moguls Advisory Group will conduct a full DD chart review at the start of the quad; these values implement the approved FS-13 modifiers, and individual values remain editable through the Admin → Jump DDs table.
 
 Common codes and their DDs (men / women):
 
@@ -64,14 +81,11 @@ Dual mogul uses the **mogul chart × 1.25**. The modal labels this clearly: "Dua
 
 ### Per-jump scoring
 
-For mogul:
+For mogul (v1.24.00, per FIS JH 6203.2.2 / 6204.3):
 - Each air judge enters a per-jump raw score (0–10).
-- The server computes: `floorToHundredth(raw × DD)` per judge per jump.
-- Averaged across air judges per jump.
-- Summed across jumps (or doubled for 1-jump events).
-- Capped at the 20-point air max per FIS JH 6204.
-
-This matches Winfree's calculation order (v1.16.09).
+- The judges' raw scores are averaged per jump, truncated to 2 decimals, then multiplied by the DD.
+- Each jump is capped at 10.0 points.
+- Summed across jumps (or doubled for 1-jump events), capped at the 20-point air max per FIS JH 6204.
 
 For aerials (v2):
 - Each scoring judge enters Air, Form, Landing per jump.

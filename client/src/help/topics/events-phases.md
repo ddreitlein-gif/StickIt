@@ -32,6 +32,21 @@ If you set a cut to 16 but only 8 athletes qualified (heavy DNS, last-minute wit
 
 Non-blocking; the meet continues normally. The notice is informational so the operator can confirm with the TD whether to re-open registration or proceed.
 
+### Q2 field limit (v1.26.00, WC Phased Finals)
+
+The Spring 2026 FIS World Cup **Phased Finals** formats restrict Qualification 2 to a ranked band: only athletes ranked from `pass-through + 1` down to a fixed rank take a Q2 run; everyone below that rank is finished and ranks on their Q1 score in the qualification tier.
+
+When adding a **Qualifier 2** phase, the optional **"Q2 field limit (last rank eligible for Q2)"** input sets that cap. Blank = no cap (every non-pass-through athlete runs Q2 — the Championship format and all USSS events). Ties at the limit rank expand the field per ICR 4207.3.4, the same as every other cut in StickIt.
+
+Format presets for manual configuration:
+
+| Format | Pass-through | Q2 field limit | F1 size | F2 size |
+|---|:---:|:---:|:---:|:---:|
+| WC Phased Finals — Moguls | 8 | 32 | 16 | 6 |
+| Championship — Moguls | 10 | none | 20 | 8 |
+| WC Phased Finals — Aerials | 6 | 18 | 12 | 6 |
+| Championship — Aerials | 6 | none | 12 | (two-jump F1 handled procedurally) |
+
 ### Run order across phases
 
 - Run 1 / Q1 → registration run order (the order you saved in [Building run order](./reg-runorder)).

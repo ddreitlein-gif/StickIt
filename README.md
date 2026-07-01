@@ -259,20 +259,46 @@ Returns scored results for the current active round. For dual mogul events, retu
   "discipline": "dual_mogul",
   "bracket": [
     {
+      "id": "match-uuid",
       "bracket_round": 4,
       "bracket_position": 1,
       "match_status": "complete",
       "blue_bib": 1,  "blue_first": "Jane", "blue_last": "Smith", "blue_score": 22,
       "red_bib": 8,   "red_first": "Alex",  "red_last": "Jones",  "red_score": 19,
       "winner_registration_id": "uuid",
-      "is_bye": 0
+      "is_bye": 0,
+      "nj_blue": null, "nj_red": null
     }
   ]
 }
 ```
 
+- `id` (v1.26.00) is the match's primary key — use it with the judge-points endpoint below.
 - `bracket_round` is the power-of-2 round size (e.g. 16 = Round of 16, 2 = Final).
 - `is_bye`: 1 when one side is a bye (no opponent).
+- `nj_blue` / `nj_red` (v1.26.00): 1 when that competitor received No Jump on the bottom air under the FIS landing-zone ("chop") rule; NULL otherwise.
+
+---
+
+### GET `/events/:eventId/dual-matches/:matchId/judge-points`
+
+Per-judge blue/red point splits for one dual mogul match (v1.26.00) — the data behind a tap-to-expand match breakdown. The match must belong to the event; otherwise `404 { "error": "Match not found" }`.
+
+**Example response:**
+```json
+{
+  "match_id": "match-uuid",
+  "nj_blue": null,
+  "nj_red": null,
+  "judges": [
+    { "judge_number": 1, "blue_points": 1, "red_points": 4, "time_tied": 0 },
+    { "judge_number": 2, "blue_points": 1, "red_points": 4, "time_tied": 0 },
+    { "judge_number": 3, "blue_points": 1, "red_points": 4, "time_tied": 0 },
+    { "judge_number": 4, "blue_points": 1, "red_points": 4, "time_tied": 0 },
+    { "judge_number": 5, "blue_points": 1, "red_points": 4, "time_tied": 0 }
+  ]
+}
+```
 
 ---
 

@@ -42,7 +42,7 @@ module.exports = {
       y = d.step(doc, y, 3, 'Mark a run status', '');
       const rowY = y - 6;
       let cx = d.LEFT + 34;
-      const statuses = [['DNS', 'didn’t start'], ['DNF', 'didn’t finish'], ['DSQ', 'disqualified'], ['RNS', 're-run coming'], ['NT', 'no valid time']];
+      const statuses = [['DNS', 'didn’t start'], ['DNF', 'didn’t finish'], ['DSQ', 'disqualified'], ['NT', 'no valid time']];
       for (const [code, meaning] of statuses) {
         const w = d.chip(doc, cx, rowY, code, { fill: COLORS.redBg, color: COLORS.red });
         doc.font('Helvetica').fontSize(9).fillColor(COLORS.gray).text(meaning, cx, rowY + 21, { width: Math.max(w, 80), lineBreak: false });

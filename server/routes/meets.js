@@ -954,10 +954,11 @@ async function executeImport(data, zipPath, opts = {}) {
   for (const p of (data.event_phases || [])) {
     await execute(
       `INSERT INTO event_phases (id, event_id, phase_type, run_number, label, run_order_method,
-        pass_through_count, final_size, status, review_message, sequence_order, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        pass_through_count, final_size, q2_field_limit, status, review_message, sequence_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [phaseMap[p.id], eventMap[p.event_id] ?? null, p.phase_type ?? null, p.run_number ?? 1, p.label ?? null,
        p.run_order_method ?? 'same', p.pass_through_count ?? null, p.final_size ?? null,
+       p.q2_field_limit ?? null,
        p.status ?? 'not_started', p.review_message ?? null, p.sequence_order ?? 0]
     );
   }
@@ -1029,14 +1030,14 @@ async function executeImport(data, zipPath, opts = {}) {
       `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
         registration_id_blue, registration_id_red, winner_registration_id,
         status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
-        created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        nj_blue, nj_red, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [bracketMap[b.id], eventMap[b.event_id] ?? null, b.bracket_round ?? 1, b.bracket_position ?? 1,
        b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
        b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
        b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
        b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-       b.is_bye ?? 0, b.loser_status ?? null]
+       b.is_bye ?? 0, b.loser_status ?? null, b.nj_blue ?? null, b.nj_red ?? null]
     );
   }
 
@@ -1327,10 +1328,11 @@ async function executeMerge(existingMeetId, data, zipPath) {
       if (isNewer(p.updated_at, existing.updated_at)) {
         await execute(
           `UPDATE event_phases SET status=?, review_message=?, label=?, run_order_method=?,
-           pass_through_count=?, final_size=?, sequence_order=?, updated_at=datetime('now') WHERE id=?`,
+           pass_through_count=?, final_size=?, q2_field_limit=?, sequence_order=?, updated_at=datetime('now') WHERE id=?`,
           [p.status ?? existing.status, p.review_message ?? null, p.label ?? existing.label,
            p.run_order_method ?? existing.run_order_method, p.pass_through_count ?? existing.pass_through_count,
-           p.final_size ?? existing.final_size, p.sequence_order ?? existing.sequence_order, existing.id]
+           p.final_size ?? existing.final_size, p.q2_field_limit ?? existing.q2_field_limit ?? null,
+           p.sequence_order ?? existing.sequence_order, existing.id]
         );
       }
     } else {
@@ -1338,10 +1340,11 @@ async function executeMerge(existingMeetId, data, zipPath) {
       phaseMap[p.id] = newId;
       await execute(
         `INSERT INTO event_phases (id, event_id, phase_type, run_number, label, run_order_method,
-          pass_through_count, final_size, status, review_message, sequence_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          pass_through_count, final_size, q2_field_limit, status, review_message, sequence_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, p.phase_type ?? null, p.run_number ?? 1, p.label ?? null,
          p.run_order_method ?? 'same', p.pass_through_count ?? null, p.final_size ?? null,
+         p.q2_field_limit ?? null,
          p.status ?? 'not_started', p.review_message ?? null, p.sequence_order ?? 0]
       );
     }
@@ -1475,12 +1478,13 @@ async function executeMerge(existingMeetId, data, zipPath) {
       if (isNewer(b.updated_at, existing.updated_at)) {
         await execute(
           `UPDATE dual_bracket SET registration_id_blue=?, registration_id_red=?, winner_registration_id=?,
-           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, updated_at=datetime('now') WHERE id=?`,
+           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, nj_blue=?, nj_red=?, updated_at=datetime('now') WHERE id=?`,
           [b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
            b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
            b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
            b.status ?? existing.status, b.seed_blue ?? existing.seed_blue, b.seed_red ?? existing.seed_red,
-           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status, existing.id]
+           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status,
+           b.nj_blue ?? existing.nj_blue ?? null, b.nj_red ?? existing.nj_red ?? null, existing.id]
         );
       }
     } else {
@@ -1490,14 +1494,14 @@ async function executeMerge(existingMeetId, data, zipPath) {
         `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
           registration_id_blue, registration_id_red, winner_registration_id,
           status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          nj_blue, nj_red, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, b.bracket_round ?? 1, b.bracket_position ?? 1,
          b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
          b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
          b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
          b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-         b.is_bye ?? 0, b.loser_status ?? null]
+         b.is_bye ?? 0, b.loser_status ?? null, b.nj_blue ?? null, b.nj_red ?? null]
       );
     }
   }

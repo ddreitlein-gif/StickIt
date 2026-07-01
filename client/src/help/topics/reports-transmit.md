@@ -41,9 +41,9 @@ For the XML to be accepted by USSS:
 
 Missing data will produce XML with empty fields — USSS will likely reject. Use the [Athletes database](./athletes-db) and [Importing from USSS People database](./reg-usss) flows to ensure data completeness before transmit.
 
-### Athletes with no valid result (DNS / DNF / DSQ / RNS)
+### Athletes with no valid result (DNS / DNF / DSQ)
 
-Athletes whose **every** run carried a status are not silently dropped — they appear in the XML's not-classified block (`<FS_notclassified>`) with their bib, competitor info, and the status of their latest run. For dual mogul, an athlete who never won a match and was eliminated by status appears not-classified; an athlete who won at least one match before losing by status keeps their bracket placement in the classified list. The first three status codes are FIS-standard; `RNS` is USSS-specific.
+Athletes whose **every** run carried a status are not silently dropped — they appear in the XML's not-classified block (`<FS_notclassified>`) with their bib, competitor info, and a single resolved status (precedence: DSQ, then DNF, then DNS across the athlete's runs). Entries are ordered DNF, then DNS, then DSQ. A legacy `RNS` status is emitted as `DNF` — the stored data is untouched; only the XML output maps it. For dual mogul, an athlete who never won a match and was eliminated by status appears not-classified; an athlete who won at least one match before losing by status keeps their bracket placement in the classified list. All emitted status codes (`DNS`, `DNF`, `DSQ`) are FIS-standard.
 
 ### Tie-break in the XML
 

@@ -241,13 +241,13 @@ router.get('/events/:eventId/results', async (req, res) => {
 
     if (event.discipline === 'dual_mogul') {
       const bracket = await queryAll(
-        `SELECT db.bracket_round, db.bracket_position, db.status AS match_status,
+        `SELECT db.id AS id, db.bracket_round, db.bracket_position, db.status AS match_status,
                 ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
                 ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
                 db.winner_registration_id,
                 (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_score,
                 (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_score,
-                db.is_bye
+                db.is_bye, db.nj_blue, db.nj_red
          FROM dual_bracket db
          LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
          LEFT JOIN athletes ab ON ab.id = rb.athlete_id
@@ -298,6 +298,30 @@ router.get('/events/:eventId/results', async (req, res) => {
       }));
 
     res.json({ discipline: event.discipline, results: ranked });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/viewer/events/:eventId/dual-matches/:matchId/judge-points
+// v1.26.00 — per-judge blue/red point splits for one dual match, so the iOS
+// app can show the tap-to-expand breakdown without touching the internal
+// /dual API. nj_blue / nj_red carry the FS-18 chop-rule No Jump flags.
+router.get('/events/:eventId/dual-matches/:matchId/judge-points', async (req, res) => {
+  try {
+    const { eventId, matchId } = req.params;
+    const match = await queryOne(
+      'SELECT id, nj_blue, nj_red FROM dual_bracket WHERE id = ? AND event_id = ?',
+      [matchId, eventId]
+    );
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    const rows = await queryAll(
+      `SELECT judge_number, blue_points, red_points, time_tied
+       FROM dual_judge_points WHERE match_id = ? ORDER BY judge_number`,
+      [matchId]
+    );
+    res.json({ match_id: matchId, nj_blue: match.nj_blue, nj_red: match.nj_red, judges: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

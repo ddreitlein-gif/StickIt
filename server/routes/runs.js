@@ -1,6 +1,6 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4, getClient } = require('../db/schema');
-const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats } = require('../scoring/engine');
+const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats, canonicalizeJumpCode } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const { requireAuth } = require('../middleware/auth');
@@ -342,30 +342,43 @@ router.get('/active', async (req, res) => {
 
 // Resolve DD value for a jump code; throws with a user-readable message on miss.
 async function resolveJumpDD(code, disc, gender) {
-  // Exact-case lookups first so case-distinct codes (bp vs bP) stay correct.
-  let r = await queryOne(
-    `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`,
-    [code, disc, gender]
-  );
-  if (!r) {
-    r = await queryOne(
-      `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`,
-      [code, disc]
+  const exactLookup = async (c) => {
+    let row = await queryOne(
+      `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`,
+      [c, disc, gender]
     );
-  }
-  // F-6: case-insensitive fallback ONLY when the exact-case lookup misses, so
-  // lower-case entries (g, 3g, lg) resolve to G/3G/lG without disturbing bp/bP.
-  if (!r) {
+    if (!row) {
+      row = await queryOne(
+        `SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`,
+        [c, disc]
+      );
+    }
+    return row;
+  };
+
+  // Exact-case lookup first so case-distinct codes (bp vs bP, bg vs bG) stay correct.
+  let r = await exactLookup(code);
+
+  if (!r && (disc === 'mogul' || disc === 'dual_mogul')) {
+    // v1.26.00 (FS-13): mogul DD lookup is case-EXACT — with basic 'g' and
+    // advanced 'G' grabs in the chart, case-insensitive matching would be a
+    // correctness bug. On a miss, retry once with a conservative
+    // canonicalization that never folds meaning-bearing letters (g/G, p/P).
+    const canon = canonicalizeJumpCode(code);
+    if (canon !== code) r = await exactLookup(canon);
+  } else if (!r) {
+    // Aerials keeps the tolerant case-insensitive fallback (no basic/advanced
+    // grab split there; codes like Tk/Pk benefit from the tolerance).
     r = await queryOne(
       `SELECT dd_value FROM jump_dd_table WHERE jump_code=? COLLATE NOCASE AND discipline=? AND gender=?`,
       [code, disc, gender]
     );
-  }
-  if (!r) {
-    r = await queryOne(
-      `SELECT dd_value FROM jump_dd_table WHERE jump_code=? COLLATE NOCASE AND discipline=?`,
-      [code, disc]
-    );
+    if (!r) {
+      r = await queryOne(
+        `SELECT dd_value FROM jump_dd_table WHERE jump_code=? COLLATE NOCASE AND discipline=?`,
+        [code, disc]
+      );
+    }
   }
   if (!r) throw new Error(`Jump code '${code}' not found in the DD table`);
   return r.dd_value;
@@ -1469,7 +1482,7 @@ router.post('/:runId/approve', async (req, res) => {
         const needTL = event.num_tl_judges || 3;
         const needAir = event.num_air_judges || 2;
         return res.status(400).json({
-          error: `Cannot finalize: missing scores.  T&L: ${tlCount}/${needTL}, Air: ${airCount}/${needAir}, Time: ${hasTime ? 'received' : 'pending'}.  Use DNS/RNS/DSQ/DNF if the athlete did not complete the run.`
+          error: `Cannot finalize: missing scores.  T&L: ${tlCount}/${needTL}, Air: ${airCount}/${needAir}, Time: ${hasTime ? 'received' : 'pending'}.  Use DNS/DNF/DSQ if the athlete did not complete the run.`
         });
       }
 
@@ -1540,7 +1553,7 @@ router.delete('/:runId', requireAuth, async (req, res) => {
 
     const scoreCount = await queryOne('SELECT COUNT(*) as cnt FROM judge_scores WHERE run_id=?', [run.id]);
     if (scoreCount && parseInt(scoreCount.cnt) > 0) {
-      return res.status(400).json({ error: `Cannot delete: ${scoreCount.cnt} score(s) already submitted.  Use Undo Last Score or set DNS/RNS/DSQ/DNF instead.` });
+      return res.status(400).json({ error: `Cannot delete: ${scoreCount.cnt} score(s) already submitted.  Use Undo Last Score or set DNS/DNF/DSQ instead.` });
     }
 
     await execute('DELETE FROM runs WHERE id=?', [run.id]);
@@ -1778,12 +1791,14 @@ router.delete('/:runId/time', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// PUT /:runId/status -- set DNS / RNS / DSQ flag (Head Judge; Phase 6b will use separate interface)
+// PUT /:runId/status -- set DNS / DNF / DSQ flag (Head Judge; Phase 6b will use separate interface)
+// RNS was soft-removed in v1.26.00: existing RNS values still display and can
+// be cleared/changed, but new assignments are refused.
 router.put('/:runId/status', async (req, res) => {
   try {
     const { run_status } = req.body;
-    const VALID = [null, '', 'DNS', 'RNS', 'DSQ', 'DNF'];
-    if (!VALID.includes(run_status)) return res.status(400).json({ error: 'run_status must be DNS, RNS, DSQ, DNF, or null' });
+    const VALID = [null, '', 'DNS', 'DSQ', 'DNF'];
+    if (!VALID.includes(run_status)) return res.status(400).json({ error: 'run_status must be DNS, DNF, DSQ, or null' });
 
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });

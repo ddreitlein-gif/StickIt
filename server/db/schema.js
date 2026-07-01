@@ -223,6 +223,7 @@ async function initSchema() {
       run_order_method TEXT DEFAULT 'same',
       pass_through_count INTEGER DEFAULT 0,
       final_size INTEGER DEFAULT 0,
+      q2_field_limit INTEGER,
       status TEXT NOT NULL DEFAULT 'not_started',
       review_message TEXT,
       sequence_order INTEGER NOT NULL,
@@ -286,6 +287,11 @@ async function initSchema() {
     )`,
     // v1.25.02 -- hide event from public Live Scores + Viewer API listings (independent of locked)
     `ALTER TABLE events ADD COLUMN hide_livescores INTEGER NOT NULL DEFAULT 0`,
+    // v1.26.00 (FS-18) -- dual moguls bottom-air landing zone ("chop") NJ flags
+    `ALTER TABLE dual_bracket ADD COLUMN nj_blue INTEGER`,
+    `ALTER TABLE dual_bracket ADD COLUMN nj_red INTEGER`,
+    // v1.26.00 (FS-4/FS-7) -- Q2 field cap for Phased Finals (NULL = no cap)
+    `ALTER TABLE event_phases ADD COLUMN q2_field_limit INTEGER`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }
@@ -508,6 +514,76 @@ async function seedJumpDDs() {
         console.log('DD migration: added ST/STS/TTT/DD combos + re-valued stand-alone Grab (F-6)');
       }
 
+      // v1.26.00 (FS-13, FIS JH 6204.3.7) -- basic vs advanced grabs.
+      // Advanced grab 'G' modifier drops +0.14 -> +0.12 (every G code -0.02);
+      // new lowercase 'g' codes are added at +0.05 (= new G value - 0.07).
+      // MAG will conduct a full DD chart review at the start of the quad; a
+      // further re-seed may follow when the official 2026-27 chart publishes.
+      // Sentinels: 3G at 0.82 (pre-1.26 value) gates the UPDATEs; a missing
+      // 'bg' row gates the INSERTs — so hand-edited G values are not stomped
+      // twice, while the g codes still seed. Idempotent.
+      const check3G = await queryOne("SELECT dd_value FROM jump_dd_table WHERE jump_code='3G' AND gender='M' AND discipline='mogul' AND ruleset='uss'");
+      const checkBg = await queryOne("SELECT COUNT(*) as cnt FROM jump_dd_table WHERE jump_code='bg' AND discipline='mogul'");
+      const grabStale26 = check3G && Math.abs(parseFloat(check3G.dd_value) - 0.82) < 0.001;
+      const gMissing = !checkBg || parseInt(checkBg.cnt) === 0;
+      if (grabStale26 || gMissing) {
+        // Re-valued advanced (G) codes: mogul M/F; dual = mogul x 1.25.
+        const gAdvanced = [
+          { code: 'G',    mogM: 0.52, mogF: 0.62 },
+          { code: '3G',   mogM: 0.80, mogF: 0.90 },
+          { code: '7G',   mogM: 0.99, mogF: 1.09 },
+          { code: '10G',  mogM: 1.18, mogF: 1.28 },
+          { code: '3oG',  mogM: 0.80, mogF: 0.90 },
+          { code: '7oG',  mogM: 0.99, mogF: 1.09 },
+          { code: '10oG', mogM: 1.18, mogF: 1.28 },
+          { code: '14oG', mogM: 1.37, mogF: 1.47 },
+          { code: 'bG',   mogM: 0.80, mogF: 0.90 },
+          { code: 'fG',   mogM: 0.80, mogF: 0.90 },
+          { code: 'lG',   mogM: 0.80, mogF: 0.90 },
+          { code: 'lGF',  mogM: 0.99, mogF: 1.09 },
+        ];
+        // New basic (g) codes at +0.05.
+        const gBasic = [
+          { code: 'g',    mogM: 0.45, mogF: 0.55, notes: 'Basic Grab (Single + g)' },
+          { code: '3g',   mogM: 0.73, mogF: 0.83, notes: '360 Basic Grab' },
+          { code: '7g',   mogM: 0.92, mogF: 1.02, notes: '720 Basic Grab' },
+          { code: '10g',  mogM: 1.11, mogF: 1.21, notes: '1080 Basic Grab' },
+          { code: '3og',  mogM: 0.73, mogF: 0.83, notes: 'Off Axis 360 Basic Grab' },
+          { code: '7og',  mogM: 0.92, mogF: 1.02, notes: 'Off Axis 720 Basic Grab' },
+          { code: '10og', mogM: 1.11, mogF: 1.21, notes: 'Off Axis 1080 Basic Grab' },
+          { code: '14og', mogM: 1.30, mogF: 1.40, notes: 'Off Axis 1440 Basic Grab' },
+          { code: 'bg',   mogM: 0.73, mogF: 0.83, notes: 'Back Basic Grab' },
+          { code: 'fg',   mogM: 0.73, mogF: 0.83, notes: 'Front Basic Grab' },
+          { code: 'lg',   mogM: 0.73, mogF: 0.83, notes: 'Loop Basic Grab' },
+          { code: 'lgF',  mogM: 0.92, mogF: 1.02, notes: 'Loop Basic Grab Full' },
+        ];
+        const fs13Stmts = [];
+        if (grabStale26) {
+          for (const f of gAdvanced) {
+            const dualM = Math.round(f.mogM * 1.25 * 10000) / 10000;
+            const dualF = Math.round(f.mogF * 1.25 * 10000) / 10000;
+            fs13Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='M'`, args: [f.mogM, f.code] });
+            fs13Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='F'`, args: [f.mogF, f.code] });
+            fs13Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='M'`, args: [dualM, f.code] });
+            fs13Stmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='F'`, args: [dualF, f.code] });
+          }
+        }
+        if (gMissing) {
+          for (const f of gBasic) {
+            const dualM = Math.round(f.mogM * 1.25 * 10000) / 10000;
+            const dualF = Math.round(f.mogF * 1.25 * 10000) / 10000;
+            fs13Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','M',?)`, args: [uuidv4(), f.code, f.mogM, f.notes] });
+            fs13Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','F',?)`, args: [uuidv4(), f.code, f.mogF, f.notes] });
+            fs13Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','M',?)`, args: [uuidv4(), f.code, dualM, f.notes + ' (dual)'] });
+            fs13Stmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','F',?)`, args: [uuidv4(), f.code, dualF, f.notes + ' (dual)'] });
+          }
+        }
+        if (fs13Stmts.length) {
+          await getClient().batch(fs13Stmts, 'write');
+          console.log('DD migration: FS-13 basic/advanced grabs — G codes re-valued to +0.12, g codes added at +0.05');
+        }
+      }
+
       return;
     }
     // Wipe old non-gendered data and reseed
@@ -544,48 +620,62 @@ async function seedJumpDDs() {
     { code: 'DD',   ddM: 0.55, ddF: 0.65, notes: 'Double Daffy' },
     // Jump Multipliers
     { code: 'p',    ddM: 0.03, ddF: 0.03, notes: 'Position (multiplier)' },
-    // Stand-alone Grab = Single (0.40/0.50) + grab (0.14). USSS 4210.2.1. (F-6)
-    { code: 'G',    ddM: 0.54, ddF: 0.64, notes: 'Grab (Single + grab)' },
+    // v1.26.00 (FS-13, FIS JH 6204.3.7): basic grab 'g' = +0.05, advanced
+    // grab 'G' = +0.12 (was +0.14). Codes are case-exact — bg and bG are
+    // different jumps with different DDs.
+    { code: 'G',    ddM: 0.52, ddF: 0.62, notes: 'Advanced Grab (Single + G)' },
+    { code: 'g',    ddM: 0.45, ddF: 0.55, notes: 'Basic Grab (Single + g)' },
     // Rotational Jumps
     { code: '3',    ddM: 0.68, ddF: 0.78, notes: '360' },
     { code: '3p',   ddM: 0.71, ddF: 0.81, notes: '360 Position' },
-    { code: '3G',   ddM: 0.82, ddF: 0.92, notes: '360 Grab' },
+    { code: '3G',   ddM: 0.80, ddF: 0.90, notes: '360 Advanced Grab' },
+    { code: '3g',   ddM: 0.73, ddF: 0.83, notes: '360 Basic Grab' },
     { code: '7',    ddM: 0.85, ddF: 0.95, notes: '720' },
     { code: '7p',   ddM: 0.88, ddF: 0.98, notes: '720 Position' },
-    { code: '7G',   ddM: 1.01, ddF: 1.11, notes: '720 Grab' },
+    { code: '7G',   ddM: 0.99, ddF: 1.09, notes: '720 Advanced Grab' },
+    { code: '7g',   ddM: 0.92, ddF: 1.02, notes: '720 Basic Grab' },
     { code: '10',   ddM: 1.02, ddF: 1.12, notes: '1080' },
     { code: '10p',  ddM: 1.05, ddF: 1.15, notes: '1080 Position' },
-    { code: '10G',  ddM: 1.20, ddF: 1.30, notes: '1080 Grab' },
+    { code: '10G',  ddM: 1.18, ddF: 1.28, notes: '1080 Advanced Grab' },
+    { code: '10g',  ddM: 1.11, ddF: 1.21, notes: '1080 Basic Grab' },
     // Off Axis Jumps
     { code: '3op',  ddM: 0.71, ddF: 0.81, notes: 'Off Axis 360 Position' },
-    { code: '3oG',  ddM: 0.82, ddF: 0.92, notes: 'Off Axis 360 Grab' },
+    { code: '3oG',  ddM: 0.80, ddF: 0.90, notes: 'Off Axis 360 Advanced Grab' },
+    { code: '3og',  ddM: 0.73, ddF: 0.83, notes: 'Off Axis 360 Basic Grab' },
     { code: '7op',  ddM: 0.88, ddF: 0.98, notes: 'Off Axis 720 Position' },
-    { code: '7oG',  ddM: 1.01, ddF: 1.11, notes: 'Off Axis 720 Grab' },
+    { code: '7oG',  ddM: 0.99, ddF: 1.09, notes: 'Off Axis 720 Advanced Grab' },
+    { code: '7og',  ddM: 0.92, ddF: 1.02, notes: 'Off Axis 720 Basic Grab' },
     { code: '10op', ddM: 1.05, ddF: 1.15, notes: 'Off Axis 1080 Position' },
-    { code: '10oG', ddM: 1.20, ddF: 1.30, notes: 'Off Axis 1080 Grab' },
+    { code: '10oG', ddM: 1.18, ddF: 1.28, notes: 'Off Axis 1080 Advanced Grab' },
+    { code: '10og', ddM: 1.11, ddF: 1.21, notes: 'Off Axis 1080 Basic Grab' },
     { code: '14op', ddM: 1.22, ddF: 1.32, notes: 'Off Axis 1440 Position' },
-    { code: '14oG', ddM: 1.39, ddF: 1.49, notes: 'Off Axis 1440 Grab' },
+    { code: '14oG', ddM: 1.37, ddF: 1.47, notes: 'Off Axis 1440 Advanced Grab' },
+    { code: '14og', ddM: 1.30, ddF: 1.40, notes: 'Off Axis 1440 Basic Grab' },
     // Inverted Jumps
     { code: 'bP',   ddM: 0.68, ddF: 0.78, notes: 'Back Pike' },
     { code: 'bT',   ddM: 0.68, ddF: 0.78, notes: 'Back Tuck' },
     { code: 'bL',   ddM: 0.71, ddF: 0.81, notes: 'Back Lay' },
     { code: 'bp',   ddM: 0.71, ddF: 0.81, notes: 'Back Position' },
-    { code: 'bG',   ddM: 0.82, ddF: 0.92, notes: 'Back Grab' },
+    { code: 'bG',   ddM: 0.80, ddF: 0.90, notes: 'Back Advanced Grab' },
+    { code: 'bg',   ddM: 0.73, ddF: 0.83, notes: 'Back Basic Grab' },
     { code: 'bF',   ddM: 0.88, ddF: 0.98, notes: 'Back Full' },
     { code: 'bdF',  ddM: 1.05, ddF: 1.15, notes: 'Back Double Full' },
     { code: 'btF',  ddM: 1.22, ddF: 1.32, notes: 'Back Triple Full' },
     { code: 'fT',   ddM: 0.68, ddF: 0.78, notes: 'Front Tuck' },
     { code: 'fP',   ddM: 0.68, ddF: 0.78, notes: 'Front Pike' },
     { code: 'fp',   ddM: 0.71, ddF: 0.81, notes: 'Front Position' },
-    { code: 'fG',   ddM: 0.82, ddF: 0.92, notes: 'Front Grab' },
+    { code: 'fG',   ddM: 0.80, ddF: 0.90, notes: 'Front Advanced Grab' },
+    { code: 'fg',   ddM: 0.73, ddF: 0.83, notes: 'Front Basic Grab' },
     { code: 'fF',   ddM: 0.88, ddF: 0.98, notes: 'Front Full' },
     // Loop Jumps
     { code: 'l',    ddM: 0.68, ddF: 0.78, notes: 'Loop' },
     { code: 'lp',   ddM: 0.71, ddF: 0.81, notes: 'Loop Position' },
-    { code: 'lG',   ddM: 0.82, ddF: 0.92, notes: 'Loop Grab' },
+    { code: 'lG',   ddM: 0.80, ddF: 0.90, notes: 'Loop Advanced Grab' },
+    { code: 'lg',   ddM: 0.73, ddF: 0.83, notes: 'Loop Basic Grab' },
     { code: 'lF',   ddM: 0.85, ddF: 0.95, notes: 'Loop Full' },
     { code: 'lpF',  ddM: 0.88, ddF: 0.98, notes: 'Loop Position Full' },
-    { code: 'lGF',  ddM: 1.01, ddF: 1.11, notes: 'Loop Grab Full' },
+    { code: 'lGF',  ddM: 0.99, ddF: 1.09, notes: 'Loop Advanced Grab Full' },
+    { code: 'lgF',  ddM: 0.92, ddF: 1.02, notes: 'Loop Basic Grab Full' },
     // Special codes
     { code: 'N',    ddM: 0.360, ddF: 0.460, notes: 'Neutral' },
     { code: 'NJ',   ddM: 0.00,  ddF: 0.00,  notes: 'No Jump' },

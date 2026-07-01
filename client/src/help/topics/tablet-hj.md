@@ -1,6 +1,6 @@
 ## Head Judge tablet
 
-The Head Judge tablet is the oversight surface during live scoring. The HJ doesn't enter scores — they review what the other judges submitted, approve or reject individual submissions, mark run statuses (DNS / DNF / DSQ / RNS), and finalize phases and events.
+The Head Judge tablet is the oversight surface during live scoring. The HJ doesn't enter scores — they review what the other judges submitted, approve or reject individual submissions, mark run statuses (DNS / DNF / DSQ), and finalize phases and events.
 
 ### URL
 
@@ -12,7 +12,7 @@ The Head Judge tablet is the oversight surface during live scoring. The HJ doesn
 - **Status squares** (3-column status bar) — `T&L Judges 3/3`, `Air Judges 2/2`, `Time ✓`. Green when complete, gray when pending.
 - **Per-judge review rows** — each row shows the judge's role, their submitted score, and a small **Reject** button.
 - **Calculated score panel** (right) — Turns, Air, Speed/Time Points, Total. Computed live as judges submit.
-- **Run Status grid** (bottom) — DNS / DNF / RNS / DSQ buttons.
+- **Run Status grid** (bottom) — DNS / DNF / DSQ buttons.
 - **Approve & Submit button** (large green, bottom) — appears only when every required judge has submitted.
 
 ### Per-judge review rows
@@ -31,7 +31,7 @@ For aerials v2 events, the HJ tablet shows a panel grid: rows = scoring judges, 
 
 ### Run Status
 
-Four big buttons: **DNS**, **DNF**, **RNS**, **DSQ**. Each opens a confirm dialog:
+Three big buttons: **DNS**, **DNF**, **DSQ**. Each opens a confirm dialog:
 
 > Mark [Athlete Name] as DNS?
 

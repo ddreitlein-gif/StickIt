@@ -1,13 +1,15 @@
 import { useState } from 'react'
 
+// RNS (Refused Score) was soft-removed in v1.26.00 — it is a legacy Winfree
+// convention with no USSS/FIS equivalent. Historical RNS values still render
+// everywhere; they just can't be newly assigned.
 const BUTTONS = [
   { code: 'DNS', label: 'Did Not Start', variant: 'neutral' },
   { code: 'DNF', label: 'Did Not Finish', variant: 'amber' },
-  { code: 'RNS', label: 'Refused Score', variant: 'amber' },
   { code: 'DSQ', label: 'Disqualified', variant: 'red' },
 ]
 
-// 4-button grid for HJ tablet. Each click prompts a confirm dialog before
+// 3-button grid for HJ tablet. Each click prompts a confirm dialog before
 // firing onSelect — preserves the v1.16.16 confirmation pattern.
 export default function RunStatusGrid({ onSelect, athleteName = 'this athlete', disabled = false }) {
   const [pending, setPending] = useState(null)
@@ -23,7 +25,7 @@ export default function RunStatusGrid({ onSelect, athleteName = 'this athlete', 
 
   return (
     <>
-      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+      <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
         {BUTTONS.map((b) => (
           <button
             type="button"

@@ -61,6 +61,16 @@ Three buttons in the modal header — **DNS / DNF / DSQ** — each open a confir
 
 When the modal opens it fetches the actual jump-code list for the event's discipline + gender. Every parsed jump code is validated against that set. Codes not in the table flash red (`✗`) with the recognized text shown so you can immediately click + re-record. Submit is blocked while any jump code is invalid.
 
+### Speaking grabs — basic vs advanced (v1.26.00)
+
+Since the FS-13 rule change, basic (`g`) and advanced (`G`) grabs are different jumps, and the voice vocabulary distinguishes them:
+
+- Saying **"grab"** always means the **basic** grab: "back grab" → `bg`, "three grab" → `3g`, "seven o grab" → `7og`.
+- Say **"big grab"** or **"advanced grab"** for the **advanced** grab: "back big grab" → `bG`, "three advanced grab" → `3G`.
+- Letter-by-letter dictation ("b g") resolves to the basic (lowercase) code; use the "big grab" phrases to get the advanced code.
+
+Case is preserved through parsing, validation, and the Review screen — a typed correction of `bg` to `bG` on the Review screen changes the jump.
+
 ### Confirmation Review
 
 After "Submit" / "Done", a two-column Review screen shows the raw transcript on the left and parsed values on the right as editable inputs. Each row has a status glyph: green ✓ (ok), amber `!` (out-of-range), red ✗ (invalid jump code), or gray `·` (empty). **Typed corrections get the same range checks as spoken values** — an out-of-range typo flags amber just like a mishearing. Submit is gated on every required field being filled AND every jump code being valid. Re-record (`F1`) discards everything and re-enters the wizard.

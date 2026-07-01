@@ -53,7 +53,20 @@ const JUMP_PHRASE_MAP = {
   'back iron cross': 'bX',
   'back position': 'bp',
   'back pike': 'bP',
-  'back grab': 'bG',
+  // v1.26.00 (FS-13): spoken "grab" = basic grab (lowercase g, +0.05);
+  // "big grab" / "advanced grab" = advanced grab (uppercase G, +0.12).
+  'back big grab': 'bG',
+  'back advanced grab': 'bG',
+  'back grab': 'bg',
+  'front big grab': 'fG',
+  'front advanced grab': 'fG',
+  'front grab': 'fg',
+  'loop big grab full': 'lGF',
+  'loop advanced grab full': 'lGF',
+  'loop grab full': 'lgF',
+  'loop big grab': 'lG',
+  'loop advanced grab': 'lG',
+  'loop grab': 'lg',
   'b p': 'bp',
   'b position': 'bp',
   'twister twister spread': 'TTS',
@@ -90,7 +103,41 @@ const JUMP_PHRASE_MAP = {
   'three p': '3p',
   'seven o p': '7op',
   'seven op': '7op',
-  'seven o grab': '7oG',
+  // Spin grabs — word and digit forms (Deepgram smart_format varies).
+  'three big grab': '3G',
+  'three advanced grab': '3G',
+  'three grab': '3g',
+  '3 big grab': '3G',
+  '3 advanced grab': '3G',
+  '3 grab': '3g',
+  'three o big grab': '3oG',
+  'three o advanced grab': '3oG',
+  'three o grab': '3og',
+  'seven big grab': '7G',
+  'seven advanced grab': '7G',
+  'seven grab': '7g',
+  '7 big grab': '7G',
+  '7 advanced grab': '7G',
+  '7 grab': '7g',
+  'seven o big grab': '7oG',
+  'seven o advanced grab': '7oG',
+  'seven o grab': '7og',
+  'ten big grab': '10G',
+  'ten advanced grab': '10G',
+  'ten grab': '10g',
+  '10 big grab': '10G',
+  '10 advanced grab': '10G',
+  '10 grab': '10g',
+  'ten o big grab': '10oG',
+  'ten o advanced grab': '10oG',
+  'ten o grab': '10og',
+  'fourteen o big grab': '14oG',
+  'fourteen o advanced grab': '14oG',
+  'fourteen o grab': '14og',
+  // Stand-alone grabs — matched last (shortest) after every longer phrase.
+  'big grab': 'G',
+  'advanced grab': 'G',
+  'grab': 'g',
   'no jump': 'N',
   'no air': 'N',
 };
@@ -195,6 +242,12 @@ function canonicalizeJumpCode(text, allowedSet) {
   // "ts" or "t s". Normalize.
   if (allowedSet && allowedSet.size > 0) {
     const collapsed = cleaned.replace(/\s+/g, '');
+    // Exact-case pass first (v1.26.00): with case-distinct codes (bg vs bG)
+    // in the chart, the lowercased transcript must deterministically resolve
+    // to the lowercase (basic) code; advanced grabs are reached via the
+    // "big grab" / "advanced grab" phrases above.
+    if (allowedSet.has(collapsed)) return collapsed;
+    if (allowedSet.has(cleaned)) return cleaned;
     for (const code of allowedSet) {
       if (code.toLowerCase() === collapsed) return code;
       if (code.toLowerCase() === cleaned) return code;
