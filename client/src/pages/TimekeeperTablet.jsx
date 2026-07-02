@@ -262,7 +262,8 @@ export default function TimekeeperTablet() {
   const dnsNextUp = async () => {
     if (!nextUp) return
     try {
-      const res = await fetch(`${API}/events/${eventId}/runs/manual`, {
+      // v1.26.02 -- status-only endpoint stays reachable without a login token
+      const res = await fetch(`${API}/events/${eventId}/runs/status-only`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification', run_status: 'DNS' }),

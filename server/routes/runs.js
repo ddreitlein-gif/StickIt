@@ -527,6 +527,61 @@ async function handleAerialsV2Manual(req, res, event, { mode, run, registration_
   return res.status(mode === 'create' ? 201 : 200).json({ ok: true, run: saved });
 }
 
+// v1.26.02 -- shared by POST /manual (requireAuth) and POST /status-only
+// (public tablet path): insert a completed run carrying only a DNS/DNF/DSQ
+// status (no scores), broadcast, audit, and respond 201.
+async function createStatusRun(req, res, { registration_id, run_number, round, run_status, voice_transcript = null }) {
+  const id = uuidv4();
+  await execute(
+    `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,run_status,manually_entered,voice_transcript)
+     VALUES (?,?,?,?,?,'complete',?,1,?)`,
+    [id, req.params.eventId, registration_id, run_number, round, run_status, voice_transcript || null]
+  );
+  const created = await queryOne('SELECT * FROM runs WHERE id=?', [id]);
+  const dnsAgt = await getAgeGroupTransition(req.params.eventId, registration_id);
+  if (req.app.broadcast) req.app.broadcast(req.params.eventId, 'run_updated', { id, manually_entered: 1, ...(dnsAgt && { age_group_transition: dnsAgt }) });
+  try { await logAudit('manual_run_status', 'run', id, null, { run_status, registration_id }); } catch (_) {}
+  return res.status(201).json({ ok: true, run: created });
+}
+
+// POST /status-only -- record a DNS/DNF/DSQ run with NO scores attached.
+// v1.26.02 -- public: the HJ and Timekeeper tablets' DNS buttons use this so
+// they keep working when password protection is on. POST /manual stays
+// requireAuth because it can write full fabricated scores; this endpoint
+// refuses any scoring fields and only ever creates a status-flagged run.
+router.post('/status-only', async (req, res) => {
+  try {
+    const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+
+    const { registration_id, run_number = 1, round = 'qualification', run_status } = req.body;
+    if (!run_status || !['DNS', 'DNF', 'DSQ'].includes(run_status)) {
+      return res.status(400).json({ error: 'run_status must be DNS, DNF, or DSQ' });
+    }
+    // Refuse anything resembling a scoring payload -- this endpoint is
+    // deliberately status-only because it is reachable without a login.
+    const allowed = ['registration_id', 'run_number', 'round', 'run_status'];
+    const extras = Object.keys(req.body || {}).filter(k => !allowed.includes(k));
+    if (extras.length) {
+      return res.status(400).json({ error: `Unexpected fields for status-only entry: ${extras.join(', ')}` });
+    }
+    if (!registration_id) return res.status(400).json({ error: 'registration_id required' });
+    const regCheck = await queryOne('SELECT id FROM registrations WHERE id=? AND event_id=?',
+      [registration_id, req.params.eventId]);
+    if (!regCheck) return res.status(400).json({ error: 'registration_id does not belong to this event' });
+
+    // Auto-activate event on first run (same as normal run start)
+    try {
+      if (event.status === 'setup') {
+        await execute(`UPDATE events SET status='active', updated_at=datetime('now') WHERE id=?`, [req.params.eventId]);
+        if (req.app.broadcast) req.app.broadcast(req.params.eventId, 'event_status_changed', { eventId: req.params.eventId, status: 'active' });
+      }
+    } catch (_) {}
+
+    return await createStatusRun(req, res, { registration_id, run_number, round, run_status });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/manual', requireAuth, async (req, res) => {
   try {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
@@ -558,19 +613,9 @@ router.post('/manual', requireAuth, async (req, res) => {
       }
     } catch (_) {}
 
-    // DNS / DNF / DSQ path -- record status, no scores needed
+    // DNS / DNF / DSQ path -- record status, no scores needed (shared helper, v1.26.02)
     if (run_status && ['DNS', 'DNF', 'DSQ'].includes(run_status)) {
-      const id = uuidv4();
-      await execute(
-        `INSERT INTO runs (id,event_id,registration_id,run_number,round,status,run_status,manually_entered,voice_transcript)
-         VALUES (?,?,?,?,?,'complete',?,1,?)`,
-        [id, req.params.eventId, registration_id, run_number, round, run_status, voice_transcript || null]
-      );
-      const created = await queryOne('SELECT * FROM runs WHERE id=?', [id]);
-      const dnsAgt = await getAgeGroupTransition(req.params.eventId, registration_id);
-      if (req.app.broadcast) req.app.broadcast(req.params.eventId, 'run_updated', { id, manually_entered: 1, ...(dnsAgt && { age_group_transition: dnsAgt }) });
-      try { await logAudit('manual_run_status', 'run', id, null, { run_status, registration_id }); } catch (_) {}
-      return res.status(201).json({ ok: true, run: created });
+      return await createStatusRun(req, res, { registration_id, run_number, round, run_status, voice_transcript });
     }
 
     // v1.25.00 (C-7) — aerials v2 events take the per-judge-per-jump payload.
@@ -1042,7 +1087,11 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update run (jump codes, time, status)
-router.put('/:runId', requireAuth, async (req, res) => {
+// v1.26.02 -- public again: this endpoint is core tablet scoring -- Air Judges
+// submit jump codes, the Timekeeper submits run_time, and the HJ clears codes
+// through it, all with plain fetches. The v1.25.00 requireAuth broke every one
+// of those whenever password protection was on.
+router.put('/:runId', async (req, res) => {
   try {
     const { jump1_code, jump2_code, run_time, status, clear_jump_codes } = req.body;
 
@@ -1624,7 +1673,9 @@ router.delete('/:runId/scores/last', requireAuth, async (req, res) => {
 });
 
 // POST /:runId/scores/:judgeScoreId/reject -- Head Judge rejects a specific judge score
-router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the HJ tablet's reject-score buttons call this with a
+// plain fetch. Tablets must keep working when password protection is on.
+router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
@@ -1765,7 +1816,8 @@ router.post('/:runId/scores/:judgeScoreId/reject', requireAuth, async (req, res)
 });
 
 // DELETE /:runId/time -- Head Judge rejects/clears the submitted time
-router.delete('/:runId/time', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the HJ tablet's Reject Time button calls this.
+router.delete('/:runId/time', async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });

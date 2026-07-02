@@ -1255,8 +1255,10 @@ router.put('/runoff-option', requireAuth, async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // PUT /:matchId/winner -- record match winner and advance
+// v1.26.02 -- public: the dual HJ tablet's Blue/Red DNS/DNF buttons call this
+// with a plain fetch (no login token). Tablets must work with protection on.
 // ---------------------------------------------------------------------------
-router.put('/:matchId/winner', requireAuth, async (req, res) => {
+router.put('/:matchId/winner', async (req, res) => {
   try {
     const { winner_registration_id, loser_status } = req.body;
     if (!winner_registration_id) return res.status(400).json({ error: 'winner_registration_id required' });
@@ -1402,7 +1404,8 @@ router.get('/active-match', async (req, res) => {
 });
 
 // PUT /active-match -- set the active dual match
-router.put('/active-match', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the dual HJ tablet's Start Run button calls this.
+router.put('/active-match', async (req, res) => {
   try {
     const { match_id } = req.body;
     if (!match_id) return res.status(400).json({ error: 'match_id required' });
@@ -1440,7 +1443,8 @@ router.put('/active-match', requireAuth, async (req, res) => {
 });
 
 // DELETE /active-match -- clear the active dual match
-router.delete('/active-match', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the dual HJ tablet calls this after a DNS/DNF ruling.
+router.delete('/active-match', async (req, res) => {
   try {
     await execute('UPDATE events SET active_dual_match_id=NULL, dual_manual_entry=0 WHERE id=?', [req.params.eventId]);
     if (req.app.broadcast) {
@@ -1676,7 +1680,8 @@ router.post('/:matchId/judge-points', async (req, res) => {
 
 // DELETE /:matchId/judge-points -- clear all judge point entries for a match
 // (Useful for resetting a match before re-judging.)
-router.delete('/:matchId/judge-points', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the dual HJ tablet's reject/re-enter flow calls this.
+router.delete('/:matchId/judge-points', async (req, res) => {
   try {
     const match = await queryOne(
       'SELECT * FROM dual_bracket WHERE id=? AND event_id=?',
@@ -2018,7 +2023,8 @@ router.get('/review-state', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/send-back-to-scoring', requireAuth, async (req, res) => {
+// v1.26.02 -- public: the dual HJ tablet's bracket-review Send Back button calls this.
+router.post('/send-back-to-scoring', async (req, res) => {
   try {
     const ev = await queryOne(
       'SELECT dual_bracket_review_status FROM events WHERE id=?',

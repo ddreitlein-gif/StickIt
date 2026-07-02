@@ -132,7 +132,9 @@ app.use('/api/admin', requireAuth, requireRole('system_admin'), require('./route
 app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 
 // POST finalize event (mark as complete after all phases done)
-app.post('/api/events/:eventId/finalize', requireAuth, async (req, res) => {
+// v1.26.02 -- public: called by the Head Judge tablet (no login token). Per the
+// access model, HJ/judge/timekeeper tablets must never be locked out mid-meet.
+app.post('/api/events/:eventId/finalize', async (req, res) => {
   try {
     const { eventId } = req.params;
     const { execute, queryAll, queryOne } = require('./db/schema');
@@ -156,7 +158,9 @@ app.post('/api/events/:eventId/finalize', requireAuth, async (req, res) => {
 });
 
 // POST return event to scoring (reopen last phase so HJ can reject and re-score)
-app.post('/api/events/:eventId/return-to-scoring', requireAuth, async (req, res) => {
+// v1.26.02 -- public again: the HJ tablet's final-review screen calls this with a
+// plain fetch. The v1.25.00 (A-2) requireAuth broke it whenever protection was on.
+app.post('/api/events/:eventId/return-to-scoring', async (req, res) => {
   try {
     const { eventId } = req.params;
     const { execute, queryAll } = require('./db/schema');

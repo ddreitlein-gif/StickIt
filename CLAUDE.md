@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.26.01
+**Current version:** v1.26.02
 
 ## Commands
 
@@ -195,7 +195,7 @@ Custom color tokens: `mountain` (blue), `ice` (cyan), `snow`, `slope`. Custom fo
 Which surfaces are public vs. protected when password protection is enabled:
 
 **Public by design (no login, ever):**
-- Judge / Head Judge / Timekeeper / Aerials judge tablets and all their scoring endpoints — secured only by unguessable short-code URLs. Auth work must never lock these out mid-meet.
+- Judge / Head Judge / Timekeeper / Aerials judge tablets and all their scoring endpoints — secured only by unguessable short-code URLs. Auth work must never lock these out mid-meet. **Enforced end-to-end as of v1.26.02** — every endpoint a tablet calls with a plain fetch is public (see v1.26.02 notes for the full list, incl. `finalize`, `return-to-scoring`, `PUT /runs/:runId`, HJ reject paths, and the dual HJ match flow). **When adding a tablet button, never wire it to a `requireAuth` endpoint** — that bug shipped in v1.25.00 and was fixed in v1.26.02.
 - Public pages: Home (`/`), Live Scores, Scoreboard, Overlay, Help, and the read-only Viewer API (`/api/viewer`).
 - PDF endpoints reachable from the public Scoreboard: `event-results-detailed`, `dual-bracket`, `dual-results`, plus `GET /api/pdf/logo/:meetId`. Every other PDF endpoint requires auth (policy comment at the top of `server/routes/pdf.js`).
 - `/api/jump-dds`, `/api/resolve`, `/api/version`, `/api/auth/status` and login.
@@ -203,6 +203,68 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.26.02 Feature Notes
+
+### Tablet Auth Gap Fixed — HJ/Timekeeper Endpoints Public Again + Status-Only DNS Endpoint (v1.26.02)
+
+Fixes the latent v1.25.00 bug where the HJ and Timekeeper tablets called `requireAuth` endpoints
+with plain fetches (no login token), so those buttons failed with 401 whenever password protection
+was ON. Worst case was core scoring: `PUT /runs/:runId` — the endpoint Air Judges use to submit
+jump codes and the Timekeeper uses to submit times — had been made requireAuth, so scoring itself
+would have been dead with protection enabled. Harmless while protection stayed off (requireAuth is
+a pass-through); A-5 made the Enable Protection button live, so this had to be fixed before first
+use. Approach per David's ruling: the **simple fix** (make tablet-reachable endpoints public per
+the access model) **plus one carve-out** — full manual score entry stays protected and the tablets'
+DNS buttons get a narrow status-only endpoint instead.
+
+**requireAuth removed** (each site carries a v1.26.02 policy comment naming the tablet caller):
+- `server/index.js`: `POST /api/events/:eventId/finalize` (HJ Finalize Event — both mogul final
+  review and dual bracket review), `POST /api/events/:eventId/return-to-scoring` (HJ final-review
+  screen; the A-2 protection of this one was the mistake).
+- `server/routes/runs.js`: `PUT /:runId` (air-judge jump codes, timekeeper time, HJ Clear Codes),
+  `POST /:runId/scores/:judgeScoreId/reject` (HJ reject score), `DELETE /:runId/time` (HJ reject time).
+- `server/routes/dual.js`: `PUT /:matchId/winner` (HJ Blue/Red DNS/DNF), `PUT /active-match`
+  (HJ Start Run), `DELETE /active-match`, `DELETE /:matchId/judge-points` (HJ reject/re-enter),
+  `POST /send-back-to-scoring` (bracket review).
+
+**Still protected (unchanged):** `POST /runs/manual`, `/:runId/manual-score`, `/forerunner`,
+`DELETE /:runId`, `/reopen`, `DELETE /scores/last`, all dual seeding/paper-score/manual-entry/reset,
+and everything else in the v1.25.00 protected list. Verified no tablet calls any of these (the
+aerials tablet only uses the public `POST /:runId/scores`).
+
+**New public endpoint — `POST /api/events/:eventId/runs/status-only`.** Records a DNS/DNF/DSQ run
+with NO scores. Strict whitelist body `{ registration_id, run_number, round, run_status }` — any
+extra field (e.g. smuggled `tl_scores`) → 400; RNS → 400; registration must belong to the event;
+auto-activates a setup event like `/runs/manual`. The status-run insert/broadcast/audit block was
+extracted from `/runs/manual` into a shared `createStatusRun()` helper so the two paths can't
+diverge (`/manual`'s DNS path now calls it too — audit action stays `manual_run_status`). The HJ
+tablet's next-up DNS button (`HeadJudgeTablet.jsx`) and the Timekeeper's DNS button
+(`TimekeeperTablet.jsx`) now POST here instead of `/runs/manual`. The Officials-UI DNS paths keep
+using `/runs/manual` with their login token.
+
+**Accepted trade-off (David's ruling, "not a high security issue"):** with protection ON, run/match
+status changes, score rejection, match start/end, and event finalization are callable without login
+by anyone who can reach the server (event IDs are publicly discoverable via the Viewer API). Score
+*writing* stays login-only. Recovery path for vandalism: 5-min auto-backups + audit log. The
+credential-per-tablet design was considered and declined (complexity, second auth system).
+
+**Rule going forward:** any new tablet-facing button must call a public endpoint — never
+`requireAuth`. lockCheck (event lock) still applies to all these routes via the router-level guard.
+
+**Verification.** Scratch server + fresh DB, protection enabled via the real admin flow (password
+set + `PUT /auth-settings`): all 10 unlocked endpoints return domain responses (200/400/404), never
+401, with tablet-verbatim bodies; `/runs/manual` and `/admin/*` still 401 without a token;
+`/status-only` 201 on the exact tablet payload, 400 on RNS / extra fields / foreign registration;
+`/runs/manual` with token still works on both the DNS path (shared helper) and the full scored path
+(turns 42 / air 11.36 / total 53.36 on a synthetic run).
+
+**Files modified:** `server/index.js`, `server/routes/runs.js`, `server/routes/dual.js`,
+`client/src/pages/HeadJudgeTablet.jsx`, `client/src/pages/TimekeeperTablet.jsx`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `CLAUDE.md`
 
 ---
 
