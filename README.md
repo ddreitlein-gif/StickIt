@@ -244,6 +244,11 @@ Returns scored results for the current active round. For dual mogul events, retu
       "air_score": 14.22,
       "time_score": 18.11,
       "total_score": 70.73,
+      "run_time": 23.45,
+      "jump1_code": "bp",
+      "jump1_dd": 0.78,
+      "jump2_code": "7oG",
+      "jump2_dd": 1.02,
       "run_status": null
     }
   ]
@@ -252,6 +257,8 @@ Returns scored results for the current active round. For dual mogul events, retu
 
 - `run_status` is `null` for a normal scored run; `"DNS"`, `"DNF"`, `"DSQ"`, or `"RNS"` otherwise.
 - Results are ranked by `total_score` descending. DNS/DNF/DSQ athletes sort last.
+- `run_time` (v1.28.00) is the actual finish time in **seconds** for the athlete's best run. `null` = No Time (NT) or an event with no timed component (e.g. Devo). `time_score` remains the derived speed score.
+- `jump1_code` / `jump2_code` (v1.28.00) are the jumps as scored; `jump1_dd` / `jump2_dd` are the exact Degree of Difficulty applied. A DD of `0` means that jump was dropped by the repeat-jump rule. Second-jump fields are `null` for single-jump events.
 
 **Dual mogul response:**
 ```json
@@ -312,14 +319,35 @@ Returns per-judge, per-score-type raw scores for all completed runs in the curre
       "judge_number": 1,
       "judge_name": "Judge 1",
       "role": "TL1",
-      "score_type": "tl_carving",
-      "raw_score": 7.5
+      "score_type": "turns",
+      "raw_score": 5.5
+    },
+    {
+      "run_id": "uuid",
+      "judge_number": 1,
+      "judge_name": "Judge 4",
+      "role": "AirJudge1",
+      "score_type": "air_jump1",
+      "raw_score": 3.4
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "uuid",
+      "registration_id": "uuid",
+      "run_time": 23.45,
+      "jump1_code": "bp",
+      "jump1_dd": 0.78,
+      "jump2_code": "7oG",
+      "jump2_dd": 1.02
     }
   ]
 }
 ```
 
-Group the `scores` array by `run_id` to display a per-athlete breakdown. Common `score_type` values for mogul: `tl_carving`, `tl_abext`, `tl_upper_body`, `tl_deduction` (component scoring), `air_jump1`, `air_jump2`.
+Group the `scores` array by `run_id` to display a per-athlete breakdown. Each row is one judge's raw entry: `score_type` `"turns"` is one T&L judge's net turns score (role `TL1`/`TL2`/`TL3`); `air_jump1` / `air_jump2` are one air judge's score for that jump. Aerials v2 events use `ae_air_j1`, `ae_form_j1`, `ae_land_j1`, `ae_air_j2`, `ae_form_j2`, `ae_land_j2`.
+
+The `runs` array (v1.28.00) gives per-run context keyed by `run_id` (also carries `registration_id`): the actual finish time (`run_time`, seconds; `null` = NT) and the jump codes + exact DDs applied. Join it to the grouped `scores` so an air judge's raw score can be shown next to its jump code and DD.
 
 ---
 

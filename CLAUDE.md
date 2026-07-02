@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.27.00
+**Current version:** v1.28.00
 
 ## Commands
 
@@ -203,6 +203,40 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.28.00 Feature Notes
+
+### Viewer API — Actual Run Times + Jump Codes/DD (v1.28.00)
+
+Additive fields on two read-only Viewer API endpoints, requested by the iOS app (Vail athlete/coach
+feedback): expose each athlete's **actual finish time in seconds** and the **jump codes + exact DD
+applied**, so the app can show real times alongside the derived time score and let coaches interpret
+per-judge air scores. Server-only change — `server/routes/viewer.js` plus README docs. No new data
+collection: every field is already persisted on the `runs` row (`run_time`, `jump1_code`,
+`jump1_dd`, `jump2_code`, `jump2_dd`) — using the stored per-run DD is more correct than a
+`jump_dd_table` lookup because it reflects the repeat-jump rule (a dropped jump carries DD 0).
+
+**`GET /events/:eventId/results`** (mogul/aerials branch) — each ranked result gains `run_time`,
+`jump1_code`, `jump1_dd`, `jump2_code`, `jump2_dd`. `run_time` is mapped `< 0 → null` so the NT
+sentinel (-1) and no-timed-component events (e.g. Devo) both read as `null`; `time_score`
+(speed_score) is unchanged. Second-jump fields are `null` for single-jump events. Dual mogul branch
+untouched.
+
+**`GET /events/:eventId/results/scores`** — response gains a `runs` array (keyed by `run_id`, also
+carrying `registration_id`) with `run_time` + the four jump code/DD fields for every completed run in
+the active round, so the per-judge `scores` array can be joined to jump context. Existing `scores`
+shape unchanged.
+
+**Verification.** Booted the real Express router on a scratch DB with one complete mogul run (bib 14,
+time 23.45, jumps bp/0.78 + 7oG/1.02, one TL + one air judge score); both endpoints returned the new
+fields with correct values and the NT/`null` mapping. README Viewer API Reference updated (new fields
+documented on both endpoints; also corrected the stale `score_type` example — turns are stored as
+`score_type:"turns"`, not `tl_carving`).
+
+**Files modified:** `server/routes/viewer.js`, `README.md`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

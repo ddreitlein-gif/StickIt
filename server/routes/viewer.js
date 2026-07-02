@@ -222,7 +222,26 @@ router.get('/events/:eventId/results/scores', async (req, res) => {
       [eventId, runNumber]
     );
 
-    res.json({ run_number: runNumber, scores });
+    // Per-run context so the app can pair each judge's air score with the jump
+    // code + the exact DD applied, and show the actual finish time.
+    const runRows = await queryAll(
+      `SELECT id AS run_id, registration_id, run_time,
+              jump1_code, jump1_dd, jump2_code, jump2_dd
+       FROM runs
+       WHERE event_id = ? AND run_number = ? AND status = 'complete'`,
+      [eventId, runNumber]
+    );
+    const runs = runRows.map(r => ({
+      run_id: r.run_id,
+      registration_id: r.registration_id,
+      run_time: (r.run_time != null && r.run_time >= 0) ? r.run_time : null,
+      jump1_code: r.jump1_code || null,
+      jump1_dd: r.jump1_dd != null ? r.jump1_dd : null,
+      jump2_code: r.jump2_code || null,
+      jump2_dd: r.jump2_dd != null ? r.jump2_dd : null
+    }));
+
+    res.json({ run_number: runNumber, scores, runs });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -264,7 +283,8 @@ router.get('/events/:eventId/results', async (req, res) => {
 
     const runs = await queryAll(
       `SELECT r.registration_id, r.total_score, r.turns_score,
-              r.air_score, r.speed_score, r.run_status,
+              r.air_score, r.speed_score, r.run_status, r.run_time,
+              r.jump1_code, r.jump1_dd, r.jump2_code, r.jump2_dd,
               reg.bib_number, a.first_name, a.last_name
        FROM runs r
        JOIN registrations reg ON reg.id = r.registration_id
@@ -294,6 +314,15 @@ router.get('/events/:eventId/results', async (req, res) => {
         air_score: r.air_score,
         time_score: r.speed_score,
         total_score: r.total_score,
+        // Actual finish time in seconds. null = No Time (NT) or no timed
+        // component (e.g. Devo); time_score above is the derived speed score.
+        run_time: (r.run_time != null && r.run_time >= 0) ? r.run_time : null,
+        // Jumps as scored: code + the exact DD applied (0 DD means the jump was
+        // dropped by the repeat-jump rule).
+        jump1_code: r.jump1_code || null,
+        jump1_dd: r.jump1_dd != null ? r.jump1_dd : null,
+        jump2_code: r.jump2_code || null,
+        jump2_dd: r.jump2_dd != null ? r.jump2_dd : null,
         run_status: r.run_status || null
       }));
 
