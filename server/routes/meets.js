@@ -1030,14 +1030,14 @@ async function executeImport(data, zipPath, opts = {}) {
       `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
         registration_id_blue, registration_id_red, winner_registration_id,
         status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
-        nj_blue, nj_red, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [bracketMap[b.id], eventMap[b.event_id] ?? null, b.bracket_round ?? 1, b.bracket_position ?? 1,
        b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
        b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
        b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
        b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-       b.is_bye ?? 0, b.loser_status ?? null, b.nj_blue ?? null, b.nj_red ?? null]
+       b.is_bye ?? 0, b.loser_status ?? null]
     );
   }
 
@@ -1478,13 +1478,12 @@ async function executeMerge(existingMeetId, data, zipPath) {
       if (isNewer(b.updated_at, existing.updated_at)) {
         await execute(
           `UPDATE dual_bracket SET registration_id_blue=?, registration_id_red=?, winner_registration_id=?,
-           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, nj_blue=?, nj_red=?, updated_at=datetime('now') WHERE id=?`,
+           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, updated_at=datetime('now') WHERE id=?`,
           [b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
            b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
            b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
            b.status ?? existing.status, b.seed_blue ?? existing.seed_blue, b.seed_red ?? existing.seed_red,
-           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status,
-           b.nj_blue ?? existing.nj_blue ?? null, b.nj_red ?? existing.nj_red ?? null, existing.id]
+           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status, existing.id]
         );
       }
     } else {
@@ -1494,14 +1493,14 @@ async function executeMerge(existingMeetId, data, zipPath) {
         `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
           registration_id_blue, registration_id_red, winner_registration_id,
           status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
-          nj_blue, nj_red, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, b.bracket_round ?? 1, b.bracket_position ?? 1,
          b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
          b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
          b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
          b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-         b.is_bye ?? 0, b.loser_status ?? null, b.nj_blue ?? null, b.nj_red ?? null]
+         b.is_bye ?? 0, b.loser_status ?? null]
       );
     }
   }

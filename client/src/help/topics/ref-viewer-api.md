@@ -20,8 +20,8 @@ Full request/response examples live in the project README's **Viewer API Referen
 
 - **Hidden events are excluded from the event list.** Events hidden via [Admin → Events](./admin-events) don't appear in `GET /api/viewer/events`, but the per-event endpoints (resolve, status, results, rounds) still work for anyone who has the short code — same listings-only rule as the Live Scores page.
 - **Results follow the active round.** Between rounds, the most-recently-completed round's results are returned, so a client always has something to show.
-- **Dual mogul** results return the full bracket with blue/red athletes, per-side scores, winner, and bye flags — enough to render a bracket tree. As of v1.26.00 each match also carries its `id` (use it with the judge-points endpoint) plus `nj_blue` / `nj_red` chop-rule flags.
-- **Judge points** (`.../dual-matches/:matchId/judge-points`) returns `{ match_id, nj_blue, nj_red, judges: [{ judge_number, blue_points, red_points, time_tied }] }` ordered by judge number — the per-judge breakdown behind a tapped bracket match. A match id that doesn't belong to the event returns `404 { "error": "Match not found" }`.
+- **Dual mogul** results return the full bracket with blue/red athletes, per-side scores, winner, and bye flags — enough to render a bracket tree. As of v1.26.00 each match also carries its `id` (use it with the judge-points endpoint).
+- **Judge points** (`.../dual-matches/:matchId/judge-points`) returns `{ match_id, judges: [{ judge_number, blue_points, red_points, time_tied }] }` ordered by judge number — the per-judge breakdown behind a tapped bracket match. A match id that doesn't belong to the event returns `404 { "error": "Match not found" }`.
 - Unknown event IDs or short codes return `404 { "error": "Event not found" }`.
 
 ### Sharing with a developer

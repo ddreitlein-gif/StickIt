@@ -909,8 +909,6 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
           winnerSide={winnerSide}
           blueStatus={blueStatus}
           redStatus={redStatus}
-          njBlue={!!m.nj_blue}
-          njRed={!!m.nj_red}
         />
         <div className="sk-display" style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-dim)', letterSpacing: '0.15em', marginTop: 16 }}>
           MOST RECENT COMPLETED MATCH
@@ -1095,7 +1093,7 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
   const isExpandable = isDone;
   const isExpanded = isExpandable && expandedMatchId === m.id;
 
-  const Row = ({ side, first, last, won, lost, total, loserStatus, isTop, nj }) => {
+  const Row = ({ side, first, last, won, lost, total, loserStatus, isTop }) => {
     const grad = side === 'blue' ? 'rgba(59,125,216,0.18)' : 'rgba(230,57,70,0.18)';
     const accentColor = side === 'blue' ? 'var(--blue)' : 'var(--red)';
     return (
@@ -1120,9 +1118,6 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
         }}>
           {first ? `${last}, ${first}` : 'TBD'}
         </span>
-        {!!nj && (
-          <span className="sk-mono" title="Chop violation — No Jump on bottom air" style={{ fontSize: 10, color: 'var(--gold)', fontWeight: 700 }}>NJ</span>
-        )}
         {isDone && total != null && (
           <span className="sk-mono" style={{ fontSize: 11, fontWeight: 700, color: won ? 'var(--fg)' : 'var(--fg-dim)' }}>
             {total}
@@ -1135,8 +1130,8 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
     );
   };
 
-  const blueRow = (isTop) => <Row side="blue" first={m.blue_first} last={m.blue_last} won={blueWon} lost={blueLost} total={m.blue_total} loserStatus={blueLost && m.loser_status ? m.loser_status : null} isTop={isTop} nj={!!m.nj_blue} />;
-  const redRow = (isTop) => <Row side="red" first={m.red_first} last={m.red_last} won={redWon} lost={redLost} total={m.red_total} loserStatus={redLost && m.loser_status ? m.loser_status : null} isTop={isTop} nj={!!m.nj_red} />;
+  const blueRow = (isTop) => <Row side="blue" first={m.blue_first} last={m.blue_last} won={blueWon} lost={blueLost} total={m.blue_total} loserStatus={blueLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
+  const redRow = (isTop) => <Row side="red" first={m.red_first} last={m.red_last} won={redWon} lost={redLost} total={m.red_total} loserStatus={redLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
 
   const onClick = () => isExpandable && setExpandedMatchId(prev => prev === m.id ? null : m.id);
 

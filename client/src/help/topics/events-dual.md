@@ -43,14 +43,8 @@ Once every match (including consolation) is complete, the HJ tablet shows the fi
 
 While a tablet-scored match is in progress, the operator can intercept with **Manual Score Entry** from the Scoring tab. This locks the judge tablets, opens a 5-judge entry modal, and lets the operator finalize the match manually (e.g. when a tablet is offline or scores are coming in over the radio). See [Manual score entry](./scoring-manual).
 
-### Bottom air landing zone — the "chop" rule (v1.26.00)
+### Bottom air landing zone — the "chop" rule
 
 Per the Spring 2026 FIS rule (FS-18), each competitor must land the **bottom air within the Landing Zone** (maximum 20 meters from the takeoff). A competitor whose boots land past the zone receives **0 speed points and No Jump (NJ) on the bottom air**. If **both** competitors land past the zone, they are tied for speed (2.5 points each) and both receive NJ.
 
-How to record it in StickIt:
-
-1. On the Scoring tab's active match card (or in the paper-score / manual-entry modal), check the **NJ (chop)** box for the affected competitor (Blue or Red).
-2. An advisory line appears near the judge rows: *"Chop violation: J4 awards 0 to [color], 5 to opponent."* — or, when both are checked, *"Both past chop: use Time Tied (2.5 / 2.5)."*
-3. StickIt does **not** auto-force the point values — the Time Judge / operator enters them through the normal 5-point split (the existing **Time Tied** checkbox produces the 2.5 / 2.5 outcome).
-
-The affected competitor shows an **NJ** badge on the bracket cards, the public scoreboard match view, and the dual bracket PDF.
+Applying it in StickIt: the point consequences flow through the normal 5-point split — the Time Judge (J4) awards **0 to the violator / 5 to the opponent**, and when both competitors are past the zone the existing **Time Tied** mechanism produces the 2.5 / 2.5 outcome (Time Tied button on the J4 tablet, or the Time Tied checkbox in the paper-score modal). A dedicated in-app NJ flag/badge workflow is planned but not yet in this build.

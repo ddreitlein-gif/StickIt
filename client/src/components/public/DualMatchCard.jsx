@@ -7,7 +7,7 @@ function fmt0(n) {
   return String(Math.round(Number(n)));
 }
 
-function SidePanel({ side, athlete, points, isWinner, status, nj }) {
+function SidePanel({ side, athlete, points, isWinner, status }) {
   const isBlue = side === 'blue';
   const grad = isBlue ? 'var(--gradient-blue)' : 'var(--gradient-red)';
   const total = points ? points.reduce((a, b) => a + (Number(b) || 0), 0) : 0;
@@ -50,20 +50,6 @@ function SidePanel({ side, athlete, points, isWinner, status, nj }) {
         <div className="sk-display" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.15em', opacity: 0.85 }}>
           {isBlue ? 'BLUE' : 'RED'}
         </div>
-        {!!nj && (
-          <div className="sk-display" title="Chop violation — No Jump on bottom air" style={{
-            marginLeft: 'auto',
-            background: 'rgba(0,0,0,0.35)',
-            color: 'var(--gold)',
-            padding: '2px 8px',
-            borderRadius: 999,
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: '0.1em'
-          }}>
-            NJ
-          </div>
-        )}
       </div>
       <div className="sk-display" style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.15 }}>
         {display}
@@ -117,7 +103,7 @@ function SidePanel({ side, athlete, points, isWinner, status, nj }) {
   );
 }
 
-export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoints, redPoints, isLive, isFinal, winnerSide, blueStatus, redStatus, njBlue, njRed }) {
+export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoints, redPoints, isLive, isFinal, winnerSide, blueStatus, redStatus }) {
   const blueTotal = (bluePoints || []).reduce((a, b) => a + (Number(b) || 0), 0);
   const redTotal = (redPoints || []).reduce((a, b) => a + (Number(b) || 0), 0);
   // Prefer explicit winnerSide (handles DNF where both totals are 0); fall back to total comparison.
@@ -151,7 +137,7 @@ export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoin
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', position: 'relative' }}>
-        <SidePanel side="blue" athlete={blueAthlete} points={bluePoints} isWinner={blueWinner} status={blueStatus} nj={njBlue} />
+        <SidePanel side="blue" athlete={blueAthlete} points={bluePoints} isWinner={blueWinner} status={blueStatus} />
         <div className="sk-display" style={{
           position: 'absolute',
           top: '50%',
@@ -172,7 +158,7 @@ export default function DualMatchCard({ match, blueAthlete, redAthlete, bluePoin
         }}>
           VS
         </div>
-        <SidePanel side="red" athlete={redAthlete} points={redPoints} isWinner={redWinner} status={redStatus} nj={njRed} />
+        <SidePanel side="red" athlete={redAthlete} points={redPoints} isWinner={redWinner} status={redStatus} />
       </div>
     </div>
   );

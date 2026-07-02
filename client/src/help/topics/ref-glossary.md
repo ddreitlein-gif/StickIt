@@ -66,8 +66,6 @@ A quick reference for the acronyms and terms that show up throughout StickIt.
 
 **SCR** — Scratched. Registration status, not run status.
 
-**NJ (chop)** — No Jump on the dual moguls bottom air for landing past the Landing Zone (max 20 m from takeoff), per the Spring 2026 FIS rule. The competitor gets 0 speed points; both past the zone = time tied at 2.5 each. See [Dual mogul setup](./events-dual).
-
 **Basic / advanced grab** — since v1.26.00, lowercase `g` is a basic grab (DD modifier +0.05) and uppercase `G` an advanced grab (+0.12). `bg` and `bG` are different jumps. See [Jump codes & DDs](./ref-jump-dds).
 
 ### Phases

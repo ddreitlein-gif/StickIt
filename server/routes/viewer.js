@@ -247,7 +247,7 @@ router.get('/events/:eventId/results', async (req, res) => {
                 db.winner_registration_id,
                 (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_score,
                 (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_score,
-                db.is_bye, db.nj_blue, db.nj_red
+                db.is_bye
          FROM dual_bracket db
          LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
          LEFT JOIN athletes ab ON ab.id = rb.athlete_id
@@ -306,12 +306,12 @@ router.get('/events/:eventId/results', async (req, res) => {
 // GET /api/viewer/events/:eventId/dual-matches/:matchId/judge-points
 // v1.26.00 — per-judge blue/red point splits for one dual match, so the iOS
 // app can show the tap-to-expand breakdown without touching the internal
-// /dual API. nj_blue / nj_red carry the FS-18 chop-rule No Jump flags.
+// /dual API.
 router.get('/events/:eventId/dual-matches/:matchId/judge-points', async (req, res) => {
   try {
     const { eventId, matchId } = req.params;
     const match = await queryOne(
-      'SELECT id, nj_blue, nj_red FROM dual_bracket WHERE id = ? AND event_id = ?',
+      'SELECT id FROM dual_bracket WHERE id = ? AND event_id = ?',
       [matchId, eventId]
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
@@ -321,7 +321,7 @@ router.get('/events/:eventId/dual-matches/:matchId/judge-points', async (req, re
        FROM dual_judge_points WHERE match_id = ? ORDER BY judge_number`,
       [matchId]
     );
-    res.json({ match_id: matchId, nj_blue: match.nj_blue, nj_red: match.nj_red, judges: rows });
+    res.json({ match_id: matchId, judges: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -3130,7 +3130,7 @@ router.post('/dual-bracket', async (req, res) => {
     // -----------------------------------------------------------------------
     // drawAthleteRow — one half of a match box
     // -----------------------------------------------------------------------
-    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place, nj) {
+    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place) {
       const barClr = course === 'blue' ? BLUE : RED;
       const bgClr  = isTBD    ? '#f8fafc'
                    : isWinner ? (course === 'blue' ? '#bfdbfe' : '#fecaca')  // darker winner bg
@@ -3149,11 +3149,9 @@ router.post('/dual-bracket', async (req, res) => {
         return;
       }
       const bibStr  = bib  ? String(bib)  : '—';
-      // v1.26.00 (FS-18): [NJ] tag marks a chop violation (bottom air past
-      // the landing zone) on this competitor.
-      const nameStr = ((last || first)
+      const nameStr = (last || first)
         ? `${(last || '').toUpperCase()}, ${first || ''}`
-        : '—') + (nj ? '  [NJ]' : '');
+        : '—';
       const bibX    = x + BAR_W + 3;
       const bibW    = 18;
       const nameX   = bibX + bibW + 3;
@@ -3234,7 +3232,6 @@ router.post('/dual-bracket', async (req, res) => {
         const topScore   = redOnTop ? redScore     : blueScore;
         const topLoser   = redOnTop ? redLoserStatus  : blueLoserStatus;
         const topPlace   = redOnTop ? redPlace        : bluePlace;
-        const topNj      = redOnTop ? !!m.nj_red      : !!m.nj_blue;
         const botFirst   = redOnTop ? m.blue_first : m.red_first;
         const botLast    = redOnTop ? m.blue_last  : m.red_last;
         const botBib     = redOnTop ? m.blue_bib   : m.red_bib;
@@ -3243,9 +3240,8 @@ router.post('/dual-bracket', async (req, res) => {
         const botScore   = redOnTop ? blueScore    : redScore;
         const botLoser   = redOnTop ? blueLoserStatus : redLoserStatus;
         const botPlace   = redOnTop ? bluePlace       : redPlace;
-        const botNj      = redOnTop ? !!m.nj_blue     : !!m.nj_red;
-        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace, topNj);
-        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace, botNj);
+        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace);
+        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace);
       }
 
       // Pairing number — just above the match box (compact layout has no

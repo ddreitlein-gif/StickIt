@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.26.00
+**Current version:** v1.26.01
 
 ## Commands
 
@@ -206,6 +206,48 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
+## v1.26.01 Feature Notes
+
+### FS-18 Chop (Landing Zone) NJ Flags — Rolled Back (v1.26.01)
+
+David requested removal of the v1.26.00 FS-18 chop/NJ-flag feature until the entry workflow is
+clarified — planning for judge-tablet NJ entry raised open questions (who records the call: HJ, J4,
+or operator) and surfaced a latent HJ-tablet auth gap (the dual HJ tablet's DNS/DNF buttons call
+`requireAuth` endpoints with plain fetches, so they fail whenever password protection is ON — still
+unfixed, tracked in memory). Surgical removal, NOT a revert to v1.25.04: everything else in v1.26.00
+(Part A status ordering + RNS removal, FS-13 grabs, FS-4/7 q2_field_limit, FS-10 docs, viewer
+`db.id` + judge-points endpoint) is untouched.
+
+**Removed:** the `nj_blue`/`nj_red` schema migrations (databases that booted v1.26.00 — including
+production — retain the orphan nullable columns; harmless, intentionally not dropped); paper-score
+NJ handling + the `PUT /:matchId/nj` endpoint in `dual.js`; the nj columns from the meet
+import/merge INSERT/UPDATEs; the `[NJ]` tag from the dual bracket PDF; `nj_blue`/`nj_red` from the
+viewer bracket SELECT and judge-points response (endpoint + `db.id` kept, response back to
+`{ match_id, judges }` per the companion doc's original shape); all NJ checkboxes/advisory
+text/badges from EventDetail (paper modal, active-match card, match rows, bracket cards),
+DualMatchCard, and the Scoreboard bracket tab. Help topics: events-dual chop section rewritten as
+rule guidance only (J4 awards 0/5; both past = Time Tied 2.5/2.5); ref-glossary NJ entry removed;
+ref-viewer-api + README nj fields removed. Guide PDFs regenerated.
+
+**Explicitly verified intact:** the pre-existing mogul `NJ` (No Jump) jump code (DD 0.00) and the
+air-judge tablet's No-Jump button — v1.26.00 never touched them (zero tablet-file changes in that
+release) and neither does this rollback. Legacy meet exports containing `nj_*` keys import cleanly
+(INSERTs enumerate columns, extra keys ignored).
+
+**Reintroduction path:** the complete feature is in the v1.26.00 commit `78bbcd3` diff; re-apply
+from there once David rules on the entry workflow (HJ tablet vs J4 tablet vs operator-only), and
+fix the HJ-tablet auth gap alongside.
+
+**Files modified:** `server/db/schema.js`, `server/routes/dual.js`, `server/routes/meets.js`,
+`server/routes/pdf.js`, `server/routes/viewer.js`, `client/src/pages/EventDetail.jsx`,
+`client/src/pages/Scoreboard.jsx`, `client/src/components/public/DualMatchCard.jsx`,
+`client/src/help/topics/events-dual.md`, `client/src/help/topics/ref-glossary.md`,
+`client/src/help/topics/ref-viewer-api.md`, `server/public/docs/guides/*.pdf`, `README.md`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `CLAUDE.md`
+
+---
+
 ## v1.26.00 Feature Notes
 
 ### Results Status Ordering + RNS Soft Removal (v1.26.00, Part A)
@@ -260,7 +302,8 @@ STATIC_KEYTERMS. Known cosmetic consequence: lowercase codes stored pre-1.26 (sc
 G value) now read as basic grabs; stored DDs/scores untouched. MAG will conduct a full DD chart review
 at the start of the quad — values editable via Admin → Jump DDs.
 
-**FS-18 — dual moguls chop (landing zone) NJ flags.** New nullable `dual_bracket.nj_blue`/`nj_red`
+**FS-18 — dual moguls chop (landing zone) NJ flags. (ROLLED BACK in v1.26.01 — see below.)**
+New nullable `dual_bracket.nj_blue`/`nj_red`
 columns. Record-keeping only: NJ checkboxes on the live active-match card (new
 `PUT /api/events/:eventId/dual/:matchId/nj`, requireAuth, broadcasts `run_updated`) and in the
 paper-score/manual-entry modal (flags ride the existing `POST /:matchId/paper-score` body on both

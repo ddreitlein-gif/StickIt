@@ -287,11 +287,11 @@ async function initSchema() {
     )`,
     // v1.25.02 -- hide event from public Live Scores + Viewer API listings (independent of locked)
     `ALTER TABLE events ADD COLUMN hide_livescores INTEGER NOT NULL DEFAULT 0`,
-    // v1.26.00 (FS-18) -- dual moguls bottom-air landing zone ("chop") NJ flags
-    `ALTER TABLE dual_bracket ADD COLUMN nj_blue INTEGER`,
-    `ALTER TABLE dual_bracket ADD COLUMN nj_red INTEGER`,
     // v1.26.00 (FS-4/FS-7) -- Q2 field cap for Phased Finals (NULL = no cap)
     `ALTER TABLE event_phases ADD COLUMN q2_field_limit INTEGER`,
+    // NOTE: v1.26.00 briefly added dual_bracket.nj_blue/nj_red (FS-18 chop flags);
+    // rolled back in v1.26.01 pending workflow clarification. Databases that booted
+    // v1.26.00 retain the orphan nullable columns — harmless, intentionally not dropped.
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

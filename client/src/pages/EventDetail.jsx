@@ -2443,26 +2443,6 @@ function DualScoringPanel({ event, registrations }) {
     } catch (_) {}
   }
 
-  // v1.26.00 (FS-18) chop rule: toggle a competitor's bottom-air landing zone
-  // NJ flag on the live match. Point consequences are entered by the Time
-  // Judge / operator — this only records the flag and shows the advisory.
-  const setMatchNJ = async (m, side, checked) => {
-    setError('')
-    try {
-      const body = {
-        nj_blue: side === 'blue' ? checked : !!m.nj_blue,
-        nj_red: side === 'red' ? checked : !!m.nj_red,
-      }
-      const res = await fetch(`/api/events/${event.id}/dual/${m.id}/nj`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) { const j = await res.json(); throw new Error(j.error || 'Failed to set NJ flag') }
-      await load()
-    } catch (e) { setError(e.message) }
-  }
-
   const allDone = !activeRoundNum
   const roundAllComplete = pendingMatches.length === 0 && !activeMatch
 
@@ -2482,9 +2462,6 @@ function DualScoringPanel({ event, registrations }) {
           {isDone && m.winner_registration_id === m.registration_id_red && m.loser_status && (
             <span className="text-xs font-bold px-1 py-0.5 rounded bg-slate-700 text-slate-400">{m.loser_status}</span>
           )}
-          {!!m.nj_blue && (
-            <span className="text-xs font-bold px-1 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Bottom air landed past the chop (landing zone) — No Jump">NJ</span>
-          )}
         </div>
         {m.blue_bib && <div className="text-xs text-slate-500 mt-0.5">Bib {m.blue_bib}</div>}
       </div>
@@ -2496,9 +2473,6 @@ function DualScoringPanel({ event, registrations }) {
           {m.red_first ? `${m.red_last}, ${m.red_first}` : <span className="text-slate-600">TBD</span>}
           {isDone && m.winner_registration_id === m.registration_id_blue && m.loser_status && (
             <span className="text-xs font-bold px-1 py-0.5 rounded bg-slate-700 text-slate-400">{m.loser_status}</span>
-          )}
-          {!!m.nj_red && (
-            <span className="text-xs font-bold px-1 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Bottom air landed past the chop (landing zone) — No Jump">NJ</span>
           )}
         </div>
         {m.red_bib && <div className="text-xs text-slate-500 mt-0.5">Bib {m.red_bib}</div>}
@@ -2554,35 +2528,15 @@ function DualScoringPanel({ event, registrations }) {
         )}
 
         {!isPaper && isActive && (
-          <>
-            <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between gap-3">
-              <span className={`text-xs animate-pulse font-semibold ${isHjPending ? 'text-amber-400' : 'text-blue-400'}`}>
-                {isHjPending ? 'Awaiting Head Judge approval' : 'Scoring in progress -- judges entering scores on tablets'}
-              </span>
-              <div className="flex items-center gap-2">
-                <button onClick={clearActiveMatch} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-semibold">End Match</button>
-                <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
-              </div>
+          <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between gap-3">
+            <span className={`text-xs animate-pulse font-semibold ${isHjPending ? 'text-amber-400' : 'text-blue-400'}`}>
+              {isHjPending ? 'Awaiting Head Judge approval' : 'Scoring in progress -- judges entering scores on tablets'}
+            </span>
+            <div className="flex items-center gap-2">
+              <button onClick={clearActiveMatch} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-semibold">End Match</button>
+              <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
             </div>
-            {/* v1.26.00 (FS-18) chop rule: NJ flags + J4 advisory */}
-            <div className="mt-2 flex items-center gap-4">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-blue-400 font-semibold">
-                <input type="checkbox" checked={!!m.nj_blue} onChange={e => setMatchNJ(m, 'blue', e.target.checked)} className="rounded border-slate-600" />
-                NJ (chop) — Blue
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-red-400 font-semibold">
-                <input type="checkbox" checked={!!m.nj_red} onChange={e => setMatchNJ(m, 'red', e.target.checked)} className="rounded border-slate-600" />
-                NJ (chop) — Red
-              </label>
-            </div>
-            {(!!m.nj_blue || !!m.nj_red) && (
-              <p className="mt-1 text-xs text-amber-400">
-                {m.nj_blue && m.nj_red
-                  ? 'Both past chop: use Time Tied (2.5 / 2.5).'
-                  : `Chop violation: J4 awards 0 to ${m.nj_blue ? 'Blue' : 'Red'}, 5 to ${m.nj_blue ? 'Red' : 'Blue'}.`}
-              </p>
-            )}
-          </>
+          </div>
         )}
 
         {/* Paper mode: Enter / Edit Scores. v1.16.17 -- Edit Scores also available for completed tablet-mode matches.
@@ -2768,9 +2722,6 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
   const [timeTied, setTimeTied] = useState(
     existingPoints ? existingPoints.some(j => j.timeTied) : false
   )
-  // v1.26.00 (FS-18) chop rule: bottom-air landing zone No Jump flags
-  const [njBlue, setNjBlue] = useState(!!match.nj_blue)
-  const [njRed, setNjRed] = useState(!!match.nj_red)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState('')
 
@@ -2844,8 +2795,6 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
           red_points: parseInt(s.red, 10),
         })),
         time_tied: timeTied,
-        nj_blue: njBlue,
-        nj_red: njRed,
       }
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
@@ -2866,7 +2815,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status, nj_blue: njBlue, nj_red: njRed }),
+        body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
@@ -2938,7 +2887,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
         </div>
 
         {/* Time Tied checkbox */}
-        <label className="flex items-center gap-2 mb-2 cursor-pointer">
+        <label className="flex items-center gap-2 mb-4 cursor-pointer">
           <input
             type="checkbox"
             checked={timeTied}
@@ -2949,38 +2898,6 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
           <span className="text-sm text-amber-400 font-semibold">Time Tied</span>
           <span className="text-xs text-slate-500">(J4=0/0, J5 max 4 pts, total max 19)</span>
         </label>
-
-        {/* NJ (chop) checkboxes — v1.26.00 FS-18 landing zone rule */}
-        <div className="flex items-center gap-4 mb-2">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={njBlue}
-              onChange={e => setNjBlue(e.target.checked)}
-              disabled={!!saving}
-              className="rounded border-slate-600"
-            />
-            <span className="text-sm text-blue-400 font-semibold">NJ (chop) — Blue</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={njRed}
-              onChange={e => setNjRed(e.target.checked)}
-              disabled={!!saving}
-              className="rounded border-slate-600"
-            />
-            <span className="text-sm text-red-400 font-semibold">NJ (chop) — Red</span>
-          </label>
-        </div>
-        {(njBlue || njRed) && (
-          <p className="text-xs text-amber-400 mb-4">
-            {njBlue && njRed
-              ? 'Both past chop: use Time Tied (2.5 / 2.5).'
-              : `Chop violation: J4 awards 0 to ${njBlue ? 'Blue' : 'Red'}, 5 to ${njBlue ? 'Red' : 'Blue'}.`}
-          </p>
-        )}
-        {!(njBlue || njRed) && <div className="mb-2" />}
 
         {/* Running totals */}
         <div className="flex items-center justify-center gap-6 mb-4 py-3 rounded-lg bg-slate-800 border border-slate-700">
@@ -4308,7 +4225,6 @@ function DualBracketResults({ event }) {
           <span className={`truncate ${blueWon ? 'text-white font-semibold' : 'text-slate-300'}`}>
             {m.blue_first ? `${m.blue_last}, ${m.blue_first}` : <span className="text-slate-600">TBD</span>}
           </span>
-          {!!m.nj_blue && <span className="text-[10px] font-bold text-amber-400 flex-shrink-0" title="Chop violation — No Jump on bottom air">NJ</span>}
         </div>
         {isDone && m.blue_total != null && (
           <span className={`font-bold flex-shrink-0 ml-1 ${blueWon ? 'text-white' : 'text-slate-500'}`}>{m.blue_total}</span>
@@ -4325,7 +4241,6 @@ function DualBracketResults({ event }) {
           <span className={`truncate ${redWon ? 'text-white font-semibold' : 'text-slate-300'}`}>
             {m.red_first ? `${m.red_last}, ${m.red_first}` : <span className="text-slate-600">TBD</span>}
           </span>
-          {!!m.nj_red && <span className="text-[10px] font-bold text-amber-400 flex-shrink-0" title="Chop violation — No Jump on bottom air">NJ</span>}
         </div>
         {isDone && m.red_total != null && (
           <span className={`font-bold flex-shrink-0 ml-1 ${redWon ? 'text-white' : 'text-slate-500'}`}>{m.red_total}</span>
