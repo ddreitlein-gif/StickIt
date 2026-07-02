@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.26.02
+**Current version:** v1.26.03
 
 ## Commands
 
@@ -203,6 +203,51 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.26.03 Feature Notes
+
+### Tablet Auth Gap — `phases/results` Made Public (v1.26.03)
+
+Comprehensive review turned up one more instance of the v1.25.00 "public/tablet surface
+wired to a `requireAuth` endpoint" bug class that the v1.26.02 audit missed. The whole phases
+router was mounted behind `requireAuth` at the app level (`server/index.js`), but
+`GET /api/events/:eventId/phases/results` is called with a plain, token-less `fetch` by two
+surfaces that must never require a login:
+
+- the **public Scoreboard** (`client/src/pages/Scoreboard.jsx` `loadResults`), and
+- the **Head Judge tablet** final-review screen (`client/src/pages/HeadJudgeTablet.jsx`).
+
+With password protection ON, both got 401. The Scoreboard swallowed it (`.catch(() => null)`)
+and silently fell back to the single-run `StandardLayout` — so any multi-phase mogul event
+(Best of 2, Qualifier/Finals) lost its per-phase column breakdown for spectators. The HJ
+final-review table hung on "Loading results…" (the **Finalize Event** button still worked, since
+`/finalize` is already public, so the event wasn't bricked — the HJ just finalized without seeing
+the results table). This fails *closed* (denies access), so it is not an exploitable hole like the
+original v1.25.00 scoring-lockout bug, but it is the same untracked coupling.
+
+**Fix.** Auth is now applied *inside* `server/routes/phases.js` (per-route) instead of at the
+mount, mirroring the pattern `runs.js` / `dual.js` already use. A router-level guard lets
+`GET /results` through and calls `requireAuth` for every other method/path; the existing
+lockCheck middleware still runs after it. The mount in `server/index.js` no longer wraps the
+phases router in `requireAuth`. Net effect: `GET /phases/results` is public (matching the already-
+public `/results` and `/results/judge-scores`); phase create/delete/finalize/approve/return/reopen
+and `GET /status` / `GET /:phaseId/eligible` stay login-only exactly as before.
+
+**Rule reinforced:** any endpoint a tablet or public page hits with a plain fetch must be public —
+never `requireAuth`.
+
+**Verification.** Scratch server booted with protection enabled via the real admin flow: `GET
+/phases/results` → 200 (was 401), `POST /phases` → 401 (still protected), `GET /phases/status` →
+401 (still protected — posture unchanged). Also ran a full non-security correctness review of the
+scoring engine, finalization paths, results/tier assembly, dual bracket advancement, and meet
+import/export round-trip; `verify_v16.js` passes 100/100. No other defects found (see session
+notes: voice WS cost exposure and the logo-path boolean leak were reviewed and judged
+non-actionable/pre-existing).
+
+**Files modified:** `server/routes/phases.js`, `server/index.js`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

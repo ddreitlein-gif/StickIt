@@ -116,7 +116,9 @@ app.use('/api/meets/:meetId/officials', requireAuth, require('./routes/officials
 app.use('/api/meets/:meetId/course-specs', requireAuth, require('./routes/coursespecs'));
 app.use('/api/events/:eventId/heats', requireAuth, require('./routes/heats'));
 app.use('/api/events/:eventId/registrations', requireAuth, require('./routes/registrations'));
-app.use('/api/events/:eventId/phases', requireAuth, require('./routes/phases'));
+// Auth is applied inside routes/phases.js (per-route) so GET /results can stay
+// public for the Scoreboard + HJ tablet; every other phases endpoint requires auth.
+app.use('/api/events/:eventId/phases', require('./routes/phases'));
 app.use('/api/export', requireAuth, require('./routes/export'));
 app.use('/api/export', requireAuth, require('./routes/transmit'));
 app.use('/api/import', requireAuth, require('./routes/import'));

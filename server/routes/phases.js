@@ -2,6 +2,21 @@ const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { rankResults, pickBestRun, takeUpToRank, assembleTieredResults, makeTierKeyForRun } = require('../scoring/engine');
 const { requireUnlocked } = require('../middleware/lockCheck');
+const { requireAuth } = require('../middleware/auth');
+
+// v1.26.03 — auth is applied inside this router (not at the mount) so the one
+// read-only endpoint the public Scoreboard and the HJ tablet final-review
+// screen hit with plain, token-less fetches — GET /results — stays public,
+// matching the public /results and /results/judge-scores endpoints. Every other
+// phases endpoint still requires auth. This closes the same "tablet/public
+// surface wired to a requireAuth endpoint" gap that v1.26.02 fixed for the
+// runs/dual routers; when protection is on, phases/results was returning 401 and
+// the Scoreboard silently dropped its per-phase breakdown while the HJ final
+// review hung on "Loading results…".
+router.use((req, res, next) => {
+  if (req.method === 'GET' && req.path === '/results') return next();
+  return requireAuth(req, res, next);
+});
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
   next();
