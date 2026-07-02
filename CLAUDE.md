@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.26.03
+**Current version:** v1.27.00
 
 ## Commands
 
@@ -203,6 +203,66 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.27.00 Feature Notes
+
+### USSS Transmit Restored — Fully Automatic All-Events Zip from the Meet Page (v1.27.00)
+
+The USSS transmit UI had been orphaned since before git history began (v1.16.19): the server endpoint
+(`POST /api/export/usss-transmit/:meetId`) and the `UsssTransmitModal` component both existed, but no
+button anywhere rendered the modal. Restored per David's rulings as a **fully automatic** flow: **Meet
+page → More ▾ → USSS Transmit** generates one zip containing a results XML for **every event in the
+meet** (mogul, dual mogul, **and aerials** — new), with no operator-typed category/IDs/TD fields.
+
+**Automatic derivation (replaces the old request-body fields):**
+- **NAT_code per event** = the stored `events.usss_code` (the editable "USSS Code" field on each
+  event page). The old flow ignored this column and made the operator re-type codes.
+- **Category per event** = `DIVISION_TO_CATEGORY[event.division]` (comp_series/open→DIV,
+  rqs_eqs/rqs→EQS, devo/devo_junior→ROC; map moved server-side into `transmit.js`). Note `fis`
+  division intentionally has no mapping → blocks with an error.
+- **TD block (DIV/DIC only)** = the meet's `Technical Delegate` official (meet-level rows preferred
+  over event-level), name split last-token-as-lastname via `parseFullName`, `ussa_id` → `NAT_tdnum`.
+
+**Block-everything validation (David's ruling).** Shared helper `validateMeetForTransmit(meetId)`
+feeds both the POST and the check endpoint. ANY problem → 400 with ALL problems listed, nothing
+generated: event not `status='complete'`, missing `usss_code`, unmapped division, missing turns
+judges (mogul/dual) or any judges (aerials), TD missing/no-USSS# when a DIV/DIC event exists, meet
+with zero events. **Athletes missing USSS# remain a warning** with the existing
+`needsAcknowledgment` → re-POST `{ acknowledgeWarnings: true }` flow. The old silent `excluded`
+list is gone (an unfinalized event is now an error).
+
+**Aerials XML (new, no sample available — mirrors mogul).** `generateSingleMogulXml` gained a
+`disciplineCode` param ('MO' default, 'AE' for aerials); `processMogulEvent` was generalized to
+`processRunsEvent` handling both disciplines (same runs query/classified/notClassified/rank flow —
+`rankResults` already dispatches on discipline). `buildJuryElements` gained a discipline param: for
+aerials the jury lists `AeJudgeN` (v2) / legacy component judges instead of TL/DualTurns. Filenames:
+`SF<code>_<gender>_MO.xml` / `_DM.xml` / `_AE.xml`; zip = `SF<lowest code>.ZIP`.
+
+**Safari auto-extract fix:** the zip is served `Content-Type: application/octet-stream` (was
+`application/zip`) — same fix as the v1.16.25 meet exports — so Safari's "Open safe files" doesn't
+unpack it.
+
+**Client.** New `client/src/components/UsssTransmitModal.jsx` (the orphaned modal was deleted from
+`EventDetail.jsx`): on open it fetches the rewritten `GET /usss-transmit-check/:meetId` (now returns
+per-event readiness `{ events: [{..., ready, problems }], td: {...}, ready }`) and renders a ✓/✗
+checklist incl. a TD row; Generate → errors in a red box / warnings with "Proceed with Warnings" /
+success panel with the downloaded filename and the required message **"Please email file to
+results@ussa.org"**. Endpoint stays behind `requireAuth` (`/api/export` mount); modal sends
+`authHeaders()`.
+
+**Verification.** Scratch server + seeded DB (complete mogul M + aerials F + one-match dual M, TD
+"Mary Jo Smith"): check endpoint all-ready; POST without ack → warning for a no-USSS# athlete; with
+ack → `SFU0589.ZIP` (octet-stream) containing all 3 XMLs — AE discipline + AeJudge jury verified, TD
+split "Mary Jo"/"SMITH", DNS athlete in `FS_notclassified`; breaking code/status/TD simultaneously →
+single 400 listing all three errors; restore → 200. `verify_v16.js` 100/100.
+
+**Files created:** `client/src/components/UsssTransmitModal.jsx`
+**Files modified:** `server/routes/transmit.js`, `client/src/pages/MeetDetail.jsx`,
+`client/src/pages/EventDetail.jsx` (orphan modal removed), `client/src/help/topics/reports-transmit.md`
+(rewritten for the new flow), `server/public/docs/guides/*.pdf` (regenerated), `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

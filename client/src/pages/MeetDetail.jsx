@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import api, { authHeaders, downloadAuthed } from '../utils/api'
+import UsssTransmitModal from '../components/UsssTransmitModal'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
 const DIVISION_LABEL = { comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }
@@ -1163,6 +1164,8 @@ export default function MeetDetail() {
 
   // v1.25.00 (C-11) — rarely-used header actions live under a More menu.
   const [showMore, setShowMore] = useState(false)
+  // v1.27.00 — USSS Transmit modal (all-events XML zip)
+  const [showTransmit, setShowTransmit] = useState(false)
 
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!meet) return null
@@ -1261,6 +1264,12 @@ export default function MeetDetail() {
                     className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
                   >
                     Clone Meet
+                  </button>
+                  <button
+                    onClick={() => { setShowMore(false); setShowTransmit(true) }}
+                    className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                  >
+                    USSS Transmit
                   </button>
                 </div>
               </>
@@ -1373,6 +1382,13 @@ export default function MeetDetail() {
           meet={meet}
           onClose={() => setShowEditMeet(false)}
           onSave={refreshMeet}
+        />
+      )}
+
+      {showTransmit && (
+        <UsssTransmitModal
+          meetId={meetId}
+          onClose={() => setShowTransmit(false)}
         />
       )}
 

@@ -3,7 +3,6 @@ const { queryAll, queryOne } = require('../db/schema');
 const { rankResults, resolveEffectiveStatus } = require('../scoring/engine');
 const { logAudit } = require('./audit');
 const archiver = require('archiver');
-const { normalizeGender } = require('../utils/gender');
 
 const STICKIT_VERSION = 'v1.13';
 const CRLF = '\r\n';
@@ -62,12 +61,87 @@ async function buildJudgePointsMap(bracket) {
   return map;
 }
 
+// v1.27.00 — fully-automatic transmit: the category derives from each event's
+// division (previously the operator picked one category for the whole meet).
+const DIVISION_TO_CATEGORY = {
+  comp_series: 'DIV',
+  rqs_eqs: 'EQS',
+  rqs: 'EQS',
+  devo: 'ROC',
+  devo_junior: 'ROC',
+  open: 'DIV',
+};
+
+// Split a single stored "First [Middle] Last" name into first/last.
+function parseFullName(fullName) {
+  if (!fullName) return { first: '', last: '' };
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return { first: '', last: parts[0] };
+  return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
+}
+
+// Shared by POST /usss-transmit and GET /usss-transmit-check (v1.27.00).
+// Derives per-event category/natCode and collects every blocking problem —
+// "block everything": nothing generates until every event in the meet is valid.
+async function validateMeetForTransmit(meetId) {
+  const meet = await queryOne('SELECT * FROM meets WHERE id=?', [meetId]);
+  if (!meet) return { meet: null };
+
+  const events = await queryAll('SELECT * FROM events WHERE meet_id=?', [meetId]);
+  const eventInfos = [];
+
+  for (const ev of events) {
+    const problems = [];
+    const category = DIVISION_TO_CATEGORY[ev.division] || null;
+    const natCode = (ev.usss_code || '').trim();
+
+    if (ev.status !== 'complete') problems.push('Event is not complete');
+    if (!natCode) problems.push('Missing USSS code (set it on the event page)');
+    if (!category) problems.push(`No USSS category for division "${ev.division || '(none)'}"`);
+
+    if (ev.discipline === 'aerials') {
+      const jc = await queryOne('SELECT COUNT(*) as cnt FROM judges WHERE event_id=?', [ev.id]);
+      if (!jc || parseInt(jc.cnt) === 0) problems.push('No judges assigned');
+    } else {
+      const tj = await queryOne(
+        `SELECT COUNT(*) as cnt FROM judges WHERE event_id=? AND (role LIKE 'TL%' OR role LIKE 'DualTurns%')`,
+        [ev.id]
+      );
+      if (!tj || parseInt(tj.cnt) === 0) problems.push('No turns judges assigned');
+    }
+
+    eventInfos.push({ event: ev, category, natCode, problems });
+  }
+
+  // TD block is required in the XML when any event's category is DIV or DIC.
+  // Pulled from meet officials (David's ruling) — meet-level rows preferred.
+  const tdRequired = eventInfos.some(i => i.category === 'DIV' || i.category === 'DIC');
+  const tds = await queryAll(
+    `SELECT * FROM officials WHERE meet_id=? AND role='Technical Delegate'
+     ORDER BY CASE WHEN event_id IS NULL OR event_id='' THEN 0 ELSE 1 END`,
+    [meetId]
+  );
+  const tdOfficial = tds[0] || null;
+  const tdProblems = [];
+  if (tdRequired) {
+    if (!tdOfficial) {
+      tdProblems.push('No Technical Delegate assigned to this meet (add one under Officials)');
+    } else if (!tdOfficial.ussa_id) {
+      tdProblems.push(`Technical Delegate ${tdOfficial.name} has no USSS number (edit under Officials)`);
+    }
+  }
+
+  return { meet, eventInfos, tdRequired, tdOfficial, tdProblems };
+}
+
 // ── XML Generation ───────────────────────────────────────────────────────────
 
 function generateSingleMogulXml(params) {
   const {
     meet, event, ranked, notClassified = [], judges, officials,
-    natCode, category, tdInfo
+    natCode, category, tdInfo,
+    // v1.27.00 — 'MO' for mogul, 'AE' for aerials (same runs-based structure)
+    disciplineCode = 'MO',
   } = params;
 
   const sex = event.gender;
@@ -86,7 +160,7 @@ function generateSingleMogulXml(params) {
   lines.push(`${indent(2)}<Codex></Codex>`);
   lines.push(`${indent(2)}<NAT_code>${natCode}</NAT_code>`);
   lines.push(`${indent(2)}<Nation>USA</Nation>`);
-  lines.push(`${indent(2)}<Discipline>MO</Discipline>`);
+  lines.push(`${indent(2)}<Discipline>${disciplineCode}</Discipline>`);
   lines.push(`${indent(2)}<Category>${category}</Category>`);
   lines.push(`${indent(2)}<Racedate>`);
   lines.push(`${indent(3)}<Day>${day}</Day>`);
@@ -113,7 +187,7 @@ function generateSingleMogulXml(params) {
   lines.push(`${indent(1)}<FS_race>`);
 
   // Jury elements
-  const juryLines = buildJuryElements(judges, officials);
+  const juryLines = buildJuryElements(judges, officials, event.discipline);
   for (const jl of juryLines) lines.push(jl);
 
   // FS_raceinfo
@@ -311,7 +385,7 @@ function generateDualMogulXml(params) {
 
 // ── Build jury elements ──────────────────────────────────────────────────────
 
-function buildJuryElements(judges, officials) {
+function buildJuryElements(judges, officials, discipline = 'mogul') {
   const lines = [];
   const emit = (fn, lastName, firstName, natNum) => {
     lines.push(`${indent(2)}<Jury Function="${fn}">`);
@@ -332,9 +406,13 @@ function buildJuryElements(judges, officials) {
     return { first, last };
   };
 
-  // Turns judges first
+  // Scoring judges first — turns judges for mogul/dual; for aerials, the
+  // AeJudgeN panel (v2) or legacy per-component judges (v1.27.00)
   const turnsJudges = judges.filter(j =>
-    j.role.startsWith('TL') || j.role.startsWith('DualTurns')
+    discipline === 'aerials'
+      ? (j.role.startsWith('AeJudge') || j.role.startsWith('AirJudge') ||
+         j.role.startsWith('FormJudge') || j.role.startsWith('LandingJudge'))
+      : (j.role.startsWith('TL') || j.role.startsWith('DualTurns'))
   );
   for (const j of turnsJudges) {
     const { first, last } = parseName(j.name);
@@ -580,56 +658,37 @@ function escapeXml(str) {
 
 router.post('/usss-transmit/:meetId', async (req, res) => {
   try {
-    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.meetId]);
-    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    // v1.27.00 — fully automatic: category, USSS codes, and TD info all derive
+    // from stored data. Body carries only { acknowledgeWarnings }.
+    const v = await validateMeetForTransmit(req.params.meetId);
+    if (!v.meet) return res.status(404).json({ error: 'Meet not found' });
+    const { meet, eventInfos, tdOfficial, tdProblems } = v;
 
-    const {
-      category,
-      maleMogulId, femaleMogulId,
-      maleDualId, femaleDualId,
-      tdLastName, tdFirstName, tdUsssNum,
-    } = req.body;
-
-    // ── Validation ─────────────────────────────────────────────────────────
+    // ── Validation — block everything on any problem ───────────────────────
     const errors = [];
     const warnings = [];
 
-    if (!category) errors.push('USSS Category is required.');
-
-    // Load all events for this meet
-    const events = await queryAll('SELECT * FROM events WHERE meet_id=?', [req.params.meetId]);
-    const mogulEvents = events.filter(e => e.discipline === 'mogul');
-    const dualEvents = events.filter(e => e.discipline === 'dual_mogul');
-
-    // Only require IDs for genders that have events
-    const hasMaleMogul = mogulEvents.some(e => e.gender === 'male');
-    const hasFemaleMogul = mogulEvents.some(e => e.gender === 'female');
-    const hasMaleDual = dualEvents.some(e => e.gender === 'male');
-    const hasFemaleDual = dualEvents.some(e => e.gender === 'female');
-
-    if (hasMaleMogul && (!maleMogulId || !maleMogulId.trim())) errors.push('Male Mogul ID is required.');
-    if (hasFemaleMogul && (!femaleMogulId || !femaleMogulId.trim())) errors.push('Female Mogul ID is required.');
-
-    if ((category === 'DIV' || category === 'DIC')) {
-      if (!tdLastName || !tdLastName.trim()) errors.push('TD Last Name is required for DIV/DIC.');
-      if (!tdFirstName || !tdFirstName.trim()) errors.push('TD First Name is required for DIV/DIC.');
-      if (!tdUsssNum || !tdUsssNum.trim()) errors.push('TD USSS Number is required for DIV/DIC.');
+    if (eventInfos.length === 0) errors.push('This meet has no events.');
+    for (const info of eventInfos) {
+      for (const p of info.problems) errors.push(`${info.event.name}: ${p}`);
     }
+    errors.push(...tdProblems);
 
-    // Check if dual events exist and dual IDs are provided
-    if (hasMaleDual && (!maleDualId || !maleDualId.trim())) errors.push('Male Dual ID is required (meet has dual mogul events).');
-    if (hasFemaleDual && (!femaleDualId || !femaleDualId.trim())) errors.push('Female Dual ID is required (meet has dual mogul events).');
+    const tdName = parseFullName(tdOfficial ? tdOfficial.name : '');
+    const tdInfo = {
+      lastName: tdName.last,
+      firstName: tdName.first,
+      usssNum: tdOfficial ? (tdOfficial.ussa_id || '') : '',
+    };
 
     // ── Gather data per event ──────────────────────────────────────────────
-    const tdInfo = { lastName: tdLastName, firstName: tdFirstName, usssNum: tdUsssNum };
     const xmlFiles = [];
-    const excluded = [];
 
     // Officials for the meet
     const officials = await queryAll('SELECT * FROM officials WHERE meet_id=?', [req.params.meetId]);
 
-    // Helper: process a single mogul event
-    const processMogulEvent = async (event, natCode) => {
+    // Helper: process a runs-based event (single mogul or aerials — v1.27.00)
+    const processRunsEvent = async (event, natCode, category) => {
       // Check finalization: at least one complete run (supports both legacy round-based and phase-based events)
       const completeRuns = await queryAll(
         `SELECT r.*, reg.bib_number, reg.seed, a.first_name, a.last_name,
@@ -642,19 +701,13 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
       );
 
       if (completeRuns.length === 0) {
-        excluded.push(event.name);
+        // Backstop — event.status === 'complete' is already required upstream
+        errors.push(`${event.name}: No completed runs found`);
         return null;
       }
 
-      // Judges for this event
+      // Judges for this event (presence validated in validateMeetForTransmit)
       const judges = await queryAll('SELECT * FROM judges WHERE event_id=?', [event.id]);
-      const turnsJudges = judges.filter(j =>
-        j.role.startsWith('TL') || j.role.startsWith('DualTurns')
-      );
-      if (turnsJudges.length === 0) {
-        errors.push(`No turns judges assigned to ${event.name}.`);
-        return null;
-      }
 
       // Build run 1 and run 2 per athlete; track DNS/DNF/DSQ/RNS statuses
       // so athletes with no successful runs can still appear in FS_notclassified.
@@ -724,17 +777,18 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
         warnings.push(`${event.name}: Athletes missing USSS#: ${list}`);
       }
 
+      const disciplineCode = event.discipline === 'aerials' ? 'AE' : 'MO';
       const xml = generateSingleMogulXml({
         meet, event, ranked, notClassified, judges, officials,
-        natCode, category, tdInfo,
+        natCode, category, tdInfo, disciplineCode,
       });
 
-      const fileName = `SF${natCode}_${event.gender}_MO.xml`;
+      const fileName = `SF${natCode}_${event.gender}_${disciplineCode}.xml`;
       return { fileName, xml };
     };
 
     // Helper: process a dual mogul event
-    const processDualEvent = async (event, natCode) => {
+    const processDualEvent = async (event, natCode, category) => {
       const bracket = await queryAll(
         `SELECT db.*,
            rb.bib_number as blue_bib, rb.athlete_id as blue_athlete_id,
@@ -755,18 +809,13 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
 
       const completeMatches = bracket.filter(m => m.status === 'complete');
       if (completeMatches.length === 0) {
-        excluded.push(event.name);
+        // Backstop — event.status === 'complete' is already required upstream
+        errors.push(`${event.name}: No completed matches found`);
         return null;
       }
 
+      // Judges for this event (presence validated in validateMeetForTransmit)
       const judges = await queryAll('SELECT * FROM judges WHERE event_id=?', [event.id]);
-      const turnsJudges = judges.filter(j =>
-        j.role.startsWith('DualTurns') || j.role.startsWith('TL')
-      );
-      if (turnsJudges.length === 0) {
-        errors.push(`No turns judges assigned to ${event.name}.`);
-        return null;
-      }
 
       // Build enriched registrations
       const regs = await queryAll(
@@ -788,17 +837,14 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
       return { fileName, xml };
     };
 
-    // Process mogul events
-    for (const ev of mogulEvents) {
-      const natCode = normalizeGender(ev.gender) === 'M' ? maleMogulId : femaleMogulId;
-      const result = await processMogulEvent(ev, (natCode || '').trim());
-      if (result) xmlFiles.push(result);
-    }
-
-    // Process dual mogul events
-    for (const ev of dualEvents) {
-      const natCode = normalizeGender(ev.gender) === 'M' ? (maleDualId || '').trim() : (femaleDualId || '').trim();
-      const result = await processDualEvent(ev, natCode);
+    // Process every event in the meet (skip ones already errored — nothing
+    // will be generated anyway, but keep collecting problems from the rest)
+    for (const info of eventInfos) {
+      if (info.problems.length > 0) continue;
+      const ev = info.event;
+      const result = ev.discipline === 'dual_mogul'
+        ? await processDualEvent(ev, info.natCode, info.category)
+        : await processRunsEvent(ev, info.natCode, info.category);
       if (result) xmlFiles.push(result);
     }
 
@@ -809,9 +855,8 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
 
     if (xmlFiles.length === 0) {
       return res.status(400).json({
-        errors: ['No events produced output. All events may be unfinalized.'],
+        errors: ['No events produced output.'],
         warnings,
-        excluded,
       });
     }
 
@@ -821,19 +866,17 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
       return res.status(200).json({
         needsAcknowledgment: true,
         warnings,
-        excluded,
       });
     }
 
     // ── Generate ZIP ───────────────────────────────────────────────────────
-    const allIds = [maleMogulId, femaleMogulId, maleDualId, femaleDualId]
-      .filter(Boolean)
-      .map(s => s.trim());
-    const lowestId = allIds.sort()[0] || 'EXPORT';
+    const allCodes = eventInfos.map(i => i.natCode).filter(Boolean).sort();
+    const zipName = `SF${allCodes[0] || 'EXPORT'}.ZIP`;
 
-    const zipName = `SF${lowestId}.ZIP`;
-
-    res.setHeader('Content-Type', 'application/zip');
+    // application/octet-stream (not application/zip) so Safari's "Open safe
+    // files" preference doesn't auto-extract the download — same fix as the
+    // v1.16.25 meet exports.
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
 
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -847,7 +890,7 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
 
     try {
       await logAudit('export', 'meet', req.params.meetId, null, {
-        format: 'usss-transmit', category, files: xmlFiles.map(f => f.fileName),
+        format: 'usss-transmit', files: xmlFiles.map(f => f.fileName),
       });
     } catch (_) {}
 
@@ -861,37 +904,37 @@ router.post('/usss-transmit/:meetId', async (req, res) => {
 
 
 // ── GET /api/export/usss-transmit-check/:meetId ──────────────────────────────
-// Quick check: which events are available for export
+// v1.27.00 — per-event readiness report for the transmit modal. Runs the same
+// validation the POST enforces so the operator sees every problem up front.
 
 router.get('/usss-transmit-check/:meetId', async (req, res) => {
   try {
-    const events = await queryAll('SELECT * FROM events WHERE meet_id=?', [req.params.meetId]);
-    const result = { mogul: { M: false, F: false }, dual: { M: false, F: false }, hasDual: false };
+    const v = await validateMeetForTransmit(req.params.meetId);
+    if (!v.meet) return res.status(404).json({ error: 'Meet not found' });
 
-    for (const ev of events) {
-      if (ev.discipline === 'mogul') {
-        const count = await queryOne(
-          `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND status='complete' AND round='qualification'`,
-          [ev.id]
-        );
-        if (count && parseInt(count.cnt) > 0) {
-          result.mogul[ev.gender] = true;
-        }
-      } else if (ev.discipline === 'dual_mogul') {
-        result.hasDual = true;
-        const count = await queryOne(
-          `SELECT COUNT(*) as cnt FROM dual_bracket WHERE event_id=? AND status='complete'`,
-          [ev.id]
-        );
-        if (count && parseInt(count.cnt) > 0) {
-          result.dual[ev.gender] = true;
-        }
-      }
-    }
+    const events = v.eventInfos.map(i => ({
+      id: i.event.id,
+      name: i.event.name,
+      discipline: i.event.discipline,
+      gender: i.event.gender,
+      status: i.event.status,
+      usss_code: i.natCode || null,
+      category: i.category,
+      ready: i.problems.length === 0,
+      problems: i.problems,
+    }));
 
-    result.hasFinalized = result.mogul.M || result.mogul.F || result.dual.M || result.dual.F;
-    result.divisions = [...new Set(events.map(e => e.division))];
-    res.json(result);
+    res.json({
+      events,
+      td: {
+        required: v.tdRequired,
+        found: !!v.tdOfficial,
+        name: v.tdOfficial ? v.tdOfficial.name : null,
+        ussa_id: v.tdOfficial ? (v.tdOfficial.ussa_id || null) : null,
+        problems: v.tdProblems,
+      },
+      ready: events.length > 0 && events.every(e => e.ready) && v.tdProblems.length === 0,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

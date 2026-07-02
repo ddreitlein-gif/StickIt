@@ -1,6 +1,6 @@
 ## USSS transmit XML
 
-For USSS-sanctioned events, the official results must be submitted to USSS in their **TransmitFreestyleResultsXML** format. StickIt generates this XML on demand.
+For USSS-sanctioned events, the official results must be submitted to USSS in their **TransmitFreestyleResultsXML** format. StickIt generates one XML file per event and bundles the whole meet into a single zip.
 
 ### When to transmit
 
@@ -8,38 +8,38 @@ Per the USSS rule book, sanctioned events must transmit results within a defined
 
 ### How to generate
 
-1. Open the event detail page.
-2. Click **Reports** → **Transmit XML**.
-3. The browser downloads `transmit_<sanction-id>.xml`.
+1. Open the meet detail page.
+2. Click **More ▾** → **USSS Transmit**.
+3. The popup lists every event in the meet with a readiness check (✓ or ✗) and shows the derived category and USSS code for each.
+4. Click **Generate Transmit File**. The browser downloads `SF<code>.ZIP` containing one XML per event (`SF<code>_<gender>_MO.xml`, `_DM.xml`, or `_AE.xml`).
+5. **Email the downloaded file to results@ussa.org.** StickIt does not upload anything itself.
 
-The endpoint is `GET /api/events/:eventId/transmit.xml`. Returns `application/xml`.
+Everything is derived automatically — no category dropdown, no typed event IDs:
 
-### What's in the XML
+| Value | Source |
+|---|---|
+| USSS code (`NAT_code`) per event | The **USSS Code** field on each event's page |
+| Category (DIV / EQS / ROC) | The event's division (Comp Series → DIV, RQS-EQS → EQS, Devo → ROC) |
+| Technical Delegate (DIV/DIC only) | The **Technical Delegate** in the meet's Officials list (name + USSS #) |
 
-- **Meet header** — sanction ID, name, location, dates, organizing club, division.
-- **Event** — discipline, gender, category, course details.
-- **Results** — every athlete in rank order with:
-  - USSS member number
-  - First / last name
-  - Birth year, gender
-  - Club (club code per USSS People file)
-  - Nation (defaults to `USA` if blank)
-  - FIS ID (if present)
-  - Place
-  - Total score
-  - Status code for DNS / DNF / DSQ if applicable
-- **Judges panel** — every judge's name, role, and USSS official number (if available from People file lookup).
-- **Course specs** — length, pace standard.
+### Requirements — the transmit blocks until everything is ready
 
-### Required fields
+If **any** event in the meet has a problem, nothing is generated and the popup lists every issue:
 
-For the XML to be accepted by USSS:
+- Every event must have status **Complete**.
+- Every event must have its **USSS code** set (on the event page).
+- Every event's division must map to a USSS category.
+- Mogul / dual events need turns judges assigned; aerials events need judges assigned.
+- When any event's category is DIV/DIC, a **Technical Delegate** with a USSS number must be assigned in the meet's Officials section.
 
-- Every athlete must have a USSS member number.
-- The meet must have a sanction ID (set on the meet's edit modal).
-- Date and location must be present.
+Athletes missing a USSS member number are a **warning**, not a block — the popup lists them by name and bib and lets you proceed anyway.
 
-Missing data will produce XML with empty fields — USSS will likely reject. Use the [Athletes database](./athletes-db) and [Importing from USSS People database](./reg-usss) flows to ensure data completeness before transmit.
+### What's in each XML
+
+- **Race header** — season, USSS code, category, discipline (MO / DM / AE), race date, event name, place, and the TD block for DIV/DIC.
+- **Results** — every athlete in rank order with USSS member number, name, birth year, nation (defaults to `USA`), bib, run scores, and total.
+- **Judges panel** — scoring judges and Head Judge with USSS official numbers, plus meet officials (Chief of Competition, Chief of Score, etc.).
+- **Not-classified block** — DNS / DNF / DSQ athletes (see below).
 
 ### Athletes with no valid result (DNS / DNF / DSQ)
 
@@ -57,20 +57,15 @@ Defaults to `USA` when `athletes.nation` is blank. This is preserved in the DB c
 
 If USSS rejects the XML:
 
-1. Open it in a text editor and look for obvious errors (missing USSS#, malformed date, missing sanction ID).
+1. Open it in a text editor and look for obvious errors (missing USSS#, malformed date, wrong USSS code).
 2. Fix in StickIt and re-generate.
-3. Re-submit.
-
-There's no in-app "transmit" button that actually POSTs to USSS — StickIt only generates the file. The TD / Race Administrator handles the upload to USSS's transmit endpoint manually.
-
-### Multi-event meets
-
-Each event generates its own XML. For a six-event weekend, you'll transmit six XML files. (USSS's submission portal accepts one event at a time.)
+3. Re-email the new file to results@ussa.org.
 
 ### Verification
 
-After generating, eyeball the XML in a text editor:
+After generating, unzip and eyeball the XML files in a text editor:
 
+- Is there one file per event, named with the right USSS code?
 - Are all athletes present?
 - Is the rank order correct?
 - Are DNS / DNF / DSQ statuses encoded?
