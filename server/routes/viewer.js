@@ -4,6 +4,7 @@ const router = require('express').Router({ mergeParams: true });
 const cors = require('cors');
 const { queryAll, queryOne } = require('../db/schema');
 const { calcDualMogulPointSplit, effectiveJudgePoints } = require('../scoring/engine');
+const { rankDualPlacements } = require('../dual/placement_ranking');
 
 // v1.29.00 -- map dual_judge_points rows to the engine's judgeScores shape
 function viewerMapDjpRows(rows) {
@@ -276,6 +277,8 @@ router.get('/events/:eventId/results', async (req, res) => {
                 ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
                 ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
                 db.winner_registration_id,
+                db.registration_id_blue,
+                db.registration_id_red,
                 db.nj_call,
                 db.is_bye
          FROM dual_bracket db
@@ -309,7 +312,15 @@ router.get('/events/:eventId/results', async (req, res) => {
           blue_score = split.blueTotal;
           red_score  = split.redTotal;
         }
-        return { ...m, blue_score, red_score };
+        // v1.30.00 -- authoritative winner side from the stored winner id, so
+        // the app never infers a winner from point totals (wrong on NJ
+        // overrides and tie-break decisions).
+        let winner_side = null;
+        if (m.winner_registration_id) {
+          if (m.winner_registration_id === m.registration_id_blue) winner_side = 'blue';
+          else if (m.winner_registration_id === m.registration_id_red) winner_side = 'red';
+        }
+        return { ...m, blue_score, red_score, winner_side };
       });
       return res.json({ discipline: 'dual_mogul', bracket: enriched });
     }
@@ -342,6 +353,9 @@ router.get('/events/:eventId/results', async (req, res) => {
       .sort((a, b) => (b.total_score || 0) - (a.total_score || 0))
       .map((r, i) => ({
         rank: i + 1,
+        // v1.30.00 -- lets the app join this row to runs[]/scores[] from
+        // /results/scores instead of fragile order-based matching.
+        registration_id: r.registration_id,
         bib_number: r.bib_number,
         first_name: r.first_name,
         last_name: r.last_name,
@@ -362,6 +376,59 @@ router.get('/events/:eventId/results', async (req, res) => {
       }));
 
     res.json({ discipline: event.discipline, results: ranked });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Full-field dual placements (ICR 4312) ────────────────────────────────────
+// GET /api/viewer/events/:eventId/placements
+// v1.30.00 -- ranked final standings for a dual_mogul event, matching the web
+// PLACE view. Reuses the exact bracket query shape and rankDualPlacements()
+// call from routes/results.js so the app never re-implements the placement
+// rules. rank is null for unclassified entries (first-round DNS in seeded
+// groups, DSQ) per ICR 4312.
+router.get('/events/:eventId/placements', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const event = await queryOne(
+      'SELECT id, discipline, meet_id FROM events WHERE id = ?',
+      [eventId]
+    );
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (event.discipline !== 'dual_mogul') {
+      return res.status(400).json({ error: 'Placements are only available for dual_mogul events' });
+    }
+
+    const meet = await queryOne('SELECT date FROM meets WHERE id = ?', [event.meet_id]);
+    const bracket = await queryAll(
+      `SELECT db.*,
+        ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
+        ab.gender AS blue_gender, ab.birth_year AS blue_birth_year, ab.club AS blue_club,
+        ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
+        ar.gender AS red_gender, ar.birth_year AS red_birth_year, ar.club AS red_club,
+        rb.dual_seed AS blue_dual_seed, rr.dual_seed AS red_dual_seed,
+        rb.status AS blue_reg_status, rr.status AS red_reg_status,
+        (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_total,
+        (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_total
+       FROM dual_bracket db
+       LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
+       LEFT JOIN athletes ab ON ab.id = rb.athlete_id
+       LEFT JOIN registrations rr ON rr.id = db.registration_id_red
+       LEFT JOIN athletes ar ON ar.id = rr.athlete_id
+       WHERE db.event_id = ?
+       ORDER BY db.bracket_round DESC, db.bracket_position`,
+      [eventId]
+    );
+    if (!bracket.length) return res.json({ discipline: 'dual_mogul', placements: [] });
+
+    const placed = rankDualPlacements({ bracket, meetDate: meet?.date, isSeededGroups: true });
+    // Normalize bib '' → null so clients can decode bib_number as an optional int.
+    const placements = placed.map(p => ({
+      ...p,
+      bib_number: (p.bib_number === '' || p.bib_number == null) ? null : Number(p.bib_number),
+    }));
+    res.json({ discipline: 'dual_mogul', placements });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

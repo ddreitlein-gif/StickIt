@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.29.00
+**Current version:** v1.30.00
 
 ## Commands
 
@@ -203,6 +203,53 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.30.00 Feature Notes
+
+### Viewer API — Dual Placements Endpoint, Singles registration_id, Dual winner_side (v1.30.00)
+
+Three additive viewer-API changes requested by the iOS "Live Score" app (spec:
+`StickIt_Server_Changes_for_iOS_v1.30.md`). Server-only — all code changes in
+`server/routes/viewer.js`; no schema changes; no existing response fields altered.
+
+**New endpoint `GET /api/viewer/events/:eventId/placements`** — full-field ICR-4312 final
+standings for a dual_mogul event, matching the web PLACE tab. Reuses the exact bracket query
+shape and `rankDualPlacements({ bracket, meetDate, isSeededGroups: true })` call from
+`routes/results.js` so the app never re-implements the placement rules. Response
+`{ discipline: 'dual_mogul', placements: [{ rank, registration_id, bib_number, gp, first_name,
+last_name, club, run_status, reg_status }] }`. `rank` is `null` for unclassified entries
+(first-round DNS in seeded groups, elimination-round DSQ — a small-final DSQ loser still takes a
+place); `bib_number` is normalized `''` → `null`, else `Number()`. Non-dual events → 400
+`Placements are only available for dual_mogul events`. **Deliberately omits ffsp** (the web
+`/results` merges it on complete events) — the iOS response shape is spec-defined without it.
+
+**Singles `/results` rows now carry `registration_id`** (already selected, just emitted) so the
+app joins per-judge detail from `/results/scores` (`runs[]`/`scores[]`) by id instead of fragile
+order-based matching — fixes its "Score detail unavailable" fallback.
+
+**Dual bracket rows now carry `winner_side`** (`'blue'`/`'red'`/`null`) computed from
+`winner_registration_id` vs the two registration ids — authoritative even for NJ-override and
+tie-break decisions where score comparison misleads, and for status-decided matches where
+`blue_score`/`red_score` are null. `registration_id_blue`/`registration_id_red` ride along on
+each bracket row (added to the SELECT) so the app can map placements to matches by id.
+
+**Verification.** 45-check scratch-server integration test: seeded a 4-athlete dual bracket via
+seed-manual + paper-score (note: `seed-manual` slots use **1-based** `matchIndex` matching
+`bracket_position`; index 0 is silently skipped) covering an NJ-decided match (raw J-points
+favored red 9/16, NJ on red → effective 13/12 blue, `winner_side='blue'`), a Path-A DSQ small
+final (`winner_side` set with null scores), placements 1–4 matching the internal `/results`
+PLACE data exactly, a second bracket producing null-rank entries (elimination-round DSQ +
+first-round DNS) also matching internal, the 400/404 guards, singles `registration_id` joining
+to `/results/scores`, and regressions on `/events`, `/resolve`, `/status`, `/rounds`,
+`/results/scores`, and `/dual-matches/:id/judge-points`. `verify_v16.js` 123/123. README Viewer
+API Reference + `ref-viewer-api.md` help topic updated; guide PDFs regenerated.
+
+**Files modified:** `server/routes/viewer.js`, `README.md`,
+`client/src/help/topics/ref-viewer-api.md`, `server/public/docs/guides/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `CLAUDE.md`
 
 ---
 

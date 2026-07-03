@@ -237,6 +237,7 @@ Returns scored results for the current active round. For dual mogul events, retu
   "results": [
     {
       "rank": 1,
+      "registration_id": "uuid",
       "bib_number": 14,
       "first_name": "Jane",
       "last_name": "Smith",
@@ -259,6 +260,7 @@ Returns scored results for the current active round. For dual mogul events, retu
 - Results are ranked by `total_score` descending. DNS/DNF/DSQ athletes sort last.
 - `run_time` (v1.28.00) is the actual finish time in **seconds** for the athlete's best run. `null` = No Time (NT) or an event with no timed component (e.g. Devo). `time_score` remains the derived speed score.
 - `jump1_code` / `jump2_code` (v1.28.00) are the jumps as scored; `jump1_dd` / `jump2_dd` are the exact Degree of Difficulty applied. A DD of `0` means that jump was dropped by the repeat-jump rule. Second-jump fields are `null` for single-jump events.
+- `registration_id` (v1.30.00) joins the row to the `runs[]` / `scores[]` arrays from `/results/scores` — use it instead of order-based matching.
 
 **Dual mogul response:**
 ```json
@@ -273,6 +275,9 @@ Returns scored results for the current active round. For dual mogul events, retu
       "blue_bib": 1,  "blue_first": "Jane", "blue_last": "Smith", "blue_score": 22,
       "red_bib": 8,   "red_first": "Alex",  "red_last": "Jones",  "red_score": 19,
       "winner_registration_id": "uuid",
+      "registration_id_blue": "uuid",
+      "registration_id_red": "uuid",
+      "winner_side": "blue",
       "nj_call": null,
       "is_bye": 0
     }
@@ -285,6 +290,38 @@ Returns scored results for the current active round. For dual mogul events, retu
 - `is_bye`: 1 when one side is a bye (no opponent).
 - `nj_call` (v1.29.00): FS-18 landing zone (chop) No Jump call — `null`, `"blue"`, `"red"`, or `"both"`. Badge the flagged athlete(s).
 - `blue_score` / `red_score` (v1.29.00) are **effective** totals with the NJ speed override and tie credits applied (a tied-time match totals 25: the speed row pays 3/3), matching the web scoreboard.
+- `winner_side` (v1.30.00) is the authoritative winner — `"blue"`, `"red"`, or `null` while undecided — derived from the stored winner id. Use it instead of comparing scores, which is wrong for NJ-decided and tie-break matches. `registration_id_blue` / `registration_id_red` (v1.30.00) let you map bracket rows to placements by registration id.
+
+---
+
+### GET `/events/:eventId/placements`
+
+Full-field final standings for a **dual mogul** event (v1.30.00), ranked per ICR 4312 — the same data behind the web scoreboard's PLACE tab, so clients never re-implement the placement rules. Non-dual events return `400 { "error": "Placements are only available for dual_mogul events" }`.
+
+**Example response:**
+```json
+{
+  "discipline": "dual_mogul",
+  "placements": [
+    {
+      "rank": 1,
+      "registration_id": "reg-uuid",
+      "bib_number": 8,
+      "gp": "F15",
+      "first_name": "Jaelyn",
+      "last_name": "Spraker",
+      "club": "Winter Park",
+      "run_status": null,
+      "reg_status": null
+    }
+  ]
+}
+```
+
+- `rank` may be `null` for unclassified entries (first-round DNS in seeded groups, DSQ) — intentional per ICR 4312.
+- `bib_number` is a number or `null`.
+- `gp` is the gender + age group (e.g. `F15`, `M17`).
+- `run_status` carries the eliminating status (`"DNS"`, `"DNF"`, `"DSQ"`) when relevant; `reg_status` is the registration status.
 
 ---
 
@@ -387,7 +424,7 @@ Returns the list of rounds (phases) for an event with their status.
 
 ### Error responses
 
-All endpoints return `404` with `{ "error": "Event not found" }` for an unknown ID or short code, and `500` with `{ "error": "<message>" }` on a database failure.
+All endpoints return `404` with `{ "error": "Event not found" }` for an unknown ID or short code, and `500` with `{ "error": "<message>" }` on a database failure. `/placements` returns `400` for non-dual-mogul events.
 
 ---
 
