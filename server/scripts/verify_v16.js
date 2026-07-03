@@ -716,6 +716,102 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// v1.29.00 — FS-18 dual mogul NJ (landing zone), tied-speed 3/3, air tied
+// (JH 6304.3.2 / 6304.3.5.1, 5-judge panel)
+// ---------------------------------------------------------------------------
+console.log('');
+console.log('v1.29.00 dual NJ / tie credits:');
+try {
+  const engine = require(path.join(__dirname, '..', 'scoring', 'engine.js'));
+  const { effectiveJudgePoints, calcDualMogulPointSplit, validateDualPointSplit } = engine;
+
+  // Full 5-judge panel builder. Overrides is a map judgeNumber -> partial row.
+  const panel = (overrides = {}) => [1, 2, 3, 4, 5].map(n => ({
+    judgeNumber: n, bluePoints: 3, redPoints: 2, timeTied: false, airTied: false,
+    ...(overrides[n] || {}),
+  }));
+  const j4 = eff => eff.effectiveScores.find(s => s.judgeNumber === 4);
+  const j3 = eff => eff.effectiveScores.find(s => s.judgeNumber === 3);
+
+  // Precedence rules 1-5 (speed)
+  let e = effectiveJudgePoints(panel({ 4: { bluePoints: 4, redPoints: 1 } }), 'blue');
+  check('C: NJ blue -> J4 eff 0/5', j4(e).bluePoints === 0 && j4(e).redPoints === 5 && !e.speedTied);
+  e = effectiveJudgePoints(panel({ 4: { bluePoints: 0, redPoints: 0, timeTied: true } }), 'blue');
+  check('C: NJ blue beats raw time-tied (0/5, not speed tied)',
+    j4(e).bluePoints === 0 && j4(e).redPoints === 5 && !e.speedTied && e.overallScale === 5);
+  e = effectiveJudgePoints(panel({ 4: { bluePoints: 1, redPoints: 4 } }), 'red');
+  check('C: NJ red -> J4 eff 5/0', j4(e).bluePoints === 5 && j4(e).redPoints === 0 && !e.speedTied);
+  e = effectiveJudgePoints(panel(), 'both');
+  check('C: NJ both -> speed tied 3/3, scale 4',
+    j4(e).bluePoints === 3 && j4(e).redPoints === 3 && e.speedTied && e.overallScale === 4);
+  e = effectiveJudgePoints(panel({ 4: { bluePoints: 0, redPoints: 0, timeTied: true } }), null);
+  check('C: time tied no NJ -> 3/3 (ruling 4), scale 4',
+    j4(e).bluePoints === 3 && j4(e).redPoints === 3 && e.speedTied && e.overallScale === 4);
+  e = effectiveJudgePoints(panel({ 4: { bluePoints: 2, redPoints: 3 } }), null);
+  check('C: no NJ no tie -> J4 raw passes through',
+    j4(e).bluePoints === 2 && j4(e).redPoints === 3 && !e.speedTied && e.overallScale === 5);
+
+  // Air rule 6 + combined scale rule 7
+  e = effectiveJudgePoints(panel({ 3: { bluePoints: 0, redPoints: 0, airTied: true } }), null);
+  check('C: air tied -> J3 eff 0/0 (votes withheld), scale 4',
+    j3(e).bluePoints === 0 && j3(e).redPoints === 0 && e.airTied && e.overallScale === 4);
+  e = effectiveJudgePoints(panel({
+    3: { bluePoints: 0, redPoints: 0, airTied: true },
+    4: { bluePoints: 0, redPoints: 0, timeTied: true },
+  }), null);
+  check('C: air tied + time tied -> scale 3', e.airTied && e.speedTied && e.overallScale === 3);
+  e = effectiveJudgePoints(panel({ 3: { bluePoints: 0, redPoints: 0, airTied: true } }), 'both');
+  check('C: air tied + NJ both -> scale 3', e.airTied && e.speedTied && e.overallScale === 3);
+  e = effectiveJudgePoints(panel({ 3: { bluePoints: 2, redPoints: 3 } }), 'blue');
+  check('C: NJ never modifies the air row', j3(e).bluePoints === 2 && j3(e).redPoints === 3);
+
+  // Distributed totals: 25 / 25 / 19 / 19 — always odd (tie impossible)
+  const total = r => r.blueTotal + r.redTotal;
+  let r = calcDualMogulPointSplit(panel(), null);
+  check('C: distributed total none tied = 25', total(r) === 25 && total(r) % 2 === 1);
+  r = calcDualMogulPointSplit(panel({
+    4: { bluePoints: 0, redPoints: 0, timeTied: true },
+    5: { bluePoints: 3, redPoints: 1 },
+  }), null);
+  check('C: distributed total speed tied = 25 (was 19 pre-v1.29)', total(r) === 25 && total(r) % 2 === 1);
+  r = calcDualMogulPointSplit(panel({
+    3: { bluePoints: 0, redPoints: 0, airTied: true },
+    5: { bluePoints: 3, redPoints: 1 },
+  }), null);
+  check('C: distributed total air tied = 19', total(r) === 19 && total(r) % 2 === 1);
+  r = calcDualMogulPointSplit(panel({
+    3: { bluePoints: 0, redPoints: 0, airTied: true },
+    4: { bluePoints: 0, redPoints: 0, timeTied: true },
+    5: { bluePoints: 2, redPoints: 1 },
+  }), null);
+  check('C: distributed total both tied = 19', total(r) === 19 && total(r) % 2 === 1);
+
+  // A single NJ can flip the winner (spec §3 winner recompute)
+  // Raw: J1 2/3, J2 2/3, J3 2/3, J4 5/0, J5 2/3 -> blue 13, red 12 (blue wins)
+  const flipPanel = panel({
+    1: { bluePoints: 2, redPoints: 3 }, 2: { bluePoints: 2, redPoints: 3 },
+    3: { bluePoints: 2, redPoints: 3 }, 4: { bluePoints: 5, redPoints: 0 },
+    5: { bluePoints: 2, redPoints: 3 },
+  });
+  const rawR = calcDualMogulPointSplit(flipPanel, null);
+  const njR  = calcDualMogulPointSplit(flipPanel, 'blue');
+  check('C: single NJ flips winner (blue 13-12 raw -> red 17-8 with NJ blue)',
+    rawR.winner === 'blue' && njR.winner === 'red' && njR.blueTotal === 8 && njR.redTotal === 17);
+
+  // validateDualPointSplit modes
+  check('C: validate air tied 0/0 ok', validateDualPointSplit(0, 0, { airTied: true }) === null);
+  check('C: validate air tied 1/0 rejected', validateDualPointSplit(1, 0, { airTied: true }) !== null);
+  check('C: validate scale 4 accepts 3+1', validateDualPointSplit(3, 1, { overallScale: 4 }) === null);
+  check('C: validate scale 4 rejects 3+2', validateDualPointSplit(3, 2, { overallScale: 4 }) !== null);
+  check('C: validate scale 3 accepts 2+1', validateDualPointSplit(2, 1, { overallScale: 3 }) === null);
+  check('C: validate scale 3 rejects 2+3', validateDualPointSplit(2, 3, { overallScale: 3 }) !== null);
+  check('C: validate default 5 still enforced', validateDualPointSplit(3, 2) === null && validateDualPointSplit(3, 3) !== null);
+  check('C: validate scale 5 accepts 3+2 explicitly', validateDualPointSplit(3, 2, { overallScale: 5 }) === null);
+} catch (e) {
+  fail('v1.29.00 dual NJ tests: ' + e.message);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log('');

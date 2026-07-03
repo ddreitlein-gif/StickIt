@@ -69,6 +69,14 @@ After every phase is finalized, the **Final Review** screen appears: a combined 
 
 Dual mogul HJ tablet manages match-by-match approval. After all bracket matches are complete, the bracket-review panel appears with the full bracket tree and the same two buttons.
 
+For the FS-18 landing zone (chop) rule, the dual HJ view adds:
+
+- an **NJ (Past Chop)** panel with per-athlete Set/Clear toggles (with confirmation) — the Air Judge normally makes the call, but the HJ can set it on close calls or clear a mistaken one;
+- a **persistent amber banner** while a call is active, describing the speed override (e.g. "Speed override active: Blue 0 / Red 5" or "Speed tied at 3 / 3");
+- **raw vs effective values** in the judge grid — the Time Judge's recorded entry is shown with the overridden value beside it (e.g. `4 / 1 → 0 / 5 (NJ)`; a time-tied entry shows `Time Tied → 3 / 3`; an air-tied entry shows `Air Tied (0 / 0 — votes withheld)`).
+
+Approving the match certifies the NJ finding along with the scores; the call locks at approval. Clearing a finding needs no score restoration — the Time Judge's untouched entry simply governs again. Rejecting the Time Judge's entry (or an air-tied Air Judge entry) also clears the Overall Judge, since their point scale depends on the tie state.
+
 ### High-contrast mode
 
 HC Mode button top-right. See [High-contrast (HC) mode](./tablet-hc).

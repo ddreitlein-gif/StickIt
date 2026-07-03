@@ -292,6 +292,15 @@ async function initSchema() {
     // NOTE: v1.26.00 briefly added dual_bracket.nj_blue/nj_red (FS-18 chop flags);
     // rolled back in v1.26.01 pending workflow clarification. Databases that booted
     // v1.26.00 retain the orphan nullable columns — harmless, intentionally not dropped.
+    // v1.29.00 supersedes them with the single nj_call column below.
+    // v1.29.00 (FS-18) -- dual mogul landing zone (chop) NJ call.
+    // NULL | 'blue' | 'red' | 'both'; set by the Air Judge (HJ may set/clear).
+    // Scoring effect applied at calculation time via engine.effectiveJudgePoints.
+    `ALTER TABLE dual_bracket ADD COLUMN nj_call TEXT`,
+    // v1.29.00 (JH 6304.3.5.1) -- Air Tied declaration on the Air Judge's row
+    // (judge_number 3), stored blue 0 / red 0 with air_tied=1, mirroring the
+    // J4 time_tied convention.
+    `ALTER TABLE dual_judge_points ADD COLUMN air_tied INTEGER NOT NULL DEFAULT 0`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

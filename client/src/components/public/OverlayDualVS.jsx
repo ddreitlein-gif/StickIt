@@ -1,6 +1,6 @@
 import React from 'react';
 
-function Side({ side, athlete, total, status, label, winner, matchHasResult }) {
+function Side({ side, athlete, total, status, label, winner, matchHasResult, nj }) {
   const isBlue = side === 'blue';
   const hasScore  = total != null;
   const hasStatus = !!status;
@@ -71,6 +71,12 @@ function Side({ side, athlete, total, status, label, winner, matchHasResult }) {
       <div style={{ textAlign, minWidth: 0, flex: 1 }}>
         <div className="sk-display" style={{ fontSize: 11, letterSpacing: '0.15em', opacity: 0.85 }}>
           {label || (isBlue ? 'BLUE' : 'RED')}
+          {!!nj && (
+            <span className="sk-display" style={{
+              marginLeft: 8, background: 'rgba(0,0,0,0.35)', color: '#f5c518',
+              padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: '0.1em'
+            }}>NJ</span>
+          )}
         </div>
         <div className="sk-display" style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {(athlete?.last_name || '').toUpperCase() || '—'}
@@ -103,7 +109,7 @@ function Side({ side, athlete, total, status, label, winner, matchHasResult }) {
   );
 }
 
-export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redTotal, blueStatus, redStatus, blueLabel, redLabel, winnerSide }) {
+export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redTotal, blueStatus, redStatus, blueLabel, redLabel, winnerSide, njBlue, njRed }) {
   const matchHasResult = (
     blueTotal != null || redTotal != null ||
     !!blueStatus || !!redStatus ||
@@ -125,6 +131,7 @@ export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redT
         label={blueLabel}
         winner={winnerSide === 'blue'}
         matchHasResult={matchHasResult}
+        nj={njBlue}
       />
       <div className="sk-display" style={{
         position: 'absolute',
@@ -154,6 +161,7 @@ export default function OverlayDualVS({ blueAthlete, redAthlete, blueTotal, redT
         label={redLabel}
         winner={winnerSide === 'red'}
         matchHasResult={matchHasResult}
+        nj={njRed}
       />
     </div>
   );

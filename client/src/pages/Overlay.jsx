@@ -205,6 +205,7 @@ export default function Overlay() {
         winnerSide: null,
         bracketRound: data.bracket_round,
         isSmallFinal: !!data.is_small_final,
+        njCall: data.nj_call || null,   // v1.29.00 (FS-18)
       });
     } catch (_) {}
   };
@@ -446,6 +447,16 @@ export default function Overlay() {
           return;
         }
 
+        // v1.29.00 (FS-18) -- NJ call set/cleared on the current match
+        if (msg.type === 'dual_nj_update') {
+          const d = msg.data || {};
+          lastWsAtRef.current = Date.now();
+          setDualState(prev => (prev && prev.matchId === d.matchId)
+            ? { ...prev, njCall: d.njCall || null }
+            : prev);
+          return;
+        }
+
         if (msg.type === 'OVERLAY_HIDE') {
           hiddenRef.current = true; // E-1: stay hidden — also suppresses the 3s poll
           lastWsAtRef.current = Date.now();
@@ -531,6 +542,8 @@ export default function Overlay() {
             blueLabel={dualBlueLabel || 'BLUE'}
             redLabel={dualRedLabel || 'RED'}
             winnerSide={dualState.scored ? dualState.winnerSide : null}
+            njBlue={dualState.njCall === 'blue' || dualState.njCall === 'both'}
+            njRed={dualState.njCall === 'red' || dualState.njCall === 'both'}
           />
         </div>
       )}

@@ -43,8 +43,23 @@ Once every match (including consolation) is complete, the HJ tablet shows the fi
 
 While a tablet-scored match is in progress, the operator can intercept with **Manual Score Entry** from the Scoring tab. This locks the judge tablets, opens a 5-judge entry modal, and lets the operator finalize the match manually (e.g. when a tablet is offline or scores are coming in over the radio). See [Manual score entry](./scoring-manual).
 
-### Bottom air landing zone — the "chop" rule
+### Bottom air landing zone — the "chop" rule (NJ)
 
-Per the Spring 2026 FIS rule (FS-18), each competitor must land the **bottom air within the Landing Zone** (maximum 20 meters from the takeoff). A competitor whose boots land past the zone receives **0 speed points and No Jump (NJ) on the bottom air**. If **both** competitors land past the zone, they are tied for speed (2.5 points each) and both receive NJ.
+Per the Spring 2026 FIS rule (FS-18), each competitor must land the **bottom air within the Landing Zone** (maximum 20 meters from the takeoff, control gates at 20.5 meters). A competitor whose boots or body land past the mark receives **No Jump (NJ) on the bottom air and zero speed points**. If **both** competitors land past, they are tied for speed and both receive NJ.
 
-Applying it in StickIt: the point consequences flow through the normal 5-point split — the Time Judge (J4) awards **0 to the violator / 5 to the opponent**, and when both competitors are past the zone the existing **Time Tied** mechanism produces the 2.5 / 2.5 outcome (Time Tied button on the J4 tablet, or the Time Tied checkbox in the paper-score modal). A dedicated in-app NJ flag/badge workflow is planned but not yet in this build.
+**Who makes the call:** the **Air Judge (J3)** — their dual tablet has an **NJ (Past Chop)** panel with independent Blue/Red toggles (each with a confirmation, on set and on clear). The **Head Judge** can also set or clear the call from the HJ tablet, and the flags are editable on the operator's Scoring tab and in the paper-score modal. The finding is locked once the HJ approves the match. The NJ call is independent of the air split — the Air Judge still submits a normal 5-point air comparison.
+
+**What the call does to the score** (applied automatically at calculation time — the Time Judge's real entry is always recorded as evidence and never modified):
+
+- **One competitor NJ** — the speed comparison pays **0 to the violator / 5 to the opponent**, regardless of what the Time Judge entered (including a Time Tied entry). The Overall Judge splits the normal 5 points.
+- **Both NJ** — the speed comparison is a true tie: each side is credited **3 / 3** and the Overall Judge drops to a **4-point split**. (The 2.5 figure in the FIS text is the seven-judge panel value; StickIt's five-judge panel uses 3 / 3 per FIS JH 6304.3.2.)
+
+The Time Judge's tablet shows a persistent amber banner while an NJ call is active. The Head Judge's approval view shows the finding, the Time Judge's recorded entry, and the effective (overridden) speed values side by side — approving the match certifies the finding. NJ badges appear on the athlete cards, the match rows, the public scoreboard, the broadcast overlay, and the bracket PDF (`[NJ]` name tag).
+
+### Tied speed and tied air
+
+- **Time Tied** (J4 button/checkbox) — the speed comparison is tied. Since v1.29.00 the tied credit is **3 / 3** (previously displayed 0 / 0), so a tied-time match totals 25 points, not 19 — including historical matches. The Overall Judge splits 4. Winners are unaffected.
+- **Air Tied** (new J3 button/checkbox, FIS JH 6304.3.5.1) — the air comparison is tied, or neither competitor jumps. The six air votes are **withheld**: the air row pays **0 / 0** and the Overall Judge drops a point of scale. Note the deliberate handbook asymmetry — a speed tie awards the votes evenly (3 / 3) while an air tie withholds them (0 / 0).
+- If **both** speed and air are tied, the Overall Judge splits only **3** (their turns votes).
+
+Every distributed total (25 / 25 / 19 / 19) is odd, so a tied match remains impossible. Whenever a tie declaration or NJ transition changes the Overall Judge's scale, their submitted split is automatically cleared and their tablet prompts a rescore on the new scale.

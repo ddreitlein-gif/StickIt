@@ -1029,15 +1029,15 @@ async function executeImport(data, zipPath, opts = {}) {
     await execute(
       `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
         registration_id_blue, registration_id_red, winner_registration_id,
-        status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
+        status, is_small_final, seed_blue, seed_red, is_bye, loser_status, nj_call,
         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [bracketMap[b.id], eventMap[b.event_id] ?? null, b.bracket_round ?? 1, b.bracket_position ?? 1,
        b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
        b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
        b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
        b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-       b.is_bye ?? 0, b.loser_status ?? null]
+       b.is_bye ?? 0, b.loser_status ?? null, b.nj_call ?? null]
     );
   }
 
@@ -1046,10 +1046,10 @@ async function executeImport(data, zipPath, opts = {}) {
     const mappedMatch = bracketMap[djp.match_id] ?? null;
     if (!mappedMatch) continue;
     await execute(
-      `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [uuidv4(), mappedMatch, djp.judge_number ?? 1,
-       djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0]
+       djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0]
     );
   }
 
@@ -1478,12 +1478,13 @@ async function executeMerge(existingMeetId, data, zipPath) {
       if (isNewer(b.updated_at, existing.updated_at)) {
         await execute(
           `UPDATE dual_bracket SET registration_id_blue=?, registration_id_red=?, winner_registration_id=?,
-           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, updated_at=datetime('now') WHERE id=?`,
+           status=?, seed_blue=?, seed_red=?, is_bye=?, loser_status=?, nj_call=?, updated_at=datetime('now') WHERE id=?`,
           [b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
            b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
            b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
            b.status ?? existing.status, b.seed_blue ?? existing.seed_blue, b.seed_red ?? existing.seed_red,
-           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status, existing.id]
+           b.is_bye ?? existing.is_bye, b.loser_status ?? existing.loser_status,
+           b.nj_call ?? existing.nj_call ?? null, existing.id]
         );
       }
     } else {
@@ -1492,15 +1493,15 @@ async function executeMerge(existingMeetId, data, zipPath) {
       await execute(
         `INSERT INTO dual_bracket (id, event_id, bracket_round, bracket_position,
           registration_id_blue, registration_id_red, winner_registration_id,
-          status, is_small_final, seed_blue, seed_red, is_bye, loser_status,
+          status, is_small_final, seed_blue, seed_red, is_bye, loser_status, nj_call,
           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, b.bracket_round ?? 1, b.bracket_position ?? 1,
          b.registration_id_blue ? (regMap[b.registration_id_blue] ?? null) : null,
          b.registration_id_red ? (regMap[b.registration_id_red] ?? null) : null,
          b.winner_registration_id ? (regMap[b.winner_registration_id] ?? null) : null,
          b.status ?? 'pending', b.is_small_final ?? 0, b.seed_blue ?? null, b.seed_red ?? null,
-         b.is_bye ?? 0, b.loser_status ?? null]
+         b.is_bye ?? 0, b.loser_status ?? null, b.nj_call ?? null]
       );
     }
   }
@@ -1514,15 +1515,15 @@ async function executeMerge(existingMeetId, data, zipPath) {
     if (existing) {
       if (isNewer(djp.updated_at, existing.updated_at)) {
         await execute(
-          `UPDATE dual_judge_points SET blue_points=?, red_points=?, time_tied=?, updated_at=datetime('now') WHERE id=?`,
-          [djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, existing.id]
+          `UPDATE dual_judge_points SET blue_points=?, red_points=?, time_tied=?, air_tied=?, updated_at=datetime('now') WHERE id=?`,
+          [djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0, existing.id]
         );
       }
     } else {
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-        [uuidv4(), mappedMatch, djp.judge_number ?? 1, djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0]
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        [uuidv4(), mappedMatch, djp.judge_number ?? 1, djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0]
       );
     }
   }

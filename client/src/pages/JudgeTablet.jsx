@@ -36,6 +36,20 @@ const DUAL_ROLE_LABEL = {
 }
 const SPLITS = [[5,0],[0,5],[4,1],[1,4],[3,2],[2,3]]
 const SPLITS_4PT = [[4,0],[0,4],[3,1],[1,3],[2,2]]
+// v1.29.00 -- Overall Judge splits 3 when both speed and air are tied
+const SPLITS_3PT = [[3,0],[0,3],[2,1],[1,2]]
+
+// v1.29.00 (FS-18) -- small amber NJ badge shown on an athlete card when that
+// side has a landing zone (chop) No Jump call
+function NjBadge() {
+  return (
+    <span
+      className="text-xs font-bold px-1.5 py-0.5 rounded"
+      title="Landed past the chop (landing zone) — No Jump on bottom air"
+      style={{ background: 'rgba(245,158,11,0.25)', color: 'var(--tablet-amber2)', marginLeft: 6 }}
+    >NJ</span>
+  )
+}
 
 function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const [activeMatch, setActiveMatch] = useState(null)
@@ -72,7 +86,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
         setScoreRejected(false)
         setError('')
       } else if (match) {
-        setActiveMatch(prev => prev ? { ...prev, judgePoints: match.judgePoints, pointResult: match.pointResult } : prev)
+        setActiveMatch(prev => prev ? { ...prev, judgePoints: match.judgePoints, pointResult: match.pointResult, nj_call: match.nj_call ?? null, status: match.status } : prev)
         const hasMyPoints = match.judgePoints?.some(p => p.judge_number === judgeNum)
         if (hasMyPoints && !submittedRef.current) setSubmitted(true)
         if (!hasMyPoints && submittedRef.current) {
@@ -132,7 +146,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
     return () => { cancelled = true; clearInterval(id) }
   }, [eventId])
 
-  const submitSplit = async (blue, red, timeTied = false) => {
+  const submitSplit = async (blue, red, timeTied = false, airTied = false) => {
     if (!activeMatch) return
     setSubmitting(true)
     setError('')
@@ -140,6 +154,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
     try {
       const payload = { judge_number: judgeNum, blue_points: blue, red_points: red }
       if (timeTied) payload.time_tied = true
+      if (airTied) payload.air_tied = true
       const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/judge-points`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,8 +172,47 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
     }
   }
 
+  // v1.29.00 (FS-18) -- NJ (past chop) toggles. Server state, not local:
+  // the toggles read activeMatch.nj_call and every confirmed change POSTs
+  // immediately, independent of the air split submission.
+  const [njConfirm, setNjConfirm] = useState(null)  // { athlete: 'blue'|'red', value: bool }
+  const [njPosting, setNjPosting] = useState(false)
+  const njCall = activeMatch?.nj_call || null
+  const njBlue = njCall === 'blue' || njCall === 'both'
+  const njRed  = njCall === 'red'  || njCall === 'both'
+
+  const postNj = async (athlete, value) => {
+    if (!activeMatch) return
+    setNjPosting(true)
+    setError('')
+    try {
+      const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/nj`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ athlete, value }),
+      })
+      const body = await res.json()
+      if (!res.ok) { setError(body.error || 'Error'); return }
+      setActiveMatch(prev => prev ? { ...prev, nj_call: body.nj_call ?? null, pointResult: body.result || prev.pointResult } : prev)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setNjPosting(false)
+      setNjConfirm(null)
+    }
+  }
+
   const mySubmission = activeMatch?.judgePoints?.find(p => p.judge_number === judgeNum)
-  const isTimeTied = activeMatch?.judgePoints?.some(p => p.judge_number === 4 && p.time_tied === 1)
+  // v1.29.00 -- the Overall Judge's scale (5/4/3) comes from the server's
+  // engine result so it can never diverge from validation/scoring.
+  const overallScale = activeMatch?.pointResult?.overallScale ?? 5
+  const speedTied = !!activeMatch?.pointResult?.speedTied
+  const airTiedMatch = !!activeMatch?.pointResult?.airTied
+  const scaleReason = [speedTied ? 'Time Tied' : null, airTiedMatch ? 'Air Tied' : null].filter(Boolean).join(' + ')
+  const j4Overridden = judgeNum === 4 && !!njCall
+  const njName = (side) => side === 'blue'
+    ? (activeMatch?.blue_first ? `${activeMatch.blue_first} ${activeMatch.blue_last}` : 'Blue')
+    : (activeMatch?.red_first ? `${activeMatch.red_first} ${activeMatch.red_last}` : 'Red')
 
   if (eventCompleted) return (
     <div className={`tablet-root min-h-screen flex items-center justify-center ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
@@ -207,7 +261,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
               <div className="text-xs uppercase tracking-wide mb-3" style={{ color: 'var(--tablet-dim)' }}>Current Match</div>
               <div className="grid grid-cols-5 gap-2 items-center">
                 <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(14,144,229,0.18)', border: '1.5px solid #1d4ed8' }}>
-                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-blue2)' }}>Blue</div>
+                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-blue2)' }}>Blue{njBlue && <NjBadge />}</div>
                   <div className="text-lg font-bold" style={{ color: '#fff' }}>
                     {activeMatch.blue_first ? `${activeMatch.blue_last}, ${activeMatch.blue_first}` : 'TBD'}
                   </div>
@@ -215,7 +269,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 </div>
                 <div className="text-center font-bold" style={{ color: 'var(--tablet-muted)' }}>vs</div>
                 <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.18)', border: '1.5px solid #b91c1c' }}>
-                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-red2)' }}>Red</div>
+                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-red2)' }}>Red{njRed && <NjBadge />}</div>
                   <div className="text-lg font-bold" style={{ color: '#fff' }}>
                     {activeMatch.red_first ? `${activeMatch.red_last}, ${activeMatch.red_first}` : 'TBD'}
                   </div>
@@ -232,10 +286,28 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                   <span className="text-sm font-bold" style={{ color: 'var(--tablet-blue2)' }}>Blue {activeMatch.pointResult.blueTotal}</span>
                   <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>pts</span>
                   <span className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>{activeMatch.pointResult.redTotal} Red</span>
-                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>({activeMatch.pointResult.judgeCount}/5 judges{activeMatch.pointResult.timeTied ? ' · Time Tied' : ''})</span>
+                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>({activeMatch.pointResult.judgeCount}/5 judges{activeMatch.pointResult.speedTied ? ' · Speed Tied' : ''}{activeMatch.pointResult.airTied ? ' · Air Tied' : ''})</span>
                 </div>
               )}
             </div>
+
+            {/* v1.29.00 (FS-18) -- persistent NJ warning banner for the Time
+                Judge (and visible context for every dual judge). Cannot be
+                dismissed; clears only when the finding is cleared. */}
+            {njCall && (
+              <div className="tablet-warn-banner" style={{ padding: 14, borderRadius: 12 }}>
+                <div className="font-bold" style={{ color: 'var(--tablet-amber2)' }}>
+                  {njCall === 'both'
+                    ? 'NJ (Past Chop): BOTH.  Speed tied at 3 / 3.'
+                    : `NJ (Past Chop): ${njCall.toUpperCase()}, ${njName(njCall)}.  Speed override active: ${njCall === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'}.`}
+                </div>
+                {judgeNum === 4 && (
+                  <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>
+                    Enter and submit your real split as normal — it is recorded as evidence and overridden by the NJ call.
+                  </div>
+                )}
+              </div>
+            )}
 
             {scoreRejected && !submitted && (
               <div className="tablet-card" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2, animation: 'pulse 1.5s ease-in-out infinite' }}>
@@ -247,16 +319,19 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
             {!submitted ? (
               <div className="tablet-card" style={{ padding: 18 }}>
                 <div className="text-sm font-semibold uppercase tracking-wide mb-2" style={{ color: '#fff' }}>
-                  Award {judgeNum === 5 && isTimeTied ? '4' : '5'} Points
-                  {judgeNum === 5 && isTimeTied && (
-                    <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>(Time Tied)</span>
+                  Award {judgeNum === 5 ? overallScale : 5} Points
+                  {judgeNum === 5 && overallScale < 5 && (
+                    <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>({scaleReason})</span>
+                  )}
+                  {j4Overridden && (
+                    <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>(Recorded — Overridden by NJ)</span>
                   )}
                 </div>
                 <div className="text-xs mb-4" style={{ color: 'var(--tablet-dim)' }}>
-                  Tap a split to submit. Blue + Red must equal {judgeNum === 5 && isTimeTied ? 4 : 5}.
+                  Tap a split to submit{j4Overridden ? ' (recorded, overridden by NJ)' : ''}. Blue + Red must equal {judgeNum === 5 ? overallScale : 5}.
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {(judgeNum === 5 && isTimeTied ? SPLITS_4PT : SPLITS).map(([b, r]) => (
+                  {(judgeNum === 5 ? (overallScale === 3 ? SPLITS_3PT : overallScale === 4 ? SPLITS_4PT : SPLITS) : SPLITS).map(([b, r]) => (
                     <button
                       key={`${b}-${r}`}
                       type="button"
@@ -282,6 +357,17 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                     Time Tied
                   </button>
                 )}
+                {judgeNum === 3 && (
+                  <button
+                    type="button"
+                    onClick={() => submitSplit(0, 0, false, true)}
+                    disabled={submitting}
+                    className="tablet-btn-amber w-full mt-3"
+                    style={{ height: 60, fontSize: 18 }}
+                  >
+                    Air Tied
+                  </button>
+                )}
                 {error && <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
               </div>
             ) : (
@@ -290,6 +376,8 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-green2)' }}>Score Submitted</div>
                 {mySubmission && mySubmission.time_tied === 1 ? (
                   <div className="mt-3 text-lg font-bold" style={{ color: 'var(--tablet-amber2)' }}>Time Tied</div>
+                ) : mySubmission && mySubmission.air_tied === 1 ? (
+                  <div className="mt-3 text-lg font-bold" style={{ color: 'var(--tablet-amber2)' }}>Air Tied</div>
                 ) : mySubmission && (
                   <div className="mt-3 flex items-center justify-center gap-4 text-lg">
                     <span className="font-bold" style={{ color: 'var(--tablet-blue2)' }}>Blue {mySubmission.blue_points}</span>
@@ -297,7 +385,88 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                     <span className="font-bold" style={{ color: 'var(--tablet-red2)' }}>{mySubmission.red_points} Red</span>
                   </div>
                 )}
+                {j4Overridden && (
+                  <div className="text-xs mt-2" style={{ color: 'var(--tablet-amber2)' }}>Recorded — overridden by the NJ call</div>
+                )}
                 <div className="text-sm mt-4" style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
+              </div>
+            )}
+
+            {/* v1.29.00 (FS-18) -- NJ (Past Chop) panel: Air Judge only.
+                Two independent toggles reflecting SERVER state; each confirmed
+                change posts at once, independent of the air split, and stays
+                editable until HJ approval. */}
+            {judgeNum === 3 && (
+              <div className="tablet-card" style={{ padding: 18 }}>
+                <div className="text-sm font-semibold uppercase tracking-wide mb-1" style={{ color: '#fff' }}>
+                  NJ (Past Chop)
+                </div>
+                <div className="text-xs mb-3" style={{ color: 'var(--tablet-dim)' }}>
+                  Mark a competitor whose bottom air landed past the landing zone. Independent of your air split.
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setNjConfirm({ athlete: 'blue', value: !njBlue })}
+                    disabled={njPosting || activeMatch.status === 'complete'}
+                    className="rounded-xl font-bold"
+                    style={{
+                      height: 64, fontSize: 17,
+                      background: njBlue ? '#1d4ed8' : 'rgba(14,144,229,0.12)',
+                      border: njBlue ? '2px solid var(--tablet-blue2)' : '1.5px solid #1d4ed8',
+                      color: njBlue ? '#fff' : 'var(--tablet-blue2)',
+                    }}
+                  >
+                    {njBlue ? 'NJ — ' : 'Blue NJ '}{njBlue ? njName('blue') : ''}
+                    {njBlue && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNjConfirm({ athlete: 'red', value: !njRed })}
+                    disabled={njPosting || activeMatch.status === 'complete'}
+                    className="rounded-xl font-bold"
+                    style={{
+                      height: 64, fontSize: 17,
+                      background: njRed ? '#b91c1c' : 'rgba(239,68,68,0.12)',
+                      border: njRed ? '2px solid var(--tablet-red2)' : '1.5px solid #b91c1c',
+                      color: njRed ? '#fff' : 'var(--tablet-red2)',
+                    }}
+                  >
+                    {njRed ? 'NJ — ' : 'Red NJ '}{njRed ? njName('red') : ''}
+                    {njRed && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
+                  </button>
+                </div>
+                {njConfirm && (
+                  <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(245,158,11,0.12)', border: '1.5px solid var(--tablet-amber2)' }}>
+                    <div className="text-sm font-bold mb-2" style={{ color: 'var(--tablet-amber2)' }}>
+                      {njConfirm.value
+                        ? (njConfirm.athlete === 'blue' ? njRed : njBlue)
+                          ? `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  Both NJ — speed is tied at 3 / 3.`
+                          : `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  This sets their speed points to zero.`
+                        : `Clear the NJ call for ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'})?  The Time Judge's entry will govern speed.`}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => postNj(njConfirm.athlete, njConfirm.value)}
+                        disabled={njPosting}
+                        className="tablet-btn-amber flex-1"
+                        style={{ height: 48, fontSize: 15 }}
+                      >
+                        {njConfirm.value ? 'Confirm NJ' : 'Confirm Clear'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNjConfirm(null)}
+                        disabled={njPosting}
+                        className="tablet-btn-neutral flex-1"
+                        style={{ height: 48, fontSize: 15 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </>

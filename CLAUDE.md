@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.28.00
+**Current version:** v1.29.00
 
 ## Commands
 
@@ -203,6 +203,135 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.29.00 Feature Notes
+
+### Dual Moguls Landing Zone (Chop) NJ + Tied-Time 3/3 Credit + Air Tied Declaration (v1.29.00)
+
+Implements FS-18 (FIS, approved 6 June 2026) per David's spec
+(`StickIt_1_29_00_DM_Landing_Zone_Spec_07-03-26.md`), resolving the workflow question that caused
+the v1.26.01 rollback: **the Air Judge (J3) makes the NJ call** (HJ can set/clear; operator/paper
+paths too), and — unlike the rolled-back record-keeping-only v1.26.00 version — the finding now
+**changes scoring** via effective judge-point overrides. Rulings confirmed this session: the paper
+modal also gets an Air Tied checkbox, and the NJ endpoint is public (tablet rule, accepted
+trade-off class).
+
+**Engine — one shared helper, effective values everywhere.** New
+`effectiveJudgePoints(judgeScores, njCall)` in `server/scoring/engine.js` (constants defined once;
+comment notes the FS-18 chop wording awaits the 2026/27 ICR). Precedence: NJ 'blue' → J4 effective
+0/5 (raw ignored, incl. a raw time-tied); 'red' → 5/0; 'both' → speed tied 3/3; no NJ + J4
+time_tied → speed tied **3/3** (ruling 4 — replaces the old 0/0 presentation); J3 air_tied → air
+votes withheld 0/0 (deliberate handbook asymmetry, JH 6304.3.5.1); overallScale = 5/4/3 (5 minus 1
+per tied comparison). `calcDualMogulPointSplit(judgeScores, njCall)` computes totals + winner from
+**effective** values and returns `breakdown` (raw) + `effectiveBreakdown` + `njCall/speedTied/
+airTied/overallScale`. Distributed totals 25/25/19/19 — always odd, tie impossible (ICR
+4307.2.2.1). `validateDualPointSplit` gains `airTied` (must be 0/0) and `overallScale` params
+(replacing `isOverallWithTimeTied`). The 3/3 and 0/0 are FIVE-judge panel values — the 2.5 in the
+FIS text is the seven-judge figure.
+
+**Tied-time display change (ruling 4, retroactive).** Every consumer now computes totals through
+the engine instead of raw SQL SUMs (dual.js bracket GET via one grouped djp query, viewer.js
+bracket, pdf.js dual-results + dual-bracket split strings) — so historical time-tied matches
+(stored 0/0 rows, untouched) display 3/3 and 25-point totals everywhere. Winners unchanged. No DB
+migration of stored rows.
+
+**Database.** `dual_bracket.nj_call TEXT` (NULL|'blue'|'red'|'both'; supersedes the v1.26.00
+orphan nj_blue/nj_red booleans) and `dual_judge_points.air_tied INTEGER NOT NULL DEFAULT 0` (J3
+row stored 0/0 with air_tied=1, mirroring the J4 time_tied convention). Standard idempotent
+migrations.
+
+**API (`server/routes/dual.js`).** New **public** `POST /:matchId/nj` body
+`{ athlete:'blue'|'red', value:bool }` — server derives the stored nj_call; 400 on approved
+matches ("use the edit path"); **recomputes winner/hj_pending** (a single NJ can flip the
+effective winner after all five submitted); **deletes J5's row whenever the computed overallScale
+changes** (both↔single/none transitions), same as the tie flows; audit-logs
+`dual_nj_set`/`dual_nj_cleared`; broadcasts `dual_nj_update {matchId,njCall}` + a fresh
+`dual_points_update` (which now carries `njCall/speedTied/airTied/overallScale`). Judge-points
+POST accepts `air_tied` (J3 only, 0/0 enforced) and generalizes the J5-clear to ANY scale change
+from a J3/J4 submission; J5 validated against the computed scale (SPLITS 5/4/3). Paper-score
+accepts `nj_blue/nj_red/air_tied` on both paths (Path A stores nj_call too). All match-detail
+responses (active-match, judge-points GET incl. new top-level `nj_call`, bracket GET) carry the
+new fields; every engine call site passes nj_call via a shared `mapDjpRows()` helper so the flags
+can't drop on one path.
+
+**Air Judge tablet (`JudgeTablet.jsx` DualJudgeView, J3).** NJ (Past Chop) panel below the split
+card: two independent team-colored toggles driven by SERVER state (active-match + dual_nj_update),
+confirm on set AND clear (second-toggle confirm notes the 3/3 speed tie), immediate POST,
+independent of the air split, editable until approval. New **Air Tied** button mirroring Time Tied
+(submits 0/0 + air_tied). NJ badges on the blue/red athlete cards (all dual judges see them).
+
+**Time Judge (J4).** Persistent amber `tablet-warn-banner` whenever nj_call is set ("Speed
+override active: Blue 0 / Red 5" / "Speed tied at 3 / 3"), non-dismissable; entry flow unchanged;
+header/hint relabeled "(Recorded — Overridden by NJ)" while overridden, including post-submit.
+
+**Overall Judge (J5).** Scale comes from the server (`pointResult.overallScale`) — new
+`SPLITS_3PT`; header "Award 5/4/3 Points" with the reason. A scale change deletes J5's row
+server-side → the existing rejected-score flow prompts the rescore.
+
+**HJ tablet (`HeadJudgeTablet.jsx` DualHeadJudgeView).** Same persistent banner + per-athlete
+Set/Clear NJ toggles with confirmation (HJ can opine on close calls); judge grid shows **raw →
+effective** ("4 / 1 → 0 / 5 (NJ)", "Time Tied → 3 / 3", "Air Tied (0 / 0 — votes withheld)") from
+`effectiveBreakdown`; result panel labels Speed Tied 3/3 / Air Tied 0/0 + current scale (stale
+"max 19 pts" copy fixed); approval certifies the finding; send-back needs no restoration.
+`executeReject` extends the J4→J5 clear coupling to an air-tied J3 and now **preserves
+time_tied/air_tied flags on the re-POST of kept rows** (previously dropped them — latent bug).
+
+**Paper/manual entry (`EventDetail.jsx`).** DualPaperScoreModal: NJ Blue/Red checkboxes with
+advisory, **Air Tied checkbox** (J3 forced 0/0), scale-aware `maxPts`/clamp/J5 max, and the
+running-totals box now shows **effective** totals (raw entered shown beneath when an override is
+active) since a raw comparison could disagree with the actual winner. DualScoringPanel: live NJ
+checkboxes on the active-match card (POST /nj), NJ badges on match rows + DualBracketResults,
+Speed/Air Tied notes, `dual_nj_update` WS refetch. **Bonus fix:** the v1.16.17 "Edit Scores"
+button passed a nonexistent `ptData.judgeScores` key, so editing a completed match never
+pre-populated — now uses `result.breakdown` (also carries the tie flags).
+
+**Public surfaces.** Scoreboard `judgePointsByMatch` now stores `{rows, result}`; DualMatchTab and
+the BracketMatchCard expanded splits render `effectiveBreakdown` values (time-tied "TT"/0 cells →
+3/3), NJ badges via DualMatchCard/`Row` props (v1.26.00 styling), tie notes, and
+`dual_nj_update`/`dual_points_update` WS handling. DualMatchCard + OverlayDualVS gained
+`njBlue/njRed` gold-pill badges; Overlay tracks `njCall` from active-match + a new
+`dual_nj_update` handler (totals were already effective via `dual_points_update`).
+
+**PDFs.** dual-bracket split strings now use effective values — always 5 terms (time-tied J4
+renders as a 3+…, air-tied J3 as 0) — plus the `[NJ]` name tag (drawAthleteRow `nj` param,
+redOnTop-aware). dual-results totals computed through the engine.
+
+**Viewer API.** Bracket rows gain `nj_call`; `blue_score`/`red_score` are effective totals.
+`/dual-matches/:matchId/judge-points` returns `nj_call, speed_tied, air_tied, overall_scale,
+judges` (raw, now incl. air_tied) **and `effective_judges`** (with `overridden` flag) so the iOS
+app never recomputes rules. README + ref-viewer-api.md updated with the new shapes.
+
+**Import/export round-trip** (the recurring v1.16.05 trap): `nj_call` threaded through the
+dual_bracket INSERT/UPDATE sites and `air_tied` through the dual_judge_points sites in
+`executeImport`/`executeMerge`, with `?? null`/`?? 0` legacy tolerance. Export needs nothing
+(`SELECT *`).
+
+**Verification.** `verify_v16.js` extended 100 → 123 checks (all 7 precedence rules, scales,
+distributed totals 25/25/19/19 odd, winner-flip-by-NJ, validation modes). A 54-check scratch-server
+integration test walked the spec §11 edge cases end-to-end against the real server: NJ before/after
+J4 submits (raw preserved, effective 0/5, winner + hj_pending recompute), HJ clear → raw governs,
+NJ-after-five-submitted updates totals without clearing J5, both-NJ → J5 cleared → 4-pt rescore
+enforced, both→single → J5 cleared again, air-tied validation (J3-only, 0/0), both-tied scale 3
+totals 19, air-tied cleared → J5 rescored, approve locks NJ (400), paper path with both-NJ +
+air-tied and Path A + NJ, **historical time-tied match reads 3/3 → 25 in bracket GET and viewer**,
+viewer effective_judges/nj_call/scale, dual-bracket + dual-results PDFs render, audit rows logged,
+and with protection ON the NJ + judge-points endpoints stay public while paper-score still 401s.
+Double-boot migration idempotence confirmed. Help topics updated (events-dual chop section
+rewritten for the real workflow, tablet-dual NJ/Air-Tied/J5-scale sections, tablet-hj dual raw-vs-
+effective, ref-glossary NJ + tie entries, ref-viewer-api) and guide PDFs regenerated.
+
+**Files created:** none (all additive edits)
+**Files modified:** `server/scoring/engine.js`, `server/db/schema.js`, `server/routes/dual.js`,
+`server/routes/viewer.js`, `server/routes/pdf.js`, `server/routes/meets.js`,
+`server/scripts/verify_v16.js`, `client/src/pages/JudgeTablet.jsx`,
+`client/src/pages/HeadJudgeTablet.jsx`, `client/src/pages/EventDetail.jsx`,
+`client/src/pages/Scoreboard.jsx`, `client/src/pages/Overlay.jsx`,
+`client/src/components/public/DualMatchCard.jsx`, `client/src/components/public/OverlayDualVS.jsx`,
+`client/src/help/topics/{events-dual,tablet-dual,tablet-hj,ref-glossary,ref-viewer-api}.md`,
+`server/public/docs/guides/*.pdf` (regenerated), `README.md`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 

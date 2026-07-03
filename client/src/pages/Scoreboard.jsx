@@ -103,15 +103,16 @@ export default function Scoreboard() {
         setDualState(null);
         return;
       }
-      setDualState({
+      setDualState(prev => ({
         matchId: data.id,
         blue: { bib: data.blue_bib || '', name: [data.blue_first, data.blue_last].filter(Boolean).join(' '), first: data.blue_first, last: data.blue_last },
         red: { bib: data.red_bib || '', name: [data.red_first, data.red_last].filter(Boolean).join(' '), first: data.red_first, last: data.red_last },
-        blueTotal: null,
-        redTotal: null,
-        winner: null,
-        scored: false,
-      });
+        blueTotal: prev && prev.matchId === data.id ? prev.blueTotal : null,
+        redTotal: prev && prev.matchId === data.id ? prev.redTotal : null,
+        winner: prev && prev.matchId === data.id ? prev.winner : null,
+        scored: prev && prev.matchId === data.id ? prev.scored : false,
+        njCall: data.nj_call || null,   // v1.29.00 (FS-18)
+      }));
     } catch {}
   };
 
@@ -137,12 +138,17 @@ export default function Scoreboard() {
         eligible.map(m =>
           fetch(`/api/events/${eventId}/dual/${m.id}/judge-points`)
             .then(r => r.ok ? r.json() : null)
-            .then(data => [m.id, Array.isArray(data?.rows) ? data.rows : []])
-            .catch(() => [m.id, []])
+            // v1.29.00 -- keep the engine result too: effectiveBreakdown
+            // carries the NJ-overridden / tie-credited per-judge values
+            .then(data => [m.id, {
+              rows: Array.isArray(data?.rows) ? data.rows : [],
+              result: data?.result || null,
+            }])
+            .catch(() => [m.id, { rows: [], result: null }])
         )
       );
       const map = {};
-      for (const [id, rows] of results) map[id] = rows;
+      for (const [id, entry] of results) map[id] = entry;
       setJudgePointsByMatch(map);
     } catch {}
   };
@@ -230,6 +236,10 @@ export default function Scoreboard() {
           } else if (msg.type === 'run_updated' && d.dualComplete) {
             loadBracket();
             loadPlacements();
+          } else if (msg.type === 'dual_nj_update' || msg.type === 'dual_points_update') {
+            // v1.29.00 -- NJ call set/cleared or live points changed
+            loadActiveDual();
+            loadBracket();
           } else if (msg.type === 'dual_match_cleared') {
             setDualState(null);
             loadBracket();
@@ -883,14 +893,23 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
         redPoints={dualState.redTotal != null ? [dualState.redTotal] : redP}
         isLive={true}
         isFinal={false}
+        njBlue={dualState.njCall === 'blue' || dualState.njCall === 'both'}
+        njRed={dualState.njCall === 'red' || dualState.njCall === 'both'}
       />
     );
   }
   if (recentCompleted) {
     const m = recentCompleted;
-    const points = judgePointsByMatch[m.id] || [];
-    const bluePoints = points.map(p => p.time_tied ? 0 : (p.blue_points || 0));
-    const redPoints = points.map(p => p.time_tied ? 0 : (p.red_points || 0));
+    const entry = judgePointsByMatch[m.id] || {};
+    // v1.29.00 -- render the EFFECTIVE per-judge values (NJ override, 3/3
+    // speed-tie credit, 0/0 air-tie) from the engine, not the raw rows
+    const eff = entry.result?.effectiveBreakdown || [];
+    const rows = eff.length ? eff : (entry.rows || []).map(p => ({
+      bluePoints: p.time_tied ? 0 : (p.blue_points || 0),
+      redPoints: p.time_tied ? 0 : (p.red_points || 0),
+    }));
+    const bluePoints = rows.map(p => p.bluePoints || 0);
+    const redPoints = rows.map(p => p.redPoints || 0);
     const winnerSide =
       m.winner_registration_id && m.winner_registration_id === m.registration_id_blue ? 'blue' :
       m.winner_registration_id && m.winner_registration_id === m.registration_id_red  ? 'red'  : null;
@@ -909,6 +928,9 @@ function DualMatchTab({ dualState, recentCompleted, judgePointsByMatch }) {
           winnerSide={winnerSide}
           blueStatus={blueStatus}
           redStatus={redStatus}
+          njBlue={m.nj_call === 'blue' || m.nj_call === 'both'}
+          njRed={m.nj_call === 'red' || m.nj_call === 'both'}
+          tieNote={[entry.result?.speedTied ? 'Speed Tied 3/3' : null, entry.result?.airTied ? 'Air Tied 0/0' : null].filter(Boolean).join(' · ') || null}
         />
         <div className="sk-display" style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-dim)', letterSpacing: '0.15em', marginTop: 16 }}>
           MOST RECENT COMPLETED MATCH
@@ -1093,7 +1115,7 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
   const isExpandable = isDone;
   const isExpanded = isExpandable && expandedMatchId === m.id;
 
-  const Row = ({ side, first, last, won, lost, total, loserStatus, isTop }) => {
+  const Row = ({ side, first, last, won, lost, total, loserStatus, isTop, nj }) => {
     const grad = side === 'blue' ? 'rgba(59,125,216,0.18)' : 'rgba(230,57,70,0.18)';
     const accentColor = side === 'blue' ? 'var(--blue)' : 'var(--red)';
     return (
@@ -1118,6 +1140,9 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
         }}>
           {first ? `${last}, ${first}` : 'TBD'}
         </span>
+        {nj && (
+          <span className="sk-mono" title="Chop violation — No Jump on bottom air" style={{ fontSize: 10, color: 'var(--gold)', fontWeight: 700 }}>NJ</span>
+        )}
         {isDone && total != null && (
           <span className="sk-mono" style={{ fontSize: 11, fontWeight: 700, color: won ? 'var(--fg)' : 'var(--fg-dim)' }}>
             {total}
@@ -1130,21 +1155,28 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
     );
   };
 
-  const blueRow = (isTop) => <Row side="blue" first={m.blue_first} last={m.blue_last} won={blueWon} lost={blueLost} total={m.blue_total} loserStatus={blueLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
-  const redRow = (isTop) => <Row side="red" first={m.red_first} last={m.red_last} won={redWon} lost={redLost} total={m.red_total} loserStatus={redLost && m.loser_status ? m.loser_status : null} isTop={isTop} />;
+  const blueRow = (isTop) => <Row side="blue" first={m.blue_first} last={m.blue_last} won={blueWon} lost={blueLost} total={m.blue_total} loserStatus={blueLost && m.loser_status ? m.loser_status : null} isTop={isTop} nj={m.nj_call === 'blue' || m.nj_call === 'both'} />;
+  const redRow = (isTop) => <Row side="red" first={m.red_first} last={m.red_last} won={redWon} lost={redLost} total={m.red_total} loserStatus={redLost && m.loser_status ? m.loser_status : null} isTop={isTop} nj={m.nj_call === 'red' || m.nj_call === 'both'} />;
 
   const onClick = () => isExpandable && setExpandedMatchId(prev => prev === m.id ? null : m.id);
 
   const renderDetail = () => {
-    const points = judgePointsByMatch[m.id] || [];
-    const fmt = (rows, side) => {
+    // v1.29.00 -- expanded detail shows the EFFECTIVE per-judge values (NJ
+    // override, 3/3 speed-tie credit, 0/0 air-tie) from the engine result
+    const entry = judgePointsByMatch[m.id] || {};
+    const eff = entry.result?.effectiveBreakdown || [];
+    const rows = eff.length ? eff : (entry.rows || []).map(p => ({
+      bluePoints: p.time_tied ? 0 : (p.blue_points ?? 0),
+      redPoints: p.time_tied ? 0 : (p.red_points ?? 0),
+    }));
+    const fmt = (side) => {
       if (!rows.length) return null;
-      const parts = rows.map(p => p.time_tied ? 'TT' : String(side === 'blue' ? (p.blue_points ?? 0) : (p.red_points ?? 0)));
-      const sum = rows.reduce((acc, p) => acc + (side === 'blue' ? (p.blue_points || 0) : (p.red_points || 0)), 0);
+      const parts = rows.map(p => String(side === 'blue' ? (p.bluePoints ?? 0) : (p.redPoints ?? 0)));
+      const sum = rows.reduce((acc, p) => acc + (side === 'blue' ? (p.bluePoints || 0) : (p.redPoints || 0)), 0);
       return { expr: parts.join('+'), sum };
     };
-    const blue = fmt(points, 'blue');
-    const red = fmt(points, 'red');
+    const blue = fmt('blue');
+    const red = fmt('red');
     return (
       <div style={{
         padding: '6px 10px',

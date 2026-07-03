@@ -273,6 +273,7 @@ Returns scored results for the current active round. For dual mogul events, retu
       "blue_bib": 1,  "blue_first": "Jane", "blue_last": "Smith", "blue_score": 22,
       "red_bib": 8,   "red_first": "Alex",  "red_last": "Jones",  "red_score": 19,
       "winner_registration_id": "uuid",
+      "nj_call": null,
       "is_bye": 0
     }
   ]
@@ -282,6 +283,8 @@ Returns scored results for the current active round. For dual mogul events, retu
 - `id` (v1.26.00) is the match's primary key — use it with the judge-points endpoint below.
 - `bracket_round` is the power-of-2 round size (e.g. 16 = Round of 16, 2 = Final).
 - `is_bye`: 1 when one side is a bye (no opponent).
+- `nj_call` (v1.29.00): FS-18 landing zone (chop) No Jump call — `null`, `"blue"`, `"red"`, or `"both"`. Badge the flagged athlete(s).
+- `blue_score` / `red_score` (v1.29.00) are **effective** totals with the NJ speed override and tie credits applied (a tied-time match totals 25: the speed row pays 3/3), matching the web scoreboard.
 
 ---
 
@@ -289,19 +292,34 @@ Returns scored results for the current active round. For dual mogul events, retu
 
 Per-judge blue/red point splits for one dual mogul match (v1.26.00) — the data behind a tap-to-expand match breakdown. The match must belong to the event; otherwise `404 { "error": "Match not found" }`.
 
-**Example response:**
+**Example response** (v1.29.00 shape — a match where the Time Judge entered 4/1 but blue was called NJ past the chop):
 ```json
 {
   "match_id": "match-uuid",
+  "nj_call": "blue",
+  "speed_tied": false,
+  "air_tied": false,
+  "overall_scale": 5,
   "judges": [
-    { "judge_number": 1, "blue_points": 1, "red_points": 4, "time_tied": 0 },
-    { "judge_number": 2, "blue_points": 1, "red_points": 4, "time_tied": 0 },
-    { "judge_number": 3, "blue_points": 1, "red_points": 4, "time_tied": 0 },
-    { "judge_number": 4, "blue_points": 1, "red_points": 4, "time_tied": 0 },
-    { "judge_number": 5, "blue_points": 1, "red_points": 4, "time_tied": 0 }
+    { "judge_number": 1, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0 },
+    { "judge_number": 2, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0 },
+    { "judge_number": 3, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0 },
+    { "judge_number": 4, "blue_points": 4, "red_points": 1, "time_tied": 0, "air_tied": 0 },
+    { "judge_number": 5, "blue_points": 2, "red_points": 3, "time_tied": 0, "air_tied": 0 }
+  ],
+  "effective_judges": [
+    { "judge_number": 1, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0, "overridden": 0 },
+    { "judge_number": 2, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0, "overridden": 0 },
+    { "judge_number": 3, "blue_points": 3, "red_points": 2, "time_tied": 0, "air_tied": 0, "overridden": 0 },
+    { "judge_number": 4, "blue_points": 0, "red_points": 5, "time_tied": 0, "air_tied": 0, "overridden": 1 },
+    { "judge_number": 5, "blue_points": 2, "red_points": 3, "time_tied": 0, "air_tied": 0, "overridden": 0 }
   ]
 }
 ```
+
+- `judges` are the raw entries as submitted (the Time Judge's real split is always recorded, even when overridden).
+- `effective_judges` (v1.29.00) are the values that actually pay: the FS-18 NJ speed override (0/5, 5/0, or 3/3), the 3/3 tied-time credit, and the 0/0 air-tie. Display these — the app never has to recompute rules.
+- `speed_tied` / `air_tied` are the match-level tie states; `overall_scale` is the Overall Judge's split (5, 4, or 3).
 
 ---
 

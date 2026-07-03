@@ -3,6 +3,18 @@
 const router = require('express').Router({ mergeParams: true });
 const cors = require('cors');
 const { queryAll, queryOne } = require('../db/schema');
+const { calcDualMogulPointSplit, effectiveJudgePoints } = require('../scoring/engine');
+
+// v1.29.00 -- map dual_judge_points rows to the engine's judgeScores shape
+function viewerMapDjpRows(rows) {
+  return (rows || []).map(r => ({
+    judgeNumber: r.judge_number,
+    bluePoints:  r.blue_points,
+    redPoints:   r.red_points,
+    timeTied:    !!r.time_tied,
+    airTied:     !!r.air_tied,
+  }));
+}
 
 router.use(cors({ origin: '*' }));
 
@@ -264,8 +276,7 @@ router.get('/events/:eventId/results', async (req, res) => {
                 ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
                 ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
                 db.winner_registration_id,
-                (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) AS blue_score,
-                (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) AS red_score,
+                db.nj_call,
                 db.is_bye
          FROM dual_bracket db
          LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
@@ -276,7 +287,31 @@ router.get('/events/:eventId/results', async (req, res) => {
          ORDER BY db.bracket_round DESC, db.bracket_position`,
         [eventId]
       );
-      return res.json({ discipline: 'dual_mogul', bracket });
+      // v1.29.00 -- blue_score/red_score are EFFECTIVE totals (NJ override +
+      // tie credits) computed through the shared engine helper, matching the
+      // web scoreboard, instead of raw SQL SUMs.
+      const djpRows = await queryAll(
+        `SELECT djp.* FROM dual_judge_points djp
+         JOIN dual_bracket db ON db.id = djp.match_id
+         WHERE db.event_id = ? ORDER BY djp.judge_number`,
+        [eventId]
+      );
+      const rowsByMatch = new Map();
+      for (const r of djpRows) {
+        if (!rowsByMatch.has(r.match_id)) rowsByMatch.set(r.match_id, []);
+        rowsByMatch.get(r.match_id).push(r);
+      }
+      const enriched = bracket.map(m => {
+        const rows = rowsByMatch.get(m.id) || [];
+        let blue_score = null, red_score = null;
+        if (rows.length > 0) {
+          const split = calcDualMogulPointSplit(viewerMapDjpRows(rows), m.nj_call);
+          blue_score = split.blueTotal;
+          red_score  = split.redTotal;
+        }
+        return { ...m, blue_score, red_score };
+      });
+      return res.json({ discipline: 'dual_mogul', bracket: enriched });
     }
 
     const { runNumber } = await getActiveRound(eventId);
@@ -340,17 +375,37 @@ router.get('/events/:eventId/dual-matches/:matchId/judge-points', async (req, re
   try {
     const { eventId, matchId } = req.params;
     const match = await queryOne(
-      'SELECT id FROM dual_bracket WHERE id = ? AND event_id = ?',
+      'SELECT id, nj_call FROM dual_bracket WHERE id = ? AND event_id = ?',
       [matchId, eventId]
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
     const rows = await queryAll(
-      `SELECT judge_number, blue_points, red_points, time_tied
+      `SELECT judge_number, blue_points, red_points, time_tied, air_tied
        FROM dual_judge_points WHERE match_id = ? ORDER BY judge_number`,
       [matchId]
     );
-    res.json({ match_id: matchId, judges: rows });
+    // v1.29.00 -- raw entries plus the effective (NJ-overridden / tie-credited)
+    // values from the shared engine helper, so the iOS app can display the
+    // breakdown and badge without recomputing rules.
+    const { effectiveScores, speedTied, airTied, overallScale } =
+      effectiveJudgePoints(viewerMapDjpRows(rows), match.nj_call);
+    res.json({
+      match_id: matchId,
+      nj_call: match.nj_call || null,
+      speed_tied: speedTied,
+      air_tied: airTied,
+      overall_scale: overallScale,
+      judges: rows,
+      effective_judges: effectiveScores.map(s => ({
+        judge_number: s.judgeNumber,
+        blue_points:  s.bluePoints,
+        red_points:   s.redPoints,
+        time_tied:    s.timeTied ? 1 : 0,
+        air_tied:     s.airTied ? 1 : 0,
+        overridden:   s.overridden ? 1 : 0,
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

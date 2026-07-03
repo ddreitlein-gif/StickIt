@@ -2303,7 +2303,7 @@ function DualScoringPanel({ event, registrations }) {
   // WebSocket for live updates
   useEffect(() => {
     const ws = createWebSocket(event.id, msg => {
-      if (['dual_points_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'dual_bracket_review', 'dual_bracket_sent_back', 'event_finalized'].includes(msg.type)) {
+      if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'dual_bracket_review', 'dual_bracket_sent_back', 'event_finalized'].includes(msg.type)) {
         load()
       }
     })
@@ -2443,6 +2443,20 @@ function DualScoringPanel({ event, registrations }) {
     } catch (_) {}
   }
 
+  // v1.29.00 (FS-18) -- set/clear the NJ (past chop) call for one athlete
+  const setMatchNJ = async (m, side, checked) => {
+    setError('')
+    try {
+      const res = await fetch(`/api/events/${event.id}/dual/${m.id}/nj`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ athlete: side, value: checked }),
+      })
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error || 'Failed to set NJ call') }
+      await load()
+    } catch (e) { setError(e.message) }
+  }
+
   const allDone = !activeRoundNum
   const roundAllComplete = pendingMatches.length === 0 && !activeMatch
 
@@ -2462,6 +2476,9 @@ function DualScoringPanel({ event, registrations }) {
           {isDone && m.winner_registration_id === m.registration_id_red && m.loser_status && (
             <span className="text-xs font-bold px-1 py-0.5 rounded bg-slate-700 text-slate-400">{m.loser_status}</span>
           )}
+          {(m.nj_call === 'blue' || m.nj_call === 'both') && (
+            <span className="text-xs font-bold px-1 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Landed past the chop (landing zone) — No Jump on bottom air">NJ</span>
+          )}
         </div>
         {m.blue_bib && <div className="text-xs text-slate-500 mt-0.5">Bib {m.blue_bib}</div>}
       </div>
@@ -2473,6 +2490,9 @@ function DualScoringPanel({ event, registrations }) {
           {m.red_first ? `${m.red_last}, ${m.red_first}` : <span className="text-slate-600">TBD</span>}
           {isDone && m.winner_registration_id === m.registration_id_blue && m.loser_status && (
             <span className="text-xs font-bold px-1 py-0.5 rounded bg-slate-700 text-slate-400">{m.loser_status}</span>
+          )}
+          {(m.nj_call === 'red' || m.nj_call === 'both') && (
+            <span className="text-xs font-bold px-1 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Landed past the chop (landing zone) — No Jump on bottom air">NJ</span>
           )}
         </div>
         {m.red_bib && <div className="text-xs text-slate-500 mt-0.5">Bib {m.red_bib}</div>}
@@ -2503,7 +2523,7 @@ function DualScoringPanel({ event, registrations }) {
             <span className={`text-sm font-bold ${ptResult.winner === 'blue' ? 'text-blue-300' : 'text-slate-400'}`}>Blue {ptResult.blueTotal}</span>
             <span className="text-slate-600 text-xs">pts</span>
             <span className={`text-sm font-bold ${ptResult.winner === 'red' ? 'text-red-300' : 'text-slate-400'}`}>{ptResult.redTotal} Red</span>
-            <span className="text-slate-600 text-xs">({ptResult.judgeCount}/5)</span>
+            <span className="text-slate-600 text-xs">({ptResult.judgeCount}/5{ptResult.speedTied ? ' · Speed Tied' : ''}{ptResult.airTied ? ' · Air Tied' : ''})</span>
           </div>
         )}
 
@@ -2528,15 +2548,35 @@ function DualScoringPanel({ event, registrations }) {
         )}
 
         {!isPaper && isActive && (
-          <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between gap-3">
-            <span className={`text-xs animate-pulse font-semibold ${isHjPending ? 'text-amber-400' : 'text-blue-400'}`}>
-              {isHjPending ? 'Awaiting Head Judge approval' : 'Scoring in progress -- judges entering scores on tablets'}
-            </span>
-            <div className="flex items-center gap-2">
-              <button onClick={clearActiveMatch} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-semibold">End Match</button>
-              <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
+          <>
+            <div className="mt-3 pt-2 border-t border-slate-700 flex items-center justify-between gap-3">
+              <span className={`text-xs animate-pulse font-semibold ${isHjPending ? 'text-amber-400' : 'text-blue-400'}`}>
+                {isHjPending ? 'Awaiting Head Judge approval' : 'Scoring in progress -- judges entering scores on tablets'}
+              </span>
+              <div className="flex items-center gap-2">
+                <button onClick={clearActiveMatch} className="text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-700 text-white font-semibold">End Match</button>
+                <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
+              </div>
             </div>
-          </div>
+            {/* v1.29.00 (FS-18) -- NJ (past chop) flags; normally set by the Air Judge / HJ, editable here too */}
+            <div className="mt-2 flex items-center gap-4">
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-blue-400 font-semibold">
+                <input type="checkbox" checked={m.nj_call === 'blue' || m.nj_call === 'both'} onChange={e => setMatchNJ(m, 'blue', e.target.checked)} className="rounded border-slate-600" />
+                NJ (chop) — Blue
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs text-red-400 font-semibold">
+                <input type="checkbox" checked={m.nj_call === 'red' || m.nj_call === 'both'} onChange={e => setMatchNJ(m, 'red', e.target.checked)} className="rounded border-slate-600" />
+                NJ (chop) — Red
+              </label>
+            </div>
+            {!!m.nj_call && (
+              <p className="mt-1 text-xs text-amber-400">
+                {m.nj_call === 'both'
+                  ? 'Both past chop: speed tied — credited 3 / 3, Overall Judge splits 4.'
+                  : `Chop violation: speed override active — ${m.nj_call === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'} (Time Judge's entry recorded as evidence).`}
+              </p>
+            )}
+          </>
         )}
 
         {/* Paper mode: Enter / Edit Scores. v1.16.17 -- Edit Scores also available for completed tablet-mode matches.
@@ -2547,7 +2587,7 @@ function DualScoringPanel({ event, registrations }) {
         {m.registration_id_blue && m.registration_id_red && isDone && event.status !== 'complete' && (
           <div className="mt-3 pt-2 border-t border-slate-700">
             <button
-              onClick={() => setPaperModal({ match: m, existingPoints: ptData?.judgeScores || null })}
+              onClick={() => setPaperModal({ match: m, existingPoints: ptData?.result?.breakdown?.length === 5 ? ptData.result.breakdown : null })}
               className="btn-ghost text-sm text-blue-400 border-blue-800 hover:bg-blue-900/20 w-full"
             >
               Edit Scores
@@ -2722,11 +2762,28 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
   const [timeTied, setTimeTied] = useState(
     existingPoints ? existingPoints.some(j => j.timeTied) : false
   )
+  // v1.29.00 (FS-18 / JH 6304.3.5.1) -- NJ (past chop) flags + Air Tied
+  const [njBlue, setNjBlue] = useState(match.nj_call === 'blue' || match.nj_call === 'both')
+  const [njRed, setNjRed] = useState(match.nj_call === 'red' || match.nj_call === 'both')
+  const [airTied, setAirTied] = useState(
+    existingPoints ? existingPoints.some(j => j.airTied) : false
+  )
   const [error, setError] = useState('')
   const [saving, setSaving] = useState('')
 
-  // Auto-complement: entering one side fills the other
-  const maxPts = (idx) => (timeTied && idx === 3) ? 0 : (timeTied && idx === 4) ? 4 : 5
+  const njCall = njBlue && njRed ? 'both' : njBlue ? 'blue' : njRed ? 'red' : null
+  // A single NJ overrides a time-tied entry (match is NOT speed tied)
+  const speedTied = njCall === 'both' || (timeTied && !njCall)
+  const overallScale = 5 - (speedTied ? 1 : 0) - (airTied ? 1 : 0)
+
+  // Auto-complement: entering one side fills the other.
+  // J4 (idx 3) is 0/0 when time tied; J3 (idx 2) is 0/0 when air tied;
+  // J5 (idx 4) splits the computed overall scale (5 / 4 / 3).
+  const maxPts = (idx) =>
+    (timeTied && idx === 3) ? 0
+    : (airTied && idx === 2) ? 0
+    : (idx === 4) ? overallScale
+    : 5
 
   const updateScore = (idx, side, val) => {
     setScores(prev => {
@@ -2746,36 +2803,45 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
     })
   }
 
-  // When timeTied changes, reset J4 and adjust J5 max
+  // When a tie state changes, reset the tied judge's row and re-clamp J5 to
+  // the new overall scale
   useEffect(() => {
     setScores(prev => {
       const next = prev.map(s => ({ ...s }))
-      if (timeTied) {
-        next[3] = { blue: '0', red: '0' }
-        // Clamp J5 to max 4
-        const b5 = parseInt(next[4].blue, 10)
-        if (!isNaN(b5) && b5 > 4) {
-          next[4] = { blue: '4', red: '0' }
-        } else if (!isNaN(b5)) {
-          next[4] = { blue: String(b5), red: String(4 - b5) }
-        }
-      } else {
-        next[3] = { blue: '', red: '' }
-        // Expand J5 to max 5
-        const b5 = parseInt(next[4].blue, 10)
-        if (!isNaN(b5) && b5 <= 4) {
-          // Keep as-is but recalculate complement to 5
-          next[4] = { blue: String(b5), red: String(5 - b5) }
-        }
+      if (timeTied) next[3] = { blue: '0', red: '0' }
+      else if (prev[3].blue === '0' && prev[3].red === '0') next[3] = { blue: '', red: '' }
+      if (airTied) next[2] = { blue: '0', red: '0' }
+      else if (prev[2].blue === '0' && prev[2].red === '0') next[2] = { blue: '', red: '' }
+      const b5 = parseInt(next[4].blue, 10)
+      if (!isNaN(b5)) {
+        const clamped = Math.max(0, Math.min(overallScale, b5))
+        next[4] = { blue: String(clamped), red: String(overallScale - clamped) }
       }
       return next
     })
-  }, [timeTied])
+  }, [timeTied, airTied, overallScale])
 
-  // Calculate running totals
+  // Raw entered totals (what the judges wrote down)
   const blueTotal = scores.reduce((sum, s) => sum + (parseInt(s.blue, 10) || 0), 0)
   const redTotal = scores.reduce((sum, s) => sum + (parseInt(s.red, 10) || 0), 0)
-  const maxTotal = timeTied ? 19 : 25
+  // Effective totals after the NJ override + tie credits (decides the winner):
+  // J4 pays 0/5, 5/0 or 3/3 under NJ / speed tie; J3 pays 0/0 when air tied.
+  const effSide = (side) => scores.reduce((sum, s, i) => {
+    let v = parseInt(s[side], 10) || 0
+    if (i === 3) {
+      if (njCall === 'blue') v = side === 'blue' ? 0 : 5
+      else if (njCall === 'red') v = side === 'red' ? 0 : 5
+      else if (speedTied) v = 3
+    }
+    if (i === 2 && airTied) v = 0
+    return sum + v
+  }, 0)
+  const effBlueTotal = effSide('blue')
+  const effRedTotal = effSide('red')
+  const overrideActive = !!njCall || speedTied || airTied
+  // Effective distributed total: 25 normally, 25 speed-tied (3/3 pays 6),
+  // 19 when air is tied (6 votes withheld) -- always odd, tie impossible
+  const maxTotal = airTied ? 19 : 25
 
   const submitScores = async () => {
     setError('')
@@ -2795,6 +2861,9 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
           red_points: parseInt(s.red, 10),
         })),
         time_tied: timeTied,
+        air_tied: airTied,
+        nj_blue: njBlue,
+        nj_red: njRed,
       }
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
@@ -2815,7 +2884,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
       const res = await fetch(`/api/events/${event.id}/dual/${match.id}/paper-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status }),
+        body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status, nj_blue: njBlue, nj_red: njRed }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
@@ -2856,8 +2925,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
             <div className="text-center text-red-400">Red</div>
           </div>
           {JUDGE_LABELS.map((label, idx) => {
-            const isJ4 = idx === 3
-            const disabled = isJ4 && timeTied
+            const disabled = (idx === 3 && timeTied) || (idx === 2 && airTied)
             return (
               <div key={idx} className={`grid grid-cols-[1fr_60px_60px] gap-2 items-center px-1 py-1.5 rounded ${
                 disabled ? 'opacity-40' : ''
@@ -2886,29 +2954,80 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
           })}
         </div>
 
-        {/* Time Tied checkbox */}
-        <label className="flex items-center gap-2 mb-4 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={timeTied}
-            onChange={e => setTimeTied(e.target.checked)}
-            disabled={!!saving}
-            className="rounded border-slate-600"
-          />
-          <span className="text-sm text-amber-400 font-semibold">Time Tied</span>
-          <span className="text-xs text-slate-500">(J4=0/0, J5 max 4 pts, total max 19)</span>
-        </label>
+        {/* Time Tied / Air Tied checkboxes */}
+        <div className="flex items-center gap-6 mb-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={timeTied}
+              onChange={e => setTimeTied(e.target.checked)}
+              disabled={!!saving}
+              className="rounded border-slate-600"
+            />
+            <span className="text-sm text-amber-400 font-semibold">Time Tied</span>
+            <span className="text-xs text-slate-500">(J4 records 0/0, credited 3/3)</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={airTied}
+              onChange={e => setAirTied(e.target.checked)}
+              disabled={!!saving}
+              className="rounded border-slate-600"
+            />
+            <span className="text-sm text-amber-400 font-semibold">Air Tied</span>
+            <span className="text-xs text-slate-500">(J3 = 0/0, votes withheld)</span>
+          </label>
+        </div>
 
-        {/* Running totals */}
-        <div className="flex items-center justify-center gap-6 mb-4 py-3 rounded-lg bg-slate-800 border border-slate-700">
-          <span className={`text-lg font-bold font-mono ${blueTotal > redTotal ? 'text-blue-300' : 'text-slate-400'}`}>
-            {blueTotal}
+        {/* v1.29.00 (FS-18) -- NJ (past chop) checkboxes */}
+        <div className="flex items-center gap-6 mb-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={njBlue}
+              onChange={e => setNjBlue(e.target.checked)}
+              disabled={!!saving}
+              className="rounded border-slate-600"
+            />
+            <span className="text-sm text-blue-400 font-semibold">NJ (chop) — Blue</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={njRed}
+              onChange={e => setNjRed(e.target.checked)}
+              disabled={!!saving}
+              className="rounded border-slate-600"
+            />
+            <span className="text-sm text-red-400 font-semibold">NJ (chop) — Red</span>
+          </label>
+        </div>
+        {njCall && (
+          <p className="text-xs text-amber-400 mb-2">
+            {njCall === 'both'
+              ? 'Both past chop: speed tied — J4 credited 3 / 3, J5 splits ' + overallScale + '.'
+              : `Chop violation: J4's recorded entry is kept but overridden to ${njCall === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'}.`}
+          </p>
+        )}
+        <div className="mb-4 text-xs text-slate-500">J5 Overall splits {overallScale} point{overallScale !== 1 ? 's' : ''}.</div>
+
+        {/* Running totals (effective — decides the winner) */}
+        <div className="flex items-center justify-center gap-6 mb-1 py-3 rounded-lg bg-slate-800 border border-slate-700">
+          <span className={`text-lg font-bold font-mono ${effBlueTotal > effRedTotal ? 'text-blue-300' : 'text-slate-400'}`}>
+            {effBlueTotal}
           </span>
           <span className="text-slate-600 text-sm">/ {maxTotal}</span>
-          <span className={`text-lg font-bold font-mono ${redTotal > blueTotal ? 'text-red-300' : 'text-slate-400'}`}>
-            {redTotal}
+          <span className={`text-lg font-bold font-mono ${effRedTotal > effBlueTotal ? 'text-red-300' : 'text-slate-400'}`}>
+            {effRedTotal}
           </span>
         </div>
+        {overrideActive && (
+          <div className="text-center text-xs text-slate-500 mb-3">
+            Effective totals (NJ / tie credits applied). Entered: {blueTotal} / {redTotal}.
+          </div>
+        )}
+        {!overrideActive && <div className="mb-3" />}
 
         {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
 
@@ -3990,6 +4109,9 @@ function DualBracketResults({ event }) {
           <span className={`truncate ${blueWon ? 'text-white font-semibold' : 'text-slate-300'}`}>
             {m.blue_first ? `${m.blue_last}, ${m.blue_first}` : <span className="text-slate-600">TBD</span>}
           </span>
+          {(m.nj_call === 'blue' || m.nj_call === 'both') && (
+            <span className="text-[10px] font-bold text-amber-400 flex-shrink-0" title="Chop violation — No Jump on bottom air">NJ</span>
+          )}
         </div>
         {isDone && m.blue_total != null && (
           <span className={`font-bold flex-shrink-0 ml-1 ${blueWon ? 'text-white' : 'text-slate-500'}`}>{m.blue_total}</span>
@@ -4006,6 +4128,9 @@ function DualBracketResults({ event }) {
           <span className={`truncate ${redWon ? 'text-white font-semibold' : 'text-slate-300'}`}>
             {m.red_first ? `${m.red_last}, ${m.red_first}` : <span className="text-slate-600">TBD</span>}
           </span>
+          {(m.nj_call === 'red' || m.nj_call === 'both') && (
+            <span className="text-[10px] font-bold text-amber-400 flex-shrink-0" title="Chop violation — No Jump on bottom air">NJ</span>
+          )}
         </div>
         {isDone && m.red_total != null && (
           <span className={`font-bold flex-shrink-0 ml-1 ${redWon ? 'text-white' : 'text-slate-500'}`}>{m.red_total}</span>

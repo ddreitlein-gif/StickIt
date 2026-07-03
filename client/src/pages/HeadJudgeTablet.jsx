@@ -284,7 +284,7 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
       try {
         const msg = JSON.parse(e.data)
         if (msg.eventId !== eventId) return
-        if (['dual_points_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'run_updated'].includes(msg.type)) {
+        if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'run_updated'].includes(msg.type)) {
           loadMatch()
           loadNextMatch()
           loadReviewState()
@@ -307,25 +307,31 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
     setRejecting(true); setError('')
     try {
       // When rejecting J4 (Time), also clear J5 (Overall) since their point
-      // total depends on whether time is tied.
+      // total depends on whether time is tied.  v1.29.00: same coupling for
+      // J3 (Air) when its entry was air-tied — J5's scale depends on it.
+      const rejectedRow = judgePoints.find(p => p.judge_number === confirmReject.judgeNumber)
+      const clearsOverall = confirmReject.judgeNumber === 4
+        || (confirmReject.judgeNumber === 3 && rejectedRow?.air_tied === 1)
       let remaining = judgePoints.filter(p => p.judge_number !== confirmReject.judgeNumber)
-      if (confirmReject.judgeNumber === 4) {
+      if (clearsOverall) {
         remaining = remaining.filter(p => p.judge_number !== 5)
       }
       // Clear all points
       await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/judge-points`, { method: 'DELETE' })
-      // Re-add the ones we want to keep
+      // Re-add the ones we want to keep (in judge order so J5's scale is
+      // computed against the already-re-posted J3/J4 rows)
       for (const p of remaining) {
         const payload = { judge_number: p.judge_number, blue_points: p.blue_points, red_points: p.red_points }
         if (p.time_tied === 1) payload.time_tied = true
+        if (p.air_tied === 1) payload.air_tied = true
         await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/judge-points`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
       }
-      const msg = confirmReject.judgeNumber === 4
-        ? 'Judge 4 (Time) score rejected. Judge 5 (Overall) must also rescore.'
+      const msg = clearsOverall
+        ? `Judge ${confirmReject.judgeNumber} (${confirmReject.judgeNumber === 4 ? 'Time' : 'Air'}) score rejected. Judge 5 (Overall) must also rescore.`
         : `Judge ${confirmReject.judgeNumber} score rejected.  Judge may resubmit.`
       setStatusMsg(msg)
       setConfirmReject(null)
@@ -382,9 +388,45 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
     finally { setSendingBack(false) }
   }
 
+  // v1.29.00 (FS-18) -- HJ can SET or CLEAR an NJ (past chop) call, with
+  // confirmation.  Server state; posts to the same public endpoint the Air
+  // Judge tablet uses.
+  const [njConfirm, setNjConfirm] = useState(null)   // { athlete, value }
+  const [njSaving, setNjSaving] = useState(false)
+  const njCall = activeMatch?.nj_call || null
+  const njBlue = njCall === 'blue' || njCall === 'both'
+  const njRed  = njCall === 'red'  || njCall === 'both'
+  const njName = (side) => side === 'blue'
+    ? `${activeMatch?.blue_first || ''} ${activeMatch?.blue_last || ''}`.trim() || 'Blue'
+    : `${activeMatch?.red_first || ''} ${activeMatch?.red_last || ''}`.trim() || 'Red'
+
+  const postNj = async (athlete, value) => {
+    if (!activeMatch) return
+    setNjSaving(true); setError(''); setStatusMsg('')
+    try {
+      const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/nj`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ athlete, value }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.error || `Server error ${res.status}`)
+      setStatusMsg(value ? `NJ set for ${njName(athlete)}.` : `NJ cleared for ${njName(athlete)}. The Time Judge's entry governs.`)
+      await loadMatch()
+    } catch (e) {
+      setError('NJ update failed: ' + e.message)
+    } finally {
+      setNjSaving(false)
+      setNjConfirm(null)
+    }
+  }
+
   const matchComplete = activeMatch?.status === 'complete'
   const hjPending = activeMatch?.status === 'hj_pending'
   const hasWinner = pointResult && pointResult.winner
+  // v1.29.00 -- effective (NJ-overridden / tie-credited) per-judge values
+  const effByJudge = {}
+  for (const s of (pointResult?.effectiveBreakdown || [])) effByJudge[s.judgeNumber] = s
 
   // v1.16.17 -- event completed full-screen message
   if (eventCompleted) {
@@ -525,6 +567,9 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                   {activeMatch.blue_bib && (
                     <span className="text-sm text-slate-400 font-mono">#{activeMatch.blue_bib}</span>
                   )}
+                  {njBlue && (
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Landed past the chop — No Jump on bottom air">NJ</span>
+                  )}
                 </div>
                 <div className="text-center px-4">
                   <div className="text-slate-600 font-bold text-sm">vs</div>
@@ -536,6 +581,9 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  {njRed && (
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Landed past the chop — No Jump on bottom air">NJ</span>
+                  )}
                   {activeMatch.red_bib && (
                     <span className="text-sm text-slate-400 font-mono">#{activeMatch.red_bib}</span>
                   )}
@@ -546,6 +594,72 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                 </div>
               </div>
             </div>
+
+            {/* v1.29.00 (FS-18) -- persistent NJ banner + HJ set/clear controls */}
+            {njCall && (
+              <div className="bg-amber-900/20 border border-amber-700 rounded-2xl px-5 py-3 mb-4">
+                <div className="text-amber-400 font-bold text-sm">
+                  {njCall === 'both'
+                    ? 'NJ (Past Chop): BOTH.  Speed tied at 3 / 3.'
+                    : `NJ (Past Chop): ${njCall.toUpperCase()}, ${njName(njCall)}.  Speed override active: ${njCall === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'}.`}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  The Time Judge's recorded entry is kept as evidence; the override applies at calculation. Approving this match certifies the finding.
+                </div>
+              </div>
+            )}
+            {!matchComplete && (
+              <div className="bg-slate-900 rounded-2xl px-5 py-3 border border-slate-700 mb-4">
+                <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-2">NJ (Past Chop) — Landing Zone</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => { setNjConfirm({ athlete: 'blue', value: !njBlue }); setError(''); setStatusMsg('') }}
+                    disabled={njSaving}
+                    className={`py-2.5 rounded-xl text-sm font-bold border transition-colors ${njBlue
+                      ? 'bg-blue-700 border-blue-400 text-white'
+                      : 'bg-blue-900/20 border-blue-800 text-blue-400 hover:bg-blue-900/40'}`}
+                  >
+                    {njBlue ? `Clear NJ — ${njName('blue')}` : `Set Blue NJ`}
+                  </button>
+                  <button
+                    onClick={() => { setNjConfirm({ athlete: 'red', value: !njRed }); setError(''); setStatusMsg('') }}
+                    disabled={njSaving}
+                    className={`py-2.5 rounded-xl text-sm font-bold border transition-colors ${njRed
+                      ? 'bg-red-700 border-red-400 text-white'
+                      : 'bg-red-900/20 border-red-800 text-red-400 hover:bg-red-900/40'}`}
+                  >
+                    {njRed ? `Clear NJ — ${njName('red')}` : `Set Red NJ`}
+                  </button>
+                </div>
+                {njConfirm && (
+                  <div className="mt-3 rounded-xl border border-amber-700 bg-amber-900/20 px-4 py-3 space-y-3">
+                    <div className="text-sm text-amber-300 font-semibold">
+                      {njConfirm.value
+                        ? ((njConfirm.athlete === 'blue' ? njRed : njBlue)
+                          ? `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  Both NJ — speed is tied at 3 / 3.`
+                          : `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  This sets their speed points to zero.`)
+                        : `Clear the NJ call for ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'})?  The Time Judge's recorded entry will govern speed.`}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => postNj(njConfirm.athlete, njConfirm.value)}
+                        disabled={njSaving}
+                        className="flex-1 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm"
+                      >
+                        {njSaving ? 'Saving...' : njConfirm.value ? 'Confirm NJ' : 'Confirm Clear'}
+                      </button>
+                      <button
+                        onClick={() => setNjConfirm(null)}
+                        disabled={njSaving}
+                        className="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 text-slate-200 font-bold py-2.5 rounded-xl transition-colors text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Two-column grid */}
             <div className="grid grid-cols-[1.5fr_1fr] gap-4 items-start">
@@ -566,15 +680,37 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                         <div className="flex items-center justify-between py-2">
                           <div className="flex items-center gap-4">
                             <span className="text-xs text-slate-500 w-28">Judge {p.judge_number}{p.judge_number <= 2 ? ' (Turns)' : p.judge_number === 3 ? ' (Air)' : p.judge_number === 4 ? ' (Time)' : ' (Overall)'}</span>
-                            {p.time_tied === 1 ? (
-                              <span className="font-bold text-amber-400 text-lg">Time Tied</span>
-                            ) : (
-                              <div className="flex items-center gap-3">
-                                <span className="font-mono font-bold text-blue-400 text-lg">{p.blue_points}</span>
-                                <span className="text-slate-600">/</span>
-                                <span className="font-mono font-bold text-red-400 text-lg">{p.red_points}</span>
-                              </div>
-                            )}
+                            {(() => {
+                              // v1.29.00 -- raw entry with the effective
+                              // (overridden) value beside it when they differ
+                              const eff = effByJudge[p.judge_number]
+                              const overridden = eff && (eff.bluePoints !== p.blue_points || eff.redPoints !== p.red_points)
+                              const raw = p.time_tied === 1
+                                ? <span className="font-bold text-amber-400 text-lg">Time Tied</span>
+                                : p.air_tied === 1
+                                ? <span className="font-bold text-amber-400 text-lg">Air Tied</span>
+                                : (
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-mono font-bold text-blue-400 text-lg">{p.blue_points}</span>
+                                    <span className="text-slate-600">/</span>
+                                    <span className="font-mono font-bold text-red-400 text-lg">{p.red_points}</span>
+                                  </div>
+                                )
+                              return (
+                                <div className="flex items-center gap-3">
+                                  {raw}
+                                  {overridden && (
+                                    <span className="text-sm font-semibold text-amber-400">
+                                      &rarr; <span className="font-mono text-blue-300">{eff.bluePoints}</span> / <span className="font-mono text-red-300">{eff.redPoints}</span>
+                                      {p.judge_number === 4 && njCall && ' (NJ)'}
+                                    </span>
+                                  )}
+                                  {p.air_tied === 1 && (
+                                    <span className="text-sm font-semibold text-slate-400">(0 / 0 — votes withheld)</span>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           </div>
                           {!matchComplete && (
                             <button
@@ -594,12 +730,19 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                           <div className="text-sm text-slate-300">
                             Judge {p.judge_number}: {p.time_tied === 1
                               ? <span className="font-bold text-amber-400">Time Tied</span>
+                              : p.air_tied === 1
+                              ? <span className="font-bold text-amber-400">Air Tied</span>
                               : <><span className="font-mono font-bold text-blue-400">{p.blue_points}</span> / <span className="font-mono font-bold text-red-400">{p.red_points}</span></>
                             }
                           </div>
                           {confirmReject?.judgeNumber === 4 && (
                             <p className="text-xs text-amber-400 font-semibold">
                               Warning: Rejecting the Time Judge will also clear the Overall Judge's score. Both must rescore.
+                            </p>
+                          )}
+                          {confirmReject?.judgeNumber === 3 && p.air_tied === 1 && (
+                            <p className="text-xs text-amber-400 font-semibold">
+                              Warning: Rejecting an Air Tied entry will also clear the Overall Judge's score. Both must rescore.
                             </p>
                           )}
                           <p className="text-xs text-red-400">
@@ -636,7 +779,11 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                   <div className={`rounded-2xl p-5 border ${hjPending ? 'border-amber-700 bg-amber-900/10' : hasWinner ? 'border-green-800 bg-green-900/10' : 'border-blue-800 bg-blue-900/10'}`}>
                     <div className="text-xs text-slate-400 uppercase tracking-wide mb-3 font-semibold">
                       {hjPending ? 'Awaiting Approval' : hasWinner ? 'Final Result' : 'Running Totals'}
-                      {pointResult.timeTied && <span className="ml-2 text-amber-400 normal-case">(Time Tied &mdash; max 19 pts)</span>}
+                      {pointResult.speedTied && <span className="ml-2 text-amber-400 normal-case">(Speed Tied &mdash; 3 / 3)</span>}
+                      {pointResult.airTied && <span className="ml-2 text-amber-400 normal-case">(Air Tied &mdash; 0 / 0)</span>}
+                      {pointResult.overallScale != null && pointResult.overallScale < 5 && (
+                        <span className="ml-2 text-slate-400 normal-case">(Overall Judge splits {pointResult.overallScale})</span>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-4 mb-3">
                       <div className="text-center">

@@ -2554,9 +2554,7 @@ router.post('/dual-results', async (req, res) => {
         ar.first_name as red_first, ar.last_name as red_last, rr.bib_number as red_bib,
         ar.gender as red_gender, ar.birth_year as red_birth_year, ar.club as red_club,
         rb.dual_seed as blue_dual_seed, rr.dual_seed as red_dual_seed,
-        rb.status as blue_reg_status, rr.status as red_reg_status,
-        (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) as blue_total,
-        (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) as red_total
+        rb.status as blue_reg_status, rr.status as red_reg_status
        FROM dual_bracket db
        LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
        LEFT JOIN athletes ab ON ab.id = rb.athlete_id
@@ -2569,6 +2567,35 @@ router.post('/dual-results', async (req, res) => {
 
     if (!bracket.length) {
       return res.status(400).json({ error: 'No bracket data found' });
+    }
+
+    // v1.29.00 -- blue_total/red_total via the engine (NJ override + tie
+    // credits) instead of raw SQL SUMs, matching the scoreboard.
+    {
+      const { calcDualMogulPointSplit } = require('../scoring/engine');
+      const matchIds = bracket.map(m => m.id);
+      const djpRows = matchIds.length ? await queryAll(
+        `SELECT * FROM dual_judge_points WHERE match_id IN (${matchIds.map(() => '?').join(',')}) ORDER BY judge_number`,
+        matchIds
+      ) : [];
+      const byMatch = {};
+      for (const r of djpRows) {
+        (byMatch[r.match_id] = byMatch[r.match_id] || []).push(r);
+      }
+      for (const m of bracket) {
+        const rows = byMatch[m.id] || [];
+        if (rows.length > 0) {
+          const split = calcDualMogulPointSplit(rows.map(r => ({
+            judgeNumber: r.judge_number, bluePoints: r.blue_points, redPoints: r.red_points,
+            timeTied: !!r.time_tied, airTied: !!r.air_tied,
+          })), m.nj_call);
+          m.blue_total = split.blueTotal;
+          m.red_total  = split.redTotal;
+        } else {
+          m.blue_total = null;
+          m.red_total  = null;
+        }
+      }
     }
 
     const runoffOption = event.runoff_option || 'runoff_to_4th';
@@ -3053,24 +3080,19 @@ router.post('/dual-bracket', async (req, res) => {
         if (!byMatch[jp.match_id]) byMatch[jp.match_id] = [];
         byMatch[jp.match_id].push(jp);
       }
+      const njByMatch = {};
+      for (const m of bracket) njByMatch[m.id] = m.nj_call || null;
       for (const [matchId, rows] of Object.entries(byMatch)) {
         const judgeScoresForCalc = rows.map(r => ({
-          judgeNumber: r.judge_number, bluePoints: r.blue_points, redPoints: r.red_points, timeTied: !!r.time_tied,
+          judgeNumber: r.judge_number, bluePoints: r.blue_points, redPoints: r.red_points,
+          timeTied: !!r.time_tied, airTied: !!r.air_tied,
         }));
-        const split = calcDualMogulPointSplit(judgeScoresForCalc);
-        // Build split string: #++#+#+#=## (skip J4 if time tied with 0/0)
-        const parts = [];
-        for (const r of rows) {
-          if (r.time_tied) continue; // skip time tied J4 (0/0)
-          parts.push(r.blue_points != null ? r.blue_points : 0);
-        }
-        const blueSplitStr = parts.join('+') + '=' + split.blueTotal;
-        const redParts = [];
-        for (const r of rows) {
-          if (r.time_tied) continue;
-          redParts.push(r.red_points != null ? r.red_points : 0);
-        }
-        const redSplitStr = redParts.join('+') + '=' + split.redTotal;
+        // v1.29.00 -- split string uses EFFECTIVE values (NJ override, 3/3
+        // speed-tie credit, 0/0 air-tie), always 5 terms: #+#+#+#+#=##
+        const split = calcDualMogulPointSplit(judgeScoresForCalc, njByMatch[matchId]);
+        const eff = split.effectiveBreakdown;
+        const blueSplitStr = eff.map(s => s.bluePoints).join('+') + '=' + split.blueTotal;
+        const redSplitStr  = eff.map(s => s.redPoints).join('+')  + '=' + split.redTotal;
         matchScores[matchId] = { blueTotal: split.blueTotal, redTotal: split.redTotal, blueSplitStr, redSplitStr };
       }
     }
@@ -3130,7 +3152,7 @@ router.post('/dual-bracket', async (req, res) => {
     // -----------------------------------------------------------------------
     // drawAthleteRow — one half of a match box
     // -----------------------------------------------------------------------
-    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place) {
+    function drawAthleteRow(x, y, w, course, first, last, bib, isWinner, isTBD, scoreStr, loserStatus, place, nj) {
       const barClr = course === 'blue' ? BLUE : RED;
       const bgClr  = isTBD    ? '#f8fafc'
                    : isWinner ? (course === 'blue' ? '#bfdbfe' : '#fecaca')  // darker winner bg
@@ -3149,9 +3171,10 @@ router.post('/dual-bracket', async (req, res) => {
         return;
       }
       const bibStr  = bib  ? String(bib)  : '—';
-      const nameStr = (last || first)
+      // v1.29.00 (FS-18) -- [NJ] tag: bottom air landed past the chop
+      const nameStr = ((last || first)
         ? `${(last || '').toUpperCase()}, ${first || ''}`
-        : '—';
+        : '—') + (nj ? '  [NJ]' : '');
       const bibX    = x + BAR_W + 3;
       const bibW    = 18;
       const nameX   = bibX + bibW + 3;
@@ -3215,6 +3238,9 @@ router.post('/dual-bracket', async (req, res) => {
       const redLost  = done && !redWon;
       const blueLoserStatus = blueLost && m.loser_status && !sc ? m.loser_status : null;
       const redLoserStatus  = redLost  && m.loser_status && !sc ? m.loser_status : null;
+      // v1.29.00 (FS-18) -- NJ name tags
+      const blueNj = m.nj_call === 'blue' || m.nj_call === 'both';
+      const redNj  = m.nj_call === 'red'  || m.nj_call === 'both';
 
       if (m.is_bye) {
         drawAthleteRow(x, y, w, 'blue', null, 'BYE', m.blue_bib, false, false);
@@ -3232,6 +3258,7 @@ router.post('/dual-bracket', async (req, res) => {
         const topScore   = redOnTop ? redScore     : blueScore;
         const topLoser   = redOnTop ? redLoserStatus  : blueLoserStatus;
         const topPlace   = redOnTop ? redPlace        : bluePlace;
+        const topNj      = redOnTop ? redNj           : blueNj;
         const botFirst   = redOnTop ? m.blue_first : m.red_first;
         const botLast    = redOnTop ? m.blue_last  : m.red_last;
         const botBib     = redOnTop ? m.blue_bib   : m.red_bib;
@@ -3240,8 +3267,9 @@ router.post('/dual-bracket', async (req, res) => {
         const botScore   = redOnTop ? blueScore    : redScore;
         const botLoser   = redOnTop ? blueLoserStatus : redLoserStatus;
         const botPlace   = redOnTop ? bluePlace       : redPlace;
-        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace);
-        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace);
+        const botNj      = redOnTop ? blueNj          : redNj;
+        drawAthleteRow(x, y,        w, topCourse, topFirst, topLast, topBib, topWon, topTBD, topScore, topLoser, topPlace, topNj);
+        drawAthleteRow(x, y + ROW_H, w, botCourse, botFirst, botLast, botBib, botWon, botTBD, botScore, botLoser, botPlace, botNj);
       }
 
       // Pairing number — just above the match box (compact layout has no

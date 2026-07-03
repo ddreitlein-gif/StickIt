@@ -466,6 +466,93 @@ function applyRepeatJumpRule(dd1, dd2, division) {
 }
 
 /**
+ * v1.29.00 -- Dual mogul NJ (landing zone / chop) + tie credit constants.
+ *
+ * FS-18 (FIS, approved 6 June 2026): each dual competitor must land the bottom
+ * air within the Landing Zone ("chop"), max 20 m from takeoff, control gates
+ * at 20.5 m.  Landing past the mark = No Jump on the bottom air and zero speed
+ * points; both past = speed tie.  These values are the FIVE judge panel
+ * figures per FIS Judging Handbook 6304.3.2 / 6304.3.5.1 (November 2025
+ * edition) -- the 2.5 tied-speed figure in the FIS text is the SEVEN judge
+ * panel value and does not apply here.  The final FS-18 chop wording awaits
+ * the 2026/27 ICR edition; if it refines the NJ specifics, adjust here only.
+ */
+const DUAL_NJ_LOSER_POINTS   = 0;  // speed points for the athlete past the chop
+const DUAL_NJ_WINNER_POINTS  = 5;  // speed points for the opponent
+const DUAL_SPEED_TIE_CREDIT  = 3;  // per-side speed credit on a speed tie (3/3)
+const DUAL_AIR_TIE_CREDIT    = 0;  // per-side air credit on an air tie (0/0 -- votes withheld)
+const DUAL_OVERALL_BASE_SCALE = 5; // Overall Judge splits 5, minus 1 per tied comparison
+
+/**
+ * Compute the EFFECTIVE per-judge dual mogul point splits after applying the
+ * NJ (landing zone) override and the tie credits.  Raw entries are never
+ * modified -- the Time Judge's real split is evidence; overrides apply at
+ * calculation time (v1.29.00 ruling 5).
+ *
+ * Speed rules, in precedence order (JH 6304.3.2 / 6304.3.5.1, 5-judge panel):
+ *   1. njCall 'blue'  -> J4 effective 0/5 (regardless of raw, incl. raw time-tied)
+ *   2. njCall 'red'   -> J4 effective 5/0
+ *   3. njCall 'both'  -> speedTied; J4 effective 3/3
+ *   4. njCall NULL + J4 raw time_tied -> speedTied; J4 effective 3/3
+ *   5. otherwise J4 effective = raw
+ * Air rule:
+ *   6. J3 raw air_tied -> airTied; J3 effective 0/0 (votes withheld -- note the
+ *      deliberate handbook asymmetry vs. the 3/3 speed credit).  The NJ finding
+ *      never modifies the air row.
+ * Overall scale:
+ *   7. 5 if neither tied, 4 if exactly one, 3 if both.  All distributed totals
+ *      (25 / 25 / 19 / 19) are odd, so a tied match is impossible.
+ *
+ * @param {Array<{judgeNumber, bluePoints, redPoints, timeTied?, airTied?}>} judgeScores raw entries
+ * @param {string|null} njCall  NULL | 'blue' | 'red' | 'both'
+ * @returns {{ effectiveScores: Array, speedTied: boolean, airTied: boolean, overallScale: number }}
+ */
+function effectiveJudgePoints(judgeScores, njCall) {
+  const scores = judgeScores || [];
+  const nj = njCall || null;
+
+  const j4 = scores.find(js => js.judgeNumber === 4);
+  const j3 = scores.find(js => js.judgeNumber === 3);
+
+  let speedTied = false;
+  if (nj === 'both') speedTied = true;
+  else if (!nj && j4 && j4.timeTied) speedTied = true;
+  // A single NJ makes the match NOT speed tied even if J4 entered time tied.
+
+  const airTied = !!(j3 && j3.airTied);
+  const overallScale = DUAL_OVERALL_BASE_SCALE - (speedTied ? 1 : 0) - (airTied ? 1 : 0);
+
+  const effectiveScores = scores.map(js => {
+    const eff = {
+      judgeNumber: js.judgeNumber,
+      bluePoints:  js.bluePoints,
+      redPoints:   js.redPoints,
+      timeTied:    !!js.timeTied,
+      airTied:     !!js.airTied,
+      overridden:  false,
+    };
+    if (js.judgeNumber === 4) {
+      if (nj === 'blue') {
+        eff.bluePoints = DUAL_NJ_LOSER_POINTS;  eff.redPoints = DUAL_NJ_WINNER_POINTS;
+        eff.overridden = true;
+      } else if (nj === 'red') {
+        eff.bluePoints = DUAL_NJ_WINNER_POINTS; eff.redPoints = DUAL_NJ_LOSER_POINTS;
+        eff.overridden = true;
+      } else if (nj === 'both' || (js.timeTied && !nj)) {
+        eff.bluePoints = DUAL_SPEED_TIE_CREDIT; eff.redPoints = DUAL_SPEED_TIE_CREDIT;
+        eff.overridden = true;
+      }
+    } else if (js.judgeNumber === 3 && js.airTied) {
+      eff.bluePoints = DUAL_AIR_TIE_CREDIT; eff.redPoints = DUAL_AIR_TIE_CREDIT;
+      eff.overridden = true;  // stored as 0/0 anyway, but flag it for display
+    }
+    return eff;
+  });
+
+  return { effectiveScores, speedTied, airTied, overallScale };
+}
+
+/**
  * Dual Mogul scoring -- temporary numbered-judge 5-point split model.
  *
  * This is an intentionally simplified model for domestic use.  It replaces the
@@ -474,10 +561,15 @@ function applyRepeatJumpRule(dd1, dd2, division) {
  * Rules:
  *   - Each judge is identified by number only (Judge 1, Judge 2, ...).
  *   - Each judge distributes exactly 5 whole points across the two competitors.
- *   - Valid splits: 5/0, 4/1, 3/2, 2/3, 1/4, 0/5.
- *   - blue_points + red_points must equal 5.
- *   - Winner is determined by summing each competitor's points across all judges.
- *   - In the event of a total tie, no winner is determined (flag for TD decision).
+ *   - Valid splits: 5/0, 0/5, 4/1, 1/4, 3/2, 2/3.
+ *   - blue_points + red_points must equal 5 (4 or 3 for the Overall Judge when
+ *     one or both of the speed/air comparisons are tied -- see
+ *     effectiveJudgePoints above).
+ *   - Winner is determined by summing each competitor's EFFECTIVE points
+ *     (v1.29.00: NJ override + tie credits applied) across all judges.
+ *   - In the event of a total tie, no winner is determined (flag for TD
+ *     decision).  With the v1.29.00 odd distributed totals this can only
+ *     happen on incomplete panels.
  *
  * What is NOT implemented here:
  *   - Automatic judging caps
@@ -485,21 +577,32 @@ function applyRepeatJumpRule(dd1, dd2, division) {
  *   - Official FIS dual moguls Classic or Direct Comparison scoring logic
  *   - Explicit air, turns, speed, or overall dual judge roles
  *
- * @param {Array<{judgeNumber: number, bluePoints: number, redPoints: number}>} judgeScores
- *   Array of individual judge point splits.  Each entry must satisfy
- *   bluePoints + redPoints === 5 and both values must be non-negative integers.
+ * @param {Array<{judgeNumber: number, bluePoints: number, redPoints: number,
+ *                timeTied?: boolean, airTied?: boolean}>} judgeScores raw entries
+ * @param {string|null} [njCall] dual_bracket.nj_call: NULL | 'blue' | 'red' | 'both'
  * @returns {{ blueTotal: number, redTotal: number, winner: string|null,
- *             judgeCount: number, breakdown: Array }}
+ *             judgeCount: number, timeTied: boolean, airTied: boolean,
+ *             speedTied: boolean, njCall: string|null, overallScale: number,
+ *             breakdown: Array, effectiveBreakdown: Array }}
  */
-function calcDualMogulPointSplit(judgeScores) {
+function calcDualMogulPointSplit(judgeScores, njCall = null) {
+  const nj = njCall || null;
   if (!judgeScores || judgeScores.length === 0) {
-    return { blueTotal: 0, redTotal: 0, winner: null, judgeCount: 0, timeTied: false, breakdown: [] };
+    const empty = effectiveJudgePoints([], nj);
+    return {
+      blueTotal: 0, redTotal: 0, winner: null, judgeCount: 0,
+      timeTied: false, airTied: empty.airTied, speedTied: empty.speedTied,
+      njCall: nj, overallScale: empty.overallScale,
+      breakdown: [], effectiveBreakdown: [],
+    };
   }
+
+  const { effectiveScores, speedTied, airTied, overallScale } =
+    effectiveJudgePoints(judgeScores, nj);
 
   let blueTotal = 0;
   let redTotal  = 0;
-
-  for (const js of judgeScores) {
+  for (const js of effectiveScores) {
     blueTotal += js.bluePoints;
     redTotal  += js.redPoints;
   }
@@ -507,7 +610,8 @@ function calcDualMogulPointSplit(judgeScores) {
   let winner = null;
   if (blueTotal > redTotal) winner = 'blue';
   else if (redTotal > blueTotal) winner = 'red';
-  // Exact tie: winner remains null -- requires TD decision.
+  // Exact tie: winner remains null -- requires TD decision (only reachable on
+  // incomplete panels; full-panel distributed totals are always odd).
 
   const timeTied = judgeScores.some(js => js.timeTied);
 
@@ -516,13 +620,19 @@ function calcDualMogulPointSplit(judgeScores) {
     redTotal,
     winner,
     judgeCount: judgeScores.length,
-    timeTied,
+    timeTied,          // raw J4 declaration (legacy consumers)
+    airTied,           // raw J3 declaration
+    speedTied,         // effective speed-tie state after NJ precedence
+    njCall: nj,
+    overallScale,
     breakdown: judgeScores.map(js => ({
       judgeNumber: js.judgeNumber,
       bluePoints:  js.bluePoints,
       redPoints:   js.redPoints,
       timeTied:    !!js.timeTied,
+      airTied:     !!js.airTied,
     })),
+    effectiveBreakdown: effectiveScores,
   };
 }
 
@@ -534,7 +644,7 @@ function calcDualMogulPointSplit(judgeScores) {
  * @param {number} redPoints
  * @returns {string|null}
  */
-function validateDualPointSplit(bluePoints, redPoints, { timeTied = false, isOverallWithTimeTied = false } = {}) {
+function validateDualPointSplit(bluePoints, redPoints, { timeTied = false, airTied = false, overallScale = null } = {}) {
   if (!Number.isInteger(bluePoints) || !Number.isInteger(redPoints)) {
     return 'blue_points and red_points must be integers';
   }
@@ -547,9 +657,17 @@ function validateDualPointSplit(bluePoints, redPoints, { timeTied = false, isOve
     }
     return null;
   }
-  if (isOverallWithTimeTied) {
-    if (bluePoints + redPoints !== 4) {
-      return `When time is tied, Overall judge blue_points + red_points must equal 4 (got ${bluePoints} + ${redPoints} = ${bluePoints + redPoints})`;
+  if (airTied) {
+    if (bluePoints !== 0 || redPoints !== 0) {
+      return 'Air tied entry must have blue_points=0 and red_points=0';
+    }
+    return null;
+  }
+  // v1.29.00 -- the Overall Judge's scale is 5 (no tie), 4 (speed OR air tied),
+  // or 3 (both tied), computed by the caller via effectiveJudgePoints.
+  if (overallScale != null && overallScale !== 5) {
+    if (bluePoints + redPoints !== overallScale) {
+      return `Overall judge blue_points + red_points must equal ${overallScale} for this match (got ${bluePoints} + ${redPoints} = ${bluePoints + redPoints})`;
     }
     return null;
   }
@@ -1235,6 +1353,7 @@ module.exports = {
   calcDualMogulResult,
   calcDualMogulPointSplit,
   validateDualPointSplit,
+  effectiveJudgePoints,
   calcTurnsScore,
   calcTurnsSumScore,
   calcTurnsSumScoreSeparate,

@@ -1,7 +1,7 @@
 const router = require('express').Router({ mergeParams: true });
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { logAudit } = require('./audit');
-const { rankResults, calcDualMogulPointSplit, pickBestRun } = require('../scoring/engine');
+const { rankResults, calcDualMogulPointSplit, effectiveJudgePoints, pickBestRun } = require('../scoring/engine');
 const { requireAuth } = require('../middleware/auth');
 const {
   buildPlacement,
@@ -19,6 +19,21 @@ router.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 // v1.6 Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * v1.29.00 -- map dual_judge_points DB rows to the engine's judgeScores shape
+ * (incl. the air_tied flag).  Every calc site must use this so the flags can't
+ * silently drop on one path.
+ */
+function mapDjpRows(rows) {
+  return (rows || []).map(r => ({
+    judgeNumber: r.judge_number,
+    bluePoints:  r.blue_points,
+    redPoints:   r.red_points,
+    timeTied:    !!r.time_tied,
+    airTied:     !!r.air_tied,
+  }));
+}
 
 /**
  * Ensure the event has a stored dual_random_seed.  Returns the seed
@@ -619,9 +634,7 @@ router.get('/', async (req, res) => {
         ab.first_name as blue_first, ab.last_name as blue_last, rb.bib_number as blue_bib,
         ar.first_name as red_first,  ar.last_name as red_last,  rr.bib_number as red_bib,
         aw.first_name as winner_first, aw.last_name as winner_last,
-        rb.dual_seed as blue_dual_seed, rr.dual_seed as red_dual_seed,
-        (SELECT SUM(djp.blue_points) FROM dual_judge_points djp WHERE djp.match_id = db.id) as blue_total,
-        (SELECT SUM(djp.red_points)  FROM dual_judge_points djp WHERE djp.match_id = db.id) as red_total
+        rb.dual_seed as blue_dual_seed, rr.dual_seed as red_dual_seed
        FROM dual_bracket db
        LEFT JOIN registrations rb ON rb.id = db.registration_id_blue
        LEFT JOIN athletes ab      ON ab.id = rb.athlete_id
@@ -633,11 +646,37 @@ router.get('/', async (req, res) => {
        ORDER BY db.bracket_round DESC, db.bracket_position`,
       [req.params.eventId]
     );
+    // v1.29.00 -- totals computed through the engine (NJ override + tie
+    // credits) instead of raw SQL SUMs, so tied-time matches read 3/3 (25)
+    // and NJ overrides show effective speed values, incl. historical matches.
+    const djpRows = await queryAll(
+      `SELECT djp.* FROM dual_judge_points djp
+       JOIN dual_bracket db ON db.id = djp.match_id
+       WHERE db.event_id = ? ORDER BY djp.judge_number`,
+      [req.params.eventId]
+    );
+    const rowsByMatch = new Map();
+    for (const r of djpRows) {
+      if (!rowsByMatch.has(r.match_id)) rowsByMatch.set(r.match_id, []);
+      rowsByMatch.get(r.match_id).push(r);
+    }
     // Attach pairing labels
     const { pairingNums, genderPrefix } = await computePairingNumbers(req.params.eventId);
     const enriched = bracket.map(m => {
       const pNum = pairingNums.get(m.id);
-      return { ...m, pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null };
+      const rows = rowsByMatch.get(m.id) || [];
+      let blue_total = null, red_total = null;
+      if (rows.length > 0) {
+        const split = calcDualMogulPointSplit(mapDjpRows(rows), m.nj_call);
+        blue_total = split.blueTotal;
+        red_total  = split.redTotal;
+      }
+      return {
+        ...m,
+        blue_total,
+        red_total,
+        pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null,
+      };
     });
     res.json(enriched);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1282,13 +1321,7 @@ router.put('/:matchId/winner', async (req, res) => {
       );
       let blueTotal = null, redTotal = null;
       if (judgePointsRows.length > 0) {
-        const judgeScoresForCalc = judgePointsRows.map(r => ({
-          judgeNumber: r.judge_number,
-          bluePoints:  r.blue_points,
-          redPoints:   r.red_points,
-          timeTied:    !!r.time_tied,
-        }));
-        const split = calcDualMogulPointSplit(judgeScoresForCalc);
+        const split = calcDualMogulPointSplit(mapDjpRows(judgePointsRows), match.nj_call);
         blueTotal = split.blueTotal;
         redTotal  = split.redTotal;
       }
@@ -1346,6 +1379,123 @@ router.put('/:matchId/winner', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// v1.29.00 (FS-18) -- POST /:matchId/nj -- set or clear a landing zone (chop)
+// NJ call for one athlete.  Body: { athlete: 'blue'|'red', value: true|false }.
+// The server computes the stored nj_call from the two per-athlete flags
+// (blue only = 'blue', red only = 'red', both = 'both', neither = NULL).
+//
+// Public: the Air Judge and HJ tablets call this with a plain fetch (no login
+// token) -- tablets must work with protection on (v1.26.02 rule; David
+// accepted the trade-off 07-03-26).  Audit-logged; locked after HJ approval.
+// ---------------------------------------------------------------------------
+router.post('/:matchId/nj', async (req, res) => {
+  try {
+    const match = await queryOne(
+      'SELECT * FROM dual_bracket WHERE id=? AND event_id=?',
+      [req.params.matchId, req.params.eventId]
+    );
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+    if (match.status === 'complete') {
+      return res.status(400).json({ error: 'Match is approved. Post-approval changes go through the edit-scores path.' });
+    }
+
+    const { athlete, value } = req.body;
+    if (athlete !== 'blue' && athlete !== 'red') {
+      return res.status(400).json({ error: "athlete must be 'blue' or 'red'" });
+    }
+
+    const oldNj = match.nj_call || null;
+    let blueSet = oldNj === 'blue' || oldNj === 'both';
+    let redSet  = oldNj === 'red'  || oldNj === 'both';
+    if (athlete === 'blue') blueSet = !!value; else redSet = !!value;
+    const newNj = blueSet && redSet ? 'both' : blueSet ? 'blue' : redSet ? 'red' : null;
+
+    if (newNj === oldNj) {
+      return res.json({ ok: true, nj_call: newNj, unchanged: true });
+    }
+
+    await execute(
+      `UPDATE dual_bracket SET nj_call=?, updated_at=datetime('now') WHERE id=?`,
+      [newNj, req.params.matchId]
+    );
+
+    // If the NJ transition changes the Overall Judge's scale (speed-tied state
+    // flipping via 'both' <-> not-both, or overriding a J4 time-tied entry),
+    // clear J5 so they rescore on the new scale (spec edges 3, 4; edge 2
+    // confirms no clear when the scale is unchanged).
+    const rowsBefore = await queryAll(
+      `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
+      [req.params.matchId]
+    );
+    const prevScale = effectiveJudgePoints(mapDjpRows(rowsBefore), oldNj).overallScale;
+    const newScale  = effectiveJudgePoints(mapDjpRows(rowsBefore), newNj).overallScale;
+    if (newScale !== prevScale) {
+      await execute('DELETE FROM dual_judge_points WHERE match_id=? AND judge_number=5', [req.params.matchId]);
+    }
+
+    // Recompute effective totals/winner (a single NJ can flip the winner even
+    // after all five judges submitted).
+    const rows = await queryAll(
+      `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
+      [req.params.matchId]
+    );
+    const result = calcDualMogulPointSplit(mapDjpRows(rows), newNj);
+
+    // Sync winner + hj_pending status, mirroring POST /:matchId/judge-points.
+    const freshMatch = await queryOne(
+      'SELECT status FROM dual_bracket WHERE id=?', [req.params.matchId]
+    );
+    const curStatus = freshMatch ? freshMatch.status : match.status;
+    if (result.winner && curStatus !== 'complete' && result.judgeCount >= 5) {
+      const winnerId = result.winner === 'blue'
+        ? match.registration_id_blue
+        : match.registration_id_red;
+      if (winnerId) {
+        await execute(
+          `UPDATE dual_bracket SET winner_registration_id=?, status='hj_pending', updated_at=datetime('now') WHERE id=?`,
+          [winnerId, req.params.matchId]
+        );
+      }
+    } else if ((!result.winner || result.judgeCount < 5) && curStatus === 'hj_pending') {
+      await execute(
+        `UPDATE dual_bracket SET winner_registration_id=NULL, status='pending', updated_at=datetime('now') WHERE id=?`,
+        [req.params.matchId]
+      );
+    }
+
+    try {
+      await logAudit(value ? 'dual_nj_set' : 'dual_nj_cleared', 'dual_match', req.params.matchId, null, {
+        event_id: req.params.eventId,
+        athlete,
+        nj_call: newNj,
+        previous: oldNj,
+      });
+    } catch (_) {}
+
+    if (req.app.broadcast) {
+      req.app.broadcast(req.params.eventId, 'dual_nj_update', {
+        matchId: req.params.matchId,
+        njCall:  newNj,
+      });
+      req.app.broadcast(req.params.eventId, 'dual_points_update', {
+        matchId:      req.params.matchId,
+        blueTotal:    result.blueTotal,
+        redTotal:     result.redTotal,
+        winner:       result.winner,
+        judgeCount:   result.judgeCount,
+        timeTied:     result.timeTied,
+        airTied:      result.airTied,
+        speedTied:    result.speedTied,
+        njCall:       result.njCall,
+        overallScale: result.overallScale,
+      });
+    }
+
+    res.json({ ok: true, nj_call: newNj, result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /reset -- clear bracket and dual seeds
 // ---------------------------------------------------------------------------
 router.delete('/reset', requireAuth, async (req, res) => {
@@ -1386,13 +1536,8 @@ router.get('/active-match', async (req, res) => {
       `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
       [match.id]
     );
-    const judgeScores = rows.map(r => ({
-      judgeNumber: r.judge_number,
-      bluePoints:  r.blue_points,
-      redPoints:   r.red_points,
-      timeTied:    !!r.time_tied,
-    }));
-    const result = calcDualMogulPointSplit(judgeScores);
+    const judgeScores = mapDjpRows(rows);
+    const result = calcDualMogulPointSplit(judgeScores, match.nj_call);
 
     // Attach pairing label
     const { pairingNums, genderPrefix } = await computePairingNumbers(req.params.eventId);
@@ -1472,12 +1617,7 @@ router.post('/manual-entry-start', requireAuth, async (req, res) => {
       `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
       [event.active_dual_match_id]
     );
-    const judgeScores = rows.map(r => ({
-      judgeNumber: r.judge_number,
-      bluePoints:  r.blue_points,
-      redPoints:   r.red_points,
-      timeTied:    !!r.time_tied,
-    }));
+    const judgeScores = mapDjpRows(rows);
 
     if (req.app.broadcast) {
       req.app.broadcast(req.params.eventId, 'dual_manual_entry_started', { matchId: event.active_dual_match_id });
@@ -1527,16 +1667,11 @@ router.get('/:matchId/judge-points', async (req, res) => {
       [req.params.matchId]
     );
 
-    // Compute running totals using the scoring engine
-    const judgeScores = rows.map(r => ({
-      judgeNumber: r.judge_number,
-      bluePoints:  r.blue_points,
-      redPoints:   r.red_points,
-      timeTied:    !!r.time_tied,
-    }));
-    const result = calcDualMogulPointSplit(judgeScores);
+    // Compute running totals using the scoring engine (NJ + tie credits applied)
+    const judgeScores = mapDjpRows(rows);
+    const result = calcDualMogulPointSplit(judgeScores, match.nj_call);
 
-    res.json({ rows, result });
+    res.json({ rows, result, nj_call: match.nj_call || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1555,7 +1690,7 @@ router.post('/:matchId/judge-points', async (req, res) => {
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
-    const { judge_number, blue_points, red_points, time_tied } = req.body;
+    const { judge_number, blue_points, red_points, time_tied, air_tied } = req.body;
 
     // Validate judge_number
     if (judge_number === undefined || judge_number === null) {
@@ -1569,54 +1704,63 @@ router.post('/:matchId/judge-points', async (req, res) => {
     const bPts = parseInt(blue_points, 10);
     const rPts = parseInt(red_points, 10);
     const isTimeTied = !!time_tied;
+    const isAirTied  = !!air_tied;
 
     // Only J4 (Time Judge) may submit time_tied
     if (isTimeTied && judgeNum !== 4) {
       return res.status(400).json({ error: 'Only the Time Judge (judge 4) can submit a time tied entry' });
     }
+    // v1.29.00 -- only J3 (Air Judge) may submit air_tied (JH 6304.3.5.1)
+    if (isAirTied && judgeNum !== 3) {
+      return res.status(400).json({ error: 'Only the Air Judge (judge 3) can submit an air tied entry' });
+    }
 
-    // Check if J4 already declared time tied (affects J5 validation)
-    const existingJ4 = await queryOne(
-      'SELECT time_tied FROM dual_judge_points WHERE match_id=? AND judge_number=4',
+    // v1.29.00 -- the Overall Judge's scale (5/4/3) depends on the speed-tie
+    // state (nj_call 'both', or J4 time_tied with no NJ) and the air-tie state
+    // (J3 air_tied), computed through the shared engine helper so validation
+    // can never diverge from scoring.
+    const existingRows = await queryAll(
+      `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
       [req.params.matchId]
     );
-    const matchHasTimeTied = isTimeTied || (existingJ4 && existingJ4.time_tied === 1 && judgeNum !== 4);
+    const prevScale = effectiveJudgePoints(mapDjpRows(existingRows), match.nj_call).overallScale;
+    const simulated = mapDjpRows(existingRows)
+      .filter(s => s.judgeNumber !== judgeNum)
+      .concat([{ judgeNumber: judgeNum, bluePoints: bPts, redPoints: rPts, timeTied: isTimeTied, airTied: isAirTied }]);
+    const newScale = effectiveJudgePoints(simulated, match.nj_call).overallScale;
 
     // Validate point split
     const splitError = validateDualPointSplit(bPts, rPts, {
       timeTied: isTimeTied,
-      isOverallWithTimeTied: judgeNum === 5 && matchHasTimeTied,
+      airTied:  isAirTied,
+      overallScale: judgeNum === 5 ? newScale : null,
     });
     if (splitError) {
       return res.status(400).json({ error: splitError });
     }
 
     // Upsert: one row per (match_id, judge_number)
-    const existing = await queryOne(
-      'SELECT id, time_tied FROM dual_judge_points WHERE match_id=? AND judge_number=?',
-      [req.params.matchId, judgeNum]
-    );
+    const existing = existingRows.find(r => r.judge_number === judgeNum) || null;
     if (existing) {
       await execute(
         `UPDATE dual_judge_points
-           SET blue_points=?, red_points=?, time_tied=?, updated_at=datetime('now')
+           SET blue_points=?, red_points=?, time_tied=?, air_tied=?, updated_at=datetime('now')
          WHERE id=?`,
-        [bPts, rPts, isTimeTied ? 1 : 0, existing.id]
+        [bPts, rPts, isTimeTied ? 1 : 0, isAirTied ? 1 : 0, existing.id]
       );
     } else {
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [uuidv4(), req.params.matchId, judgeNum, bPts, rPts, isTimeTied ? 1 : 0]
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [uuidv4(), req.params.matchId, judgeNum, bPts, rPts, isTimeTied ? 1 : 0, isAirTied ? 1 : 0]
       );
     }
 
-    // When J4 changes time_tied state, clear J5's score (they must rescore)
-    if (judgeNum === 4) {
-      const wasTimeTied = !!(existing && existing.time_tied === 1);
-      if (isTimeTied !== wasTimeTied) {
-        await execute('DELETE FROM dual_judge_points WHERE match_id=? AND judge_number=5', [req.params.matchId]);
-      }
+    // When this submission changes the Overall Judge's scale (J4 time_tied
+    // toggling OR J3 air_tied toggling), clear J5's score so they rescore on
+    // the new scale.  (nj_call transitions are handled in POST /:matchId/nj.)
+    if (judgeNum !== 5 && newScale !== prevScale) {
+      await execute('DELETE FROM dual_judge_points WHERE match_id=? AND judge_number=5', [req.params.matchId]);
     }
 
     // Return updated totals
@@ -1624,13 +1768,8 @@ router.post('/:matchId/judge-points', async (req, res) => {
       `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
       [req.params.matchId]
     );
-    const judgeScores = rows.map(r => ({
-      judgeNumber: r.judge_number,
-      bluePoints:  r.blue_points,
-      redPoints:   r.red_points,
-      timeTied:    !!r.time_tied,
-    }));
-    const result = calcDualMogulPointSplit(judgeScores);
+    const judgeScores = mapDjpRows(rows);
+    const result = calcDualMogulPointSplit(judgeScores, match.nj_call);
 
     // If the totals determine a winner, mark the match as awaiting head judge
     // approval rather than auto-finalizing.  The HJ must explicitly approve via
@@ -1665,12 +1804,16 @@ router.post('/:matchId/judge-points', async (req, res) => {
     // Broadcast the updated point totals so overlays can react
     if (req.app.broadcast) {
       req.app.broadcast(req.params.eventId, 'dual_points_update', {
-        matchId:    req.params.matchId,
-        blueTotal:  result.blueTotal,
-        redTotal:   result.redTotal,
-        winner:     result.winner,
-        judgeCount: result.judgeCount,
-        timeTied:   result.timeTied,
+        matchId:      req.params.matchId,
+        blueTotal:    result.blueTotal,
+        redTotal:     result.redTotal,
+        winner:       result.winner,
+        judgeCount:   result.judgeCount,
+        timeTied:     result.timeTied,
+        airTied:      result.airTied,
+        speedTied:    result.speedTied,
+        njCall:       result.njCall,
+        overallScale: result.overallScale,
       });
     }
 
@@ -1748,13 +1891,7 @@ router.post('/:matchId/approve', async (req, res) => {
         `SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`,
         [req.params.matchId]
       );
-      const judgeScoresForCalc = judgePointsRows.map(r => ({
-        judgeNumber: r.judge_number,
-        bluePoints:  r.blue_points,
-        redPoints:   r.red_points,
-        timeTied:    !!r.time_tied,
-      }));
-      const split = calcDualMogulPointSplit(judgeScoresForCalc);
+      const split = calcDualMogulPointSplit(mapDjpRows(judgePointsRows), match.nj_call);
 
       const [winReg, blueReg, redReg] = await Promise.all([
         queryOne(`SELECT r.bib_number, a.first_name, a.last_name, a.club FROM registrations r JOIN athletes a ON a.id=r.athlete_id WHERE r.id=?`, [winnerId]),
@@ -1822,7 +1959,10 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
-    const { winner_registration_id, loser_status, judges, time_tied } = req.body;
+    const { winner_registration_id, loser_status, judges, time_tied, nj_blue, nj_red, air_tied } = req.body;
+
+    // v1.29.00 (FS-18) -- derive the stored nj_call from the paper checkboxes
+    const njCall = nj_blue && nj_red ? 'both' : nj_blue ? 'blue' : nj_red ? 'red' : null;
 
     // --- Path A: DNS/DNF/DSQ ---
     if (winner_registration_id && loser_status) {
@@ -1831,8 +1971,8 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
         : match.registration_id_blue;
 
       await execute(
-        `UPDATE dual_bracket SET winner_registration_id=?, loser_status=?, status='complete', updated_at=datetime('now') WHERE id=?`,
-        [winner_registration_id, loser_status, req.params.matchId]
+        `UPDATE dual_bracket SET winner_registration_id=?, loser_status=?, nj_call=?, status='complete', updated_at=datetime('now') WHERE id=?`,
+        [winner_registration_id, loser_status, njCall, req.params.matchId]
       );
 
       // Delete any existing judge points for this match
@@ -1902,6 +2042,18 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     }
 
     const isTimeTied = !!time_tied;
+    const isAirTied  = !!air_tied;
+
+    // Build the engine-shaped scores once; the Overall Judge's scale (5/4/3)
+    // comes from the shared helper so paper entry can't diverge from tablets.
+    const judgeScores = judges.map(j => ({
+      judgeNumber: parseInt(j.judge_number, 10),
+      bluePoints:  parseInt(j.blue_points, 10),
+      redPoints:   parseInt(j.red_points, 10),
+      timeTied:    isTimeTied && parseInt(j.judge_number, 10) === 4,
+      airTied:     isAirTied  && parseInt(j.judge_number, 10) === 3,
+    }));
+    const { overallScale } = effectiveJudgePoints(judgeScores, njCall);
 
     // Validate all judge splits
     for (const j of judges) {
@@ -1910,7 +2062,8 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
       const rPts = parseInt(j.red_points, 10);
       const splitError = validateDualPointSplit(bPts, rPts, {
         timeTied: isTimeTied && jNum === 4,
-        isOverallWithTimeTied: isTimeTied && jNum === 5,
+        airTied:  isAirTied  && jNum === 3,
+        overallScale: jNum === 5 ? overallScale : null,
       });
       if (splitError) {
         return res.status(400).json({ error: `Judge ${jNum}: ${splitError}` });
@@ -1924,21 +2077,16 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     for (const j of judges) {
       const jNum = parseInt(j.judge_number, 10);
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [uuidv4(), req.params.matchId, jNum, parseInt(j.blue_points, 10), parseInt(j.red_points, 10),
-         (isTimeTied && jNum === 4) ? 1 : 0]
+         (isTimeTied && jNum === 4) ? 1 : 0,
+         (isAirTied  && jNum === 3) ? 1 : 0]
       );
     }
 
-    // Calculate totals
-    const judgeScores = judges.map(j => ({
-      judgeNumber: parseInt(j.judge_number, 10),
-      bluePoints:  parseInt(j.blue_points, 10),
-      redPoints:   parseInt(j.red_points, 10),
-      timeTied:    isTimeTied && parseInt(j.judge_number, 10) === 4,
-    }));
-    const result = calcDualMogulPointSplit(judgeScores);
+    // Calculate totals (effective: NJ override + tie credits)
+    const result = calcDualMogulPointSplit(judgeScores, njCall);
 
     if (!result.winner) {
       return res.status(400).json({ error: 'Scores are tied. TD must decide the winner.' });
@@ -1951,10 +2099,10 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
       ? match.registration_id_red
       : match.registration_id_blue;
 
-    // Mark match complete with winner
+    // Mark match complete with winner (+ the NJ finding, spec §8)
     await execute(
-      `UPDATE dual_bracket SET winner_registration_id=?, status='complete', updated_at=datetime('now') WHERE id=?`,
-      [winnerId, req.params.matchId]
+      `UPDATE dual_bracket SET winner_registration_id=?, nj_call=?, status='complete', updated_at=datetime('now') WHERE id=?`,
+      [winnerId, njCall, req.params.matchId]
     );
 
     await advanceWinner(req.params.eventId, match, winnerId, loserId);
