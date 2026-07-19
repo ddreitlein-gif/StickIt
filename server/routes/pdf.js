@@ -22,9 +22,18 @@ const USSS_LOGO = path.join(__dirname, '..', 'public', 'logos', 'usss.png');
 const STICKIT_LOGO = path.join(__dirname, '..', 'public', 'logos', 'stickit.png');
 const MEET_LOGOS_DIR = path.join(__dirname, '..', 'data', 'logos');
 
+// Ensure the logos directory exists at startup. On a fresh persistent disk
+// (e.g. Render) the data mount exists but this subfolder does not, and multer
+// will not create it — the first upload would fail with "Failed to upload logo".
+try { fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true }); } catch {}
+
 // Multer setup for meet logo uploads
 const logoStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, MEET_LOGOS_DIR),
+  destination: (req, file, cb) => {
+    // Belt-and-suspenders: recreate the dir if it was removed after boot.
+    try { fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true }); } catch {}
+    cb(null, MEET_LOGOS_DIR);
+  },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `meet_${req.params.meetId}${ext}`);

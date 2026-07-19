@@ -6,7 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 // Configure multer for temp file uploads
-const upload = multer({ dest: path.join(__dirname, '../../data/tmp') });
+const USSS_TMP_DIR = path.join(__dirname, '../../data/tmp');
+try { fs.mkdirSync(USSS_TMP_DIR, { recursive: true }); } catch {}
+const upload = multer({ dest: USSS_TMP_DIR });
 
 // GET /api/usss/status -- sync status and record counts
 router.get('/status', async (req, res) => {

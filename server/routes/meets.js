@@ -10,7 +10,12 @@ const { VERSION } = require('../version');
 const EXPORT_VERSION = VERSION.replace(/^v/, '');
 
 const MEET_LOGOS_DIR = path.join(__dirname, '..', 'data', 'logos');
-const importUpload = multer({ dest: path.join(__dirname, '..', 'data', 'tmp'), limits: { fileSize: 50 * 1024 * 1024 } });
+const IMPORT_TMP_DIR = path.join(__dirname, '..', 'data', 'tmp');
+// On a fresh persistent disk these subfolders don't exist yet and multer won't
+// create them, so ensure them at startup (fixes upload failures on Render).
+try { fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true }); } catch {}
+try { fs.mkdirSync(IMPORT_TMP_DIR, { recursive: true }); } catch {}
+const importUpload = multer({ dest: IMPORT_TMP_DIR, limits: { fileSize: 50 * 1024 * 1024 } });
 // recordWrite is not called directly here; the autosave middleware in index.js
 // accounts for all successful write requests automatically.
 
