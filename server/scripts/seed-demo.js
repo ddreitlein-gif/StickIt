@@ -2,10 +2,10 @@
 /**
  * Seed demo data for beta testing via REST API.
  * Usage: node scripts/seed-demo.js [BASE_URL]
- * Default: https://mogul-scoring-production.up.railway.app
+ * Default: https://stickit-tga4.onrender.com
  */
 
-const BASE = process.argv[2] || 'https://mogul-scoring-production.up.railway.app';
+const BASE = process.argv[2] || 'https://stickit-tga4.onrender.com';
 
 const MALE_FIRST = ['Jake','Connor','Tyler','Ryan','Brody','Mason','Logan','Ethan','Cole','Nate'];
 const FEMALE_FIRST = ['Ava','Emma','Lily','Sophie','Mia','Zoe','Chloe','Ella','Grace','Nora'];

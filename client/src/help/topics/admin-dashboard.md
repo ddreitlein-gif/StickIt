@@ -45,7 +45,7 @@ The Admin Dashboard is the system administrator's landing page at `/admin/dashbo
 ### What's not yet here
 
 - Per-event drilldown (planned)
-- Detailed query traces (out of scope; consider Railway / Grafana)
+- Detailed query traces (out of scope; consider the host dashboard — Render/Railway — or Grafana)
 - Email alerts on errors (out of scope)
 
 ### Sidebar entry

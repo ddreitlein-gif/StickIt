@@ -143,7 +143,7 @@ export default function AdminBackups() {
           <li>Restart the server. The restored database is now live.</li>
         </ol>
         <div className="mt-2 text-xs text-amber-200/60">
-          On Railway, restoring requires write access to the persistent volume — typically a redeploy with the file in place, or a Railway shell session.
+          On a cloud host (Render/Railway), restoring this way requires write access to the persistent disk — typically a redeploy with the file in place, or a host shell session. The in-app Restore button above avoids that need.
         </div>
       </div>
 

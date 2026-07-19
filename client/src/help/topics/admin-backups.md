@@ -51,7 +51,7 @@ All connected tablets and scoreboards will refetch from the restored database af
 
 ### Restoring manually (alternative)
 
-The file-swap path still works if you prefer it: stop the server, replace `data/scoring.db` with the downloaded backup file, restart. On Railway this requires access to the persistent volume; the in-app Restore button avoids that need.
+The file-swap path still works if you prefer it: stop the server, replace `data/scoring.db` with the downloaded backup file, restart. On a cloud host (Render/Railway) this requires access to the persistent disk; the in-app Restore button avoids that need.
 
 ### Recovery instructions on-page
 
@@ -72,7 +72,7 @@ If an auto-backup fails (disk full, file system error), the error is captured in
 
 - **Before any risky operation** (re-seed, force-finalize, manual SQL): trigger a manual backup.
 - **End of meet day**: download a backup for off-site storage.
-- **Pre-Railway-deploy**: ensure recent backup exists locally before pushing changes.
+- **Pre-deploy**: ensure a recent backup exists locally before pushing changes (pushes auto-deploy to the cloud hosts).
 
 ### Manual exports separate from backups
 

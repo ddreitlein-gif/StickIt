@@ -149,7 +149,9 @@ Add **G** to any invert for grab (e.g. `bTG`). Dual mogul DDs are ×1.25. Jump c
 
 ## Cloud Deployment (optional)
 
-To run in the cloud for remote access, deploy to any Node.js host (Railway, Render, Fly.io).
+To run in the cloud for remote access, deploy to any Node.js host. Production runs on
+**Render** (primary, https://stickit-tga4.onrender.com) with a legacy **Railway** deployment
+kept in sync — both auto-deploy from every push to `main` via their GitHub integrations.
 Set environment variable `LIBSQL_URL` to a hosted Turso database URL and `LIBSQL_AUTH_TOKEN` for auth.
 
 ---

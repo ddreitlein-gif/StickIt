@@ -29,11 +29,27 @@ cd client && npm run build   # outputs to client/dist/
 cd server && npm start
 ```
 
+### Deployment (as of v1.30.01, 2026-07-19)
+
+Two cloud hosts, **both auto-deploy from every push to `main`** on `ddreitlein-gif/StickIt`
+(GitHub integration on each platform — no manual deploy commands):
+
+| Host | URL | Role |
+|---|---|---|
+| **Render** | https://stickit-tga4.onrender.com | **Primary** (persistent disk; ~60s deploy) |
+| Railway | https://mogul-scoring-production.up.railway.app | Legacy, kept in sync for now |
+
+Both build against `server/` only (service root directory = `/server`), so the client must be
+built locally and its output committed into `server/public/` (see Build & Package below).
+Historical feature notes below reference "Railway" as the host — that was accurate at the time;
+Render became primary in July 2026. After pushing, verify with
+`curl -s <host>/api/version` on both hosts.
+
 ### Build & Package (Release Zip)
 
 If any help topic (`client/src/help/topics/*.md`), `topicsIndex.js`, or guide script changed,
-regenerate the printable PDF guides first (requires `client/` — run locally, never on Railway)
-and commit the regenerated PDFs in `server/public/docs/guides/`:
+regenerate the printable PDF guides first (requires `client/` — run locally, never on the deploy
+hosts) and commit the regenerated PDFs in `server/public/docs/guides/`:
 
 ```bash
 node server/scripts/build_guide_pdfs.js
@@ -204,6 +220,32 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.30.02 Feature Notes
+
+### Deployment Docs Updated to Render + Railway Dual-Host (v1.30.02)
+
+Docs/copy-only release recording the July 2026 hosting reality: **Render is the primary
+production host** (https://stickit-tga4.onrender.com) with the legacy Railway deployment
+(https://mogul-scoring-production.up.railway.app) kept in sync for now. Both auto-deploy from
+every push to `main` via their GitHub integrations — verified live: both hosts picked up
+v1.30.01 from a single push with no manual steps. New "Deployment" section added near the top
+of this file; historical feature notes below intentionally still say "Railway" (accurate at the
+time they were written).
+
+Forward-looking references updated to be dual-host/host-neutral: README Cloud Deployment
+section; help topics `meets-import`, `meets-export`, `admin-backups` ("Pre-deploy" backup
+advice + persistent-disk restore note), `admin-dashboard` (guide PDFs regenerated); the
+AdminBackups recovery-instructions callout (`AdminBackups.jsx`); and `server/scripts/
+seed-demo.js` default BASE URL (now Render).
+
+**Files modified:** `CLAUDE.md`, `README.md`, `client/src/help/topics/{meets-import,
+meets-export,admin-backups,admin-dashboard}.md`, `server/public/docs/guides/*.pdf`
+(regenerated), `client/src/pages/admin/AdminBackups.jsx`, `server/scripts/seed-demo.js`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`
 
 ---
 

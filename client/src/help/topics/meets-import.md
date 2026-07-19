@@ -2,7 +2,7 @@
 
 Meet files (`.zip` exports from another StickIt installation) can be imported back into any StickIt server. This is the standard way to:
 
-- Move a meet from a practice server to the production Railway server
+- Move a meet from a practice server to the production server
 - Restore a meet from a hand-saved backup
 - Bring a partner organization's meet into your system
 

@@ -50,4 +50,4 @@ Use the [Importing a meet from file](./meets-import) flow. Single-meet exports i
 - **Before risky operations** — for example, before re-seeding a dual bracket on Day 2.
 - **End of meet** — keep a permanent local copy of the final state for the season archive.
 - **Sharing** — if a partner organization needs the data, an export is the cleanest hand-off.
-- **Migrating** — when moving a meet to a different StickIt server (e.g., promoting from a practice instance to the production Railway deploy).
+- **Migrating** — when moving a meet to a different StickIt server (e.g., promoting from a practice instance to the production deploy).
