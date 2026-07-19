@@ -132,6 +132,12 @@ export default function Home() {
 
           <div style={{ textAlign: 'center', color: 'var(--fg-dim)', fontSize: 11 }}>
             <p style={{ margin: 0 }}>© Rocky Mountain Freestyle</p>
+            <p style={{ margin: '4px 0 0' }}>
+              {/* Plain anchor (not react-router Link) — /privacy.html is a static file served by express.static */}
+              <a href="/privacy.html" style={{ color: 'var(--fg-dim)', fontSize: 10, textDecoration: 'underline' }}>
+                Privacy Policy
+              </a>
+            </p>
             {version && (
               <p className="sk-mono" style={{ margin: '4px 0 0', fontSize: 10, opacity: 0.7 }}>
                 {version}

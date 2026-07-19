@@ -46,6 +46,7 @@ cd client && npm run build
 cp client/dist/index.html server/public/index.html
 rm -f server/public/assets/index-*   # clear stale hashed bundles from prior builds
 cp client/dist/assets/* server/public/assets/
+cp client/dist/privacy.html server/public/privacy.html   # static privacy policy (from client/public/, v1.30.01)
 # Note: logo.png in server/public/ is read-only — use targeted copy, not cp -r dist/* server/public/
 # If cp/rm hit "Operation not permitted" (macOS), do the same copies via node fs (copyFileSync) — that works.
 ```
@@ -203,6 +204,34 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.30.01 Feature Notes
+
+### Public Privacy Policy Page (v1.30.01)
+
+Static privacy policy at `/privacy.html` for the iOS "Live Score" App Store review — Apple's
+reviewer fetches it anonymously, so it must load with no login. Content supplied by David
+verbatim (StickIt Live Score policy, contact david@dreitlein.net).
+
+**Source of truth is `client/public/privacy.html`** (Vite's default `publicDir` copies it to
+`dist/` root on build), NOT `server/public/` directly — that's build output. The Build & Package
+steps above gained a `cp client/dist/privacy.html server/public/privacy.html` line; the copied
+file is committed like the rest of `server/public`.
+
+**No auth changes needed.** `express.static` (`server/index.js:215`) is mounted before the SPA
+catch-all and entirely outside the `/api` auth surface, so `/privacy.html` is served as a real
+file with `Cache-Control: no-cache` and stays public even with password protection ON — verified
+on a scratch server with protection enabled via the real admin flow.
+
+The public Home page footer (`client/src/pages/Home.jsx`) gained a small "Privacy Policy" link
+under the © line — a plain `<a href="/privacy.html">` (not a react-router `Link`, since the
+target is a static file outside the SPA).
+
+**Files created:** `client/public/privacy.html`, `server/public/privacy.html` (build-copied)
+**Files modified:** `client/src/pages/Home.jsx`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
