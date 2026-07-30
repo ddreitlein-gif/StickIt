@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StickIt LiveScore — Support</title>
+<style>
+  :root {
+    --bg: #0e1420;
+    --card: #161e2e;
+    --text: #e8edf5;
+    --dim: #93a1b8;
+    --accent: #e33d4e;
+    --hairline: rgba(255,255,255,0.10);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --text: #1a2230;
+      --dim: #5a6b82;
+      --hairline: rgba(0,0,0,0.10);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 24px 16px 64px;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  header { text-align: center; padding: 32px 0 24px; }
+  header h1 { font-size: 1.6rem; font-weight: 700; }
+  header p { color: var(--dim); margin-top: 4px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 12px;
+  }
+  .card h3 { font-size: 1rem; margin: 14px 0 4px; }
+  .card h3:first-of-type { margin-top: 0; }
+  .card p { color: var(--dim); font-size: 0.95rem; }
+  a.button {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 12px 22px;
+    border-radius: 10px;
+    margin-top: 8px;
+  }
+  a { color: var(--accent); }
+  footer {
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.8rem;
+    margin-top: 32px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>StickIt LiveScore</h1>
+    <p>Support &amp; Help</p>
+  </header>
+
+  <div class="card">
+    <h2>Contact Us</h2>
+    <p>Questions, problems, or feedback about the StickIt LiveScore app? Email us and
+    we'll get back to you as soon as we can — usually within 1–2 business days.</p>
+    <a class="button" href="mailto:info@rockymountainfreestyle.com?subject=StickIt%20LiveScore%20Support">Email Support</a>
+  </div>
+
+  <div class="card">
+    <h2>Frequently Asked Questions</h2>
+
+    <h3>The app shows no events. Is something wrong?</h3>
+    <p>Events appear only when a competition has been published to the scoring server.
+    Outside of competition weekends the list may be empty — check back on event day.</p>
+
+    <h3>Scores aren't updating.</h3>
+    <p>The scoreboard refreshes automatically every few seconds while the app is open.
+    If it stalls, check your internet connection, then pull down or reopen the event.
+    On weak venue networks, moving to better coverage usually resolves it.</p>
+
+    <h3>What is the "Local venue" server option?</h3>
+    <p>At the venue, the scoring computer can serve results directly over the local
+    Wi‑Fi network. Open Settings (gear icon on the Events screen), choose Local venue,
+    and enter the address shown on the scoring computer. The app will ask for Local
+    Network permission the first time — this is required for on‑site scoring and is
+    used for nothing else.</p>
+
+    <h3>How do Favorites work?</h3>
+    <p>Tap the star next to any athlete to follow them. While the app is open, you'll
+    get on‑screen banners when they're up next, when their score posts, and when their
+    final placement is decided.</p>
+
+    <h3>Does the app collect my personal data?</h3>
+    <p>No. StickIt LiveScore requires no account and collects no personal data. It only
+    reads publicly published competition results from the scoring server. Favorites and
+    settings are stored on your device only.</p>
+
+    <h3>Is a score shown in the app official?</h3>
+    <p>Scores shown in the app are live and may be corrected by officials. The
+    scoring system's published final results are authoritative.</p>
+  </div>
+
+  <div class="card">
+    <h2>About</h2>
+    <p>StickIt LiveScore is a free, read‑only spectator app for live freestyle ski
+    competition results, provided by Rocky Mountain Freestyle. No login, no ads, no
+    tracking.</p>
+  </div>
+
+  <footer>
+    <p>© 2026 Rocky Mountain Freestyle · <a href="mailto:info@rockymountainfreestyle.com">info@rockymountainfreestyle.com</a></p>
+  </footer>
+</main>
+</body>
+</html>

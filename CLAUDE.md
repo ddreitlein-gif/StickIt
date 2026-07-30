@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.30.00
+**Current version:** v1.30.03
 
 ## Commands
 
@@ -63,6 +63,7 @@ cp client/dist/index.html server/public/index.html
 rm -f server/public/assets/index-*   # clear stale hashed bundles from prior builds
 cp client/dist/assets/* server/public/assets/
 cp client/dist/privacy.html server/public/privacy.html   # static privacy policy (from client/public/, v1.30.01)
+cp client/dist/support.html server/public/support.html   # static support page (from client/public/, v1.30.03)
 # Note: logo.png in server/public/ is read-only — use targeted copy, not cp -r dist/* server/public/
 # If cp/rm hit "Operation not permitted" (macOS), do the same copies via node fs (copyFileSync) — that works.
 ```
@@ -220,6 +221,26 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v1.30.03 Feature Notes
+
+### Public Support Page (v1.30.03)
+
+Static support page at `/support.html` for the iOS "Live Score" App Store listing, mirroring
+the v1.30.01 privacy-policy pattern exactly. Content supplied by David verbatim (from the
+StickIt Live Score Xcode project's `support.html`).
+
+**Source of truth is `client/public/support.html`** (Vite's publicDir copies it to `dist/` root
+on build); the build-copied `server/public/support.html` is committed like the rest of
+`server/public`. Served by the existing `express.static` mount (`server/index.js:215`) — no
+route changes, public with password protection ON, `Cache-Control: no-cache`. The Build &
+Package steps above gained a `cp client/dist/support.html server/public/support.html` line.
+
+**Files created:** `client/public/support.html`, `server/public/support.html` (build-copied)
+**Files modified:** `server/version.js`, `client/src/components/Layout.jsx`,
+`client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
