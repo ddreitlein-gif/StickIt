@@ -299,6 +299,26 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
 - Step-2 suite 57/57 incl. per-table checksum parity cloud↔venue for all snapshot
   tables; cumulative harness 193/193.
 
+**Step 3 — Venue mode + home screen (complete).**
+- Venue API: two-PIN model (R3; Control session token gates officials mutations via
+  a venue variant of requireAuth — FR-14: token lives in `stickit_auth_token` and
+  rides `authHeaders()`), seat registry J1–J7 (R1: free claim, taken shown taken,
+  Control force-release), FR-15 auto-follow role targets (seats/HJ/timekeeper/
+  scoreboard resolve the active event live; tracker fed from `app.broadcast` in
+  venue mode + DB fallback), permanent `/overlay` with operator pin override (R4),
+  Connection Info with QR + numeric overlay URL (D3). FR-16: per-judge pins
+  bypassed in venue mode.
+- Client: venue home screen (role menu, adopt-by-code, USB import, PIN setup),
+  iframe role wrappers (role pages untouched), FR-10 freeze screens (states wired;
+  server sets them in Step 5), device role memory with reboot-return, FR-13 root
+  switch, venue overlay-pin control on the Scoring tab, voice-offline notice (6.6).
+- FR-18: ALL fonts self-hosted via @fontsource (`client/src/fonts.js`); Google
+  Fonts CDN links removed from index.html/PublicLayout/Overlay; venue pages make
+  zero external-origin requests (Playwright-verified). NOTE: build+package must
+  now copy the font files in `client/dist/assets/` too (~4MB); the release zip
+  will exceed the old ~3MB guideline (~7MB expected).
+- Step-3 suite 54/54 (HTTP + Playwright); cumulative harness 247/247.
+
 ---
 
 ## v1.30.03 Feature Notes

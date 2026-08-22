@@ -1222,11 +1222,24 @@ function NextAthleteScreen({ lastSavedName, recording, audioLevel, onToggle, onD
 }
 
 function ErrorScreen({ error, onRetry, onClose }) {
+  // v2.0.00 (6.6) — venue-mode notice: voice entry rides the cloud speech
+  // service, so a WAN outage makes it unavailable. Show the plain-language
+  // reason instead of a cryptic failure. Cloud-mode rendering is unchanged.
+  const [venue, setVenue] = useState(false);
+  useEffect(() => {
+    fetch('/api/venue/status').then(r => r.json()).then(s => setVenue(s.mode === 'venue')).catch(() => {});
+  }, []);
   return (
     <div className="space-y-6 text-center">
       <div className="bg-rose-900/30 border border-rose-700 rounded p-4">
         <div className="text-rose-300 font-semibold mb-2">Voice service unavailable</div>
         <div className="text-rose-200 text-sm">{error || 'Use keyboard manual entry.'}</div>
+        {venue && (
+          <div className="text-amber-300 text-sm mt-2">
+            Voice entry needs the internet (cloud speech service). If the uplink is down,
+            use keyboard manual entry — scoring itself works fine offline.
+          </div>
+        )}
       </div>
       <div className="flex justify-center gap-3">
         <button onClick={onRetry} className="px-4 py-2 bg-mountain-600 hover:bg-mountain-500 rounded text-white">Retry</button>

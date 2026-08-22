@@ -56,7 +56,35 @@ async function isAuthEnabled() {
   }
 }
 
+// v2.0.00 (Step 3, R3/FR-14) -- venue-mode variant: the officials-mutation
+// endpoints that cloud mode protects with JWT are gated by the Control-PIN
+// session token instead. The token lives under the SAME localStorage key
+// (stickit_auth_token) and rides the existing authHeaders() path. Before PINs
+// are set (fresh Pi, pre-adoption) this is a pass-through, like auth-disabled
+// cloud mode. Cloud username/password auth is never used at the venue.
+async function venueRequireControl(req, res, next) {
+  try {
+    const { queryOne } = require('../db/schema');
+    const pinRow = await queryOne(`SELECT value FROM app_settings WHERE key='venue_control_pin_hash'`);
+    if (!pinRow || !pinRow.value) return next(); // PINs not set yet
+    const tokRow = await queryOne(`SELECT value FROM app_settings WHERE key='venue_control_token'`);
+    const header = req.headers['authorization'] || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!tokRow || !token || token !== tokRow.value) {
+      return res.status(401).json({ error: 'Control PIN required', venue_pin: 'control' });
+    }
+    // The Control station is the venue's full operator (LAN trusted, R3):
+    // satisfies every role check locally.
+    req.user = { id: 'venue-control', username: 'venue-control', display_name: 'Scoring Computer', role: 'system_admin', is_active: 1 };
+    return next();
+  } catch (e) {
+    return next(e);
+  }
+}
+
 async function requireAuth(req, res, next) {
+  const { isVenueMode } = require('../venue/mode');
+  if (isVenueMode()) return venueRequireControl(req, res, next);
   if (!(await isAuthEnabled())) return next();
   const header = req.headers['authorization'];
   if (!header || !header.startsWith('Bearer ')) {
@@ -78,6 +106,11 @@ async function requireAuth(req, res, next) {
 
 function requireRole(role) {
   return async (req, res, next) => {
+    // v2.0.00 (Step 3) -- venue mode: requireAuth (venueRequireControl) already
+    // attached the Scoring Computer identity (system_admin-equivalent locally),
+    // or passed through when PINs aren't set. Role ranks don't apply.
+    const { isVenueMode } = require('../venue/mode');
+    if (isVenueMode()) return next();
     if (!(await isAuthEnabled())) return next();
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     const userRank = ROLE_RANK[req.user.role] || 0;

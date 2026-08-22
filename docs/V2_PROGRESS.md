@@ -184,7 +184,69 @@ Run: `node run.js` (all suites) or `node run.js step0` (filtered by filename).
 - 300ms post-lock drain before snapshot (single-process Express; writes are short);
   post-lock writes are 423 and pre-lock writes are inside the snapshot either way.
 - Venue keeps the raw sync token in local app_settings (local disk trusted, R3).
-## Step 3 — Venue mode + home screen — NOT STARTED
+## Step 3 — Venue mode + home screen ✅ COMPLETE
+
+**Built (server):**
+- `server/routes/venue.js` additions: PINs (R3 — `GET /pins/status`, `POST /pins`
+  [4-digit validation; change requires current Control token; token rotates],
+  `POST /verify-pin` → Control session token / crew ok), seat registry (R1 —
+  `venue_seats` venue-local table, `GET /seats` with per-seat judge mapping for the
+  active event, claim/409-on-taken/release/force-release[Control token]),
+  auto-follow role targets (FR-15 — `GET /role-target?role=judge|hj|timekeeper|
+  scoreboard&seat=Jn` resolving the ACTIVE event + per-event judge by canonical
+  seat→role order per discipline), permanent overlay target (R4 —
+  `GET /overlay-target` honoring the operator pin, `POST /overlay-pin` [Control]),
+  `GET /connection-info` (IPv4s, mDNS URL, complete numeric overlay URL for the
+  YoloBox).
+- `server/venue/active.js` — auto-follow tracker fed by a venue-mode hook in
+  `app.broadcast` (run_started / dual_match_started take the spotlight) with DB
+  fallback after restart (scoring run → active dual match → recent event).
+- `server/middleware/auth.js` — venue variant (FR-14): in venue mode, requireAuth
+  becomes venueRequireControl (pass-through until PINs set; then Bearer must equal
+  the Control session token; attaches a local system_admin-equivalent identity);
+  requireRole passes in venue mode. Cloud path byte-identical.
+- FR-16: `judges.pin` check in runs.js score submit bypassed in venue mode.
+
+**Built (client):**
+- FR-18 self-hosted fonts: `client/src/fonts.js` imports all 7 families/weights via
+  @fontsource; Google Fonts links removed from index.html, PublicLayout.jsx,
+  Overlay.jsx. Zero external requests verified in Playwright. (Release-zip size note:
+  bundled fonts add ~4MB to server/public/assets.)
+- Venue pages: `VenueHome.jsx` (role menu, both states, adopt-by-code + USB file
+  import + replace confirm, PIN setup card, PIN modals, seat picker with
+  force-release, device-role-memory redirect), `VenueRole.jsx` (FR-15 iframe wrapper
+  polling /role-target 3s — role pages themselves untouched; FR-10 freeze screens
+  for checking_in/checked_in/handed_back; exit-to-menu affordance),
+  `VenueOverlay.jsx` (permanent /overlay path — transparent iframe wrapper,
+  auto-follow + pin, silent on errors), `VenueConnectionInfo.jsx` (QR via `qrcode`
+  package + numeric overlay URL).
+- `App.jsx` — FR-13 detection: root route swaps to VenueHome in venue mode; venue
+  routes + bare /overlay registered only in venue mode.
+- EventDetail Scoring tab: venue-only overlay pin control (R4). Voice modal (6.6):
+  venue-mode plain-language offline notice appended to the unavailable screen.
+- api.js venue helpers.
+
+**Tested (harness/tests/step3.test.js — 54/54; cumulative 247/247; verify_v16 123/123):**
+- PIN lifecycle; FR-14 401-without/200-with token; tablet endpoints public;
+  FR-16 bypass; seat claim/conflict/force-release; role targets for all four roles;
+  FR-15 auto-follow across an interleaved M/F day (every role); overlay pin
+  override independent of role auto-follow; connection info; mode gating of
+  /api/sync vs /api/venue.
+- Playwright: venue menu renders; scoreboard tile PIN-free; crew PIN wrong/right →
+  seat picker → claim → judge iframe; REBOOT-RETURN (new page, same context →
+  straight back to the seat page); Control PIN → /dashboard → end-to-end officials
+  mutation from the browser via stickit_auth_token; ZERO external-origin requests
+  on venue pages (fonts offline); cloud root unchanged.
+
+**Implementation choices:**
+- Role auto-follow via full-screen IFRAME wrappers around the EXISTING role pages
+  (URLs stay stable per FR-15; role pages untouched per Section 13). Overlay same.
+- Seat→role mapping: canonical per-discipline orders (mogul TL1-3/Air1-2; dual
+  DualTurns1/2/DualAir/DualTime/DualOverall; aerials AeJudge1-7; legacy aerials
+  component order).
+- Control token satisfies every role rank locally (LAN trusted, R3); venue never
+  uses cloud accounts.
+- Crew PIN is client-side page gating only (tablet endpoints stay public, V6).
 ## Step 4 — Upsync — NOT STARTED
 ## Step 5 — Check-in, handback, snapshots — NOT STARTED
 ## Step 6 — Packaging + docs — NOT STARTED

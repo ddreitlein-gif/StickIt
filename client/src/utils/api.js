@@ -233,6 +233,21 @@ export const api = {
     apiFetch(`/training-days/${id}/exclusions`, { method: 'POST', body: { athlete_ids, exclude } }),
   resetTrainingExclusions: (id) => apiFetch(`/training-days/${id}/reset`, { method: 'POST' }),
 
+  // v2.0.00 — venue mode (Step 3)
+  venueStatus: () => apiFetch('/venue/status'),
+  venueAdopt: (code, opts = {}) => apiFetch('/venue/adopt', { method: 'POST', body: { code, ...opts } }),
+  venueImportPackage: (pkg, opts = {}) => apiFetch('/venue/import-package', { method: 'POST', body: { package: pkg, ...opts } }),
+  venuePinsStatus: () => apiFetch('/venue/pins/status'),
+  venueSetPins: (control_pin, crew_pin, control_token) => apiFetch('/venue/pins', { method: 'POST', body: { control_pin, crew_pin, control_token } }),
+  venueVerifyPin: (kind, pin) => apiFetch('/venue/verify-pin', { method: 'POST', body: { kind, pin } }),
+  venueSeats: () => apiFetch('/venue/seats'),
+  venueClaimSeat: (seat, device_label) => apiFetch('/venue/seats/claim', { method: 'POST', body: { seat, device_label } }),
+  venueReleaseSeat: (seat) => apiFetch('/venue/seats/release', { method: 'POST', body: { seat } }),
+  venueForceReleaseSeat: (seat, control_token) => apiFetch('/venue/seats/force-release', { method: 'POST', body: { seat, control_token } }),
+  venueRoleTarget: (role, seat) => apiFetch(`/venue/role-target?role=${role}${seat ? `&seat=${seat}` : ''}`),
+  venueOverlayPin: (event_id) => apiFetch('/venue/overlay-pin', { method: 'POST', body: { event_id } }),
+  venueConnectionInfo: () => apiFetch('/venue/connection-info'),
+
   // v2.0.00 — venue adoption (Step 1)
   getMeetAdoption: (id) => apiFetch(`/meets/${id}/adoption`),
   releaseForAdoption: (id) => apiFetch(`/meets/${id}/release-for-adoption`, { method: 'POST' }),

@@ -1208,7 +1208,10 @@ router.post('/:runId/scores', async (req, res) => {
     }
     const judge = await queryOne('SELECT * FROM judges WHERE id=? AND event_id=?', [judge_id, req.params.eventId]);
     if (!judge) return res.status(403).json({ error: 'Judge not registered for this event' });
-    if (judge.pin && pin !== judge.pin) return res.status(403).json({ error: 'Invalid PIN' });
+    // v2.0.00 (FR-16) -- the optional per-judge PIN is ignored in venue mode:
+    // the Crew PIN + seat claim supersedes it. Cloud behavior unchanged.
+    const { isVenueMode } = require('../venue/mode');
+    if (!isVenueMode() && judge.pin && pin !== judge.pin) return res.status(403).json({ error: 'Invalid PIN' });
 
     const validTypes = ['turns','air_jump1','air_jump2','form','landing',
       // v1.18.00 — aerials v2 per-judge-per-jump score types

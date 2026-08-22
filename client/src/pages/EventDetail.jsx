@@ -5681,6 +5681,42 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+// v2.0.00 (Step 3, R4) — venue-mode-only control: pin the permanent broadcast
+// overlay (/overlay) to this event, overriding auto-follow. Renders nothing in
+// cloud mode.
+function VenueOverlayPinControl({ eventId }) {
+  const [venue, setVenue] = useState(false)
+  const [pinnedEventId, setPinnedEventId] = useState(null)
+  const load = () => api.venueRoleTarget('overlay').then(t => setPinnedEventId(t.pinned_event_id || null)).catch(() => {})
+  useEffect(() => {
+    api.venueStatus().then(st => {
+      if (st.mode === 'venue') { setVenue(true); load() }
+    }).catch(() => {})
+  }, [])
+  if (!venue) return null
+  const pinnedHere = pinnedEventId === eventId
+  const toggle = async () => {
+    try {
+      await api.venueOverlayPin(pinnedHere ? null : eventId)
+      load()
+    } catch (e) { alert('Overlay pin failed: ' + e.message) }
+  }
+  return (
+    <div className="mb-4 p-3 rounded-xl border border-slate-700 bg-slate-800/40 flex items-center justify-between">
+      <div className="text-sm text-slate-400">
+        Broadcast overlay: {pinnedHere
+          ? <span className="text-amber-300">pinned to this event</span>
+          : pinnedEventId
+            ? <span className="text-slate-500">pinned to another event</span>
+            : <span className="text-slate-500">following the action automatically</span>}
+      </div>
+      <button onClick={toggle} className="btn-secondary text-xs">
+        {pinnedHere ? 'Unpin (auto-follow)' : 'Pin overlay to this event'}
+      </button>
+    </div>
+  )
+}
+
 export default function EventDetail() {
   const { meetId, eventId } = useParams()
   const { user } = useAuth()
@@ -5807,6 +5843,7 @@ export default function EventDetail() {
           </button>
         ))}
       </div>
+      {activeTab==='Scoring' && <VenueOverlayPinControl eventId={eventId} />}
       {activeTab==='Registrations' && <RegistrationPanel event={event} registrations={registrations} onRefresh={refresh} />}
       {activeTab==='Event Setup'   && <EventSetupPanel event={event} judges={judges} onRefresh={refresh} />}
       {activeTab==='Links'         && <LinksPanel event={event} judges={judges} />}

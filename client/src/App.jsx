@@ -19,14 +19,35 @@ import UsssDatabase from './pages/UsssDatabase'
 import Login from './pages/Login'
 import { AuthProvider } from './auth/AuthContext'
 import RequireAuth from './auth/RequireAuth'
+import { useState, useEffect } from 'react'
+import VenueHome from './pages/venue/VenueHome'
+import VenueRole from './pages/venue/VenueRole'
+import VenueOverlay from './pages/venue/VenueOverlay'
+import VenueConnectionInfo from './pages/venue/VenueConnectionInfo'
+import { fetchVenueStatus } from './pages/venue/venueShared'
 import './index.css'
 
+// v2.0.00 (Step 3, FR-13) — explicit venue-mode detection. The client asks
+// /api/venue/status once; in venue mode the root route becomes the venue home
+// screen and the venue role/overlay routes activate. Cloud mode renders
+// exactly the v1 route tree.
+function useVenueMode() {
+  const [mode, setMode] = useState(null)
+  useEffect(() => { fetchVenueStatus().then(s => setMode(s.mode === 'venue')) }, [])
+  return mode // null while loading
+}
+
 export default function App() {
+  const venue = useVenueMode()
+  if (venue === null) return null // one-poll gate before first paint
   return (
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={venue ? <VenueHome /> : <Home />} />
+          {venue && <Route path="/venue/role/:role" element={<VenueRole />} />}
+          {venue && <Route path="/venue/connection" element={<VenueConnectionInfo />} />}
+          {venue && <Route path="/overlay" element={<VenueOverlay />} />}
           <Route path="/login" element={<Login />} />
           <Route path="/livescores" element={<LiveScores />} />
           <Route path="/help" element={<HelpPage />} />

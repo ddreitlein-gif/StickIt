@@ -32,6 +32,12 @@ app.use((req, res, next) => {
 });
 
 app.broadcast = (eventId, type, data) => {
+  // v2.0.00 (Step 3, FR-15/R4) -- in venue mode, feed the auto-follow tracker
+  // so seats / HJ / timekeeper / scoreboard / permanent overlay follow the
+  // event with the action across an interleaved day.
+  if (require('./venue/mode').isVenueMode()) {
+    try { require('./venue/active').noteActivity(eventId, type); } catch (_) {}
+  }
   const msg = JSON.stringify({ type, data, eventId });
   wss.clients.forEach(c => {
     if (c.readyState !== 1) return;
@@ -200,7 +206,10 @@ app.get('/api/venue/status', async (req, res) => {
   if (!isVenueMode()) {
     app.use('/api/sync', require('./routes/sync'));
   } else {
-    app.use('/api/venue', require('./routes/venue'));
+    const venueRouter = require('./routes/venue');
+    app.use('/api/venue', venueRouter);
+    // Venue-local tables (seat registry) — created at boot, never synced.
+    venueRouter.ensureVenueTables().catch(e => console.error('[venue] ensureVenueTables failed:', e.message));
   }
 }
 

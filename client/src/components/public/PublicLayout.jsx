@@ -9,13 +9,7 @@ const STYLE_ID = 'stickit-public-styles';
 function injectFontsAndStyles() {
   if (typeof document === 'undefined') return;
 
-  if (!document.getElementById(FONT_LINK_ID)) {
-    const link = document.createElement('link');
-    link.id = FONT_LINK_ID;
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&family=Barlow+Condensed:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap';
-    document.head.appendChild(link);
-  }
+  // v2.0.00 (FR-18): fonts are self-hosted via @fontsource (src/fonts.js) — no CDN.
 
   if (!document.getElementById(STYLE_ID)) {
     const style = document.createElement('style');
