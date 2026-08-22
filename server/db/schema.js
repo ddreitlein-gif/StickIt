@@ -37,14 +37,31 @@ async function queryOne(sql, args = []) {
   return rows[0] || null;
 }
 
-async function execute(sql, args = []) {
+// v2.0.00 (Step 4) -- installable write hook for the venue-mode outbox capture
+// layer (FR-5). Cloud mode NEVER installs a hook, so the only cloud-path change
+// is one null check. The hook receives the raw executors so its own reads and
+// outbox appends bypass capture.
+let writeHook = null;
+function setWriteHook(hook) { writeHook = hook; }
+
+async function rawExecute(sql, args = []) {
   const c = getClient();
   return c.execute({ sql, args });
 }
 
-async function batch(statements) {
+async function rawBatch(statements) {
   const c = getClient();
   return c.batch(statements, 'write');
+}
+
+async function execute(sql, args = []) {
+  if (writeHook) return writeHook.execute(sql, args);
+  return rawExecute(sql, args);
+}
+
+async function batch(statements) {
+  if (writeHook) return writeHook.batch(statements);
+  return rawBatch(statements);
 }
 
 async function initSchema() {
@@ -880,4 +897,4 @@ function shortCode() {
   return code;
 }
 
-module.exports = { getClient, queryAll, queryOne, execute, batch, initSchema, uuidv4, shortCode, rowToObj };
+module.exports = { getClient, queryAll, queryOne, execute, batch, rawExecute, rawBatch, setWriteHook, initSchema, uuidv4, shortCode, rowToObj };

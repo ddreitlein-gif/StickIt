@@ -319,6 +319,24 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   will exceed the old ~3MB guideline (~7MB expected).
 - Step-3 suite 54/54 (HTTP + Playwright); cumulative harness 247/247.
 
+**Step 4 — Upsync (complete).**
+- FR-5 write capture as a schema.js write hook (venue-only; cloud's only change
+  is a null check): pre-image SELECTs before non-PK deletes/updates, REPLACE
+  displacement handling under non-PK UNIQUE keys, post-image reads so recorded
+  rows are what actually landed, batch() coverage, loud full-table-diff
+  fallback. `sync_outbox` (seq-ordered, FR-17: never wall-clock).
+- Event-driven worker (R14): wake-on-append, ≤500ms batching, ≤2MB size-aware
+  chunks, backoff only while offline (1s→30s, reset on success), delete-after-ACK,
+  410 revoked → permanent stop (R8). Cloud apply endpoint: token auth,
+  last_applied_seq idempotency, manifest-columns-only ON CONFLICT upserts (cloud
+  lock state untouched), FR-19 per-event `sync_applied` WS nudge. Path-scoped
+  64MB JSON body limit for /api/sync + /api/venue only.
+- Gates passed: FR-7 outbox audit (replay ≡ venue DB across all 18 sync tables
+  after a full simulated meet incl. rejections, dual bracket, phase REPLACE
+  displacement, cascade deletes), outage + repeated-short-outage recovery with
+  checksum equality, R14 latency ~0.4s, viewer-API parity (FR-23 normalized).
+- Step-4 suite 52/52; cumulative harness 299/299.
+
 ---
 
 ## v1.30.03 Feature Notes

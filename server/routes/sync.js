@@ -124,4 +124,133 @@ router.post('/adopt', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/sync/meets/:meetId/changes — ordered outbox batch apply (Step 4).
+// Auth: per-adoption sync token. Ordering by seq; seqs <= last_applied_seq are
+// skipped (idempotent replay → exactly-once effect). Upserts use
+// INSERT ... ON CONFLICT(pk) DO UPDATE over MANIFEST columns only, so cloud-
+// only columns (adoption lock state on meets, orphan historical columns)
+// are never touched. After a successful batch, one generic per-event
+// `sync_applied` WS nudge is emitted (FR-19) — public cloud surfaces poll;
+// the nudge just makes WS-connected spectators refresh promptly.
+// ---------------------------------------------------------------------------
+
+async function authSyncRequest(req, res) {
+  const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.meetId]);
+  if (!meet) { res.status(404).json({ error: 'meet_not_found' }); return null; }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!meet.sync_token_hash) {
+    res.status(410).json({ error: 'adoption_revoked', message: 'This adoption was revoked or already closed on the cloud. Upsync from this venue server is no longer accepted; its local data is intact for USB recovery.' });
+    return null;
+  }
+  if (!token || hashToken(token) !== meet.sync_token_hash) {
+    res.status(401).json({ error: 'invalid_sync_token' });
+    return null;
+  }
+  if (meet.adoption_status !== 'adopted') {
+    res.status(409).json({ error: 'not_adopted', message: `Meet adoption status is ${meet.adoption_status || 'none'}.` });
+    return null;
+  }
+  return meet;
+}
+
+function upsertSql(table) {
+  const spec = protocol.TABLES[table];
+  const cols = spec.columns;
+  const nonPk = cols.filter(c => !spec.pk.includes(c));
+  const conflictUpdate = nonPk.length
+    ? `DO UPDATE SET ${nonPk.map(c => `${c}=excluded.${c}`).join(', ')}`
+    : 'DO NOTHING';
+  return `INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})
+          ON CONFLICT(${spec.pk.join(',')}) ${conflictUpdate}`;
+}
+
+/** Resolve the event id a change belongs to, for the FR-19 nudge. */
+async function eventIdForChange(tbl, pk, row) {
+  try {
+    if (row && row.event_id) return row.event_id;
+    if (tbl === 'events') return pk.id;
+    if (tbl === 'judge_scores') {
+      const r = await queryOne('SELECT event_id FROM runs WHERE id=?', [row ? row.run_id : null]);
+      return r ? r.event_id : null;
+    }
+    if (tbl === 'dual_judge_points') {
+      const r = await queryOne('SELECT event_id FROM dual_bracket WHERE id=?', [row ? row.match_id : null]);
+      return r ? r.event_id : null;
+    }
+    if (tbl === 'phase_run_order') {
+      const r = await queryOne('SELECT event_id FROM event_phases WHERE id=?', [row ? row.phase_id : null]);
+      return r ? r.event_id : null;
+    }
+    if (tbl === 'run_round_status') return pk.event_id || null;
+  } catch (_) {}
+  return null;
+}
+
+router.post('/meets/:meetId/changes', async (req, res) => {
+  try {
+    const meet = await authSyncRequest(req, res);
+    if (!meet) return;
+    const { protocol_version, changes } = req.body || {};
+    if (protocol_version !== protocol.SYNC_PROTOCOL_VERSION) {
+      return protocolMismatch(res, protocol_version);
+    }
+    if (!Array.isArray(changes)) return res.status(400).json({ error: 'changes_required' });
+
+    const sorted = [...changes].sort((a, b) => a.seq - b.seq);
+    let lastApplied = Number(meet.last_applied_seq) || 0;
+    let skipped = 0;
+    const touchedEvents = new Set();
+    let failure = null;
+
+    for (const ch of sorted) {
+      if (!ch || typeof ch.seq !== 'number') { failure = { seq: null, error: 'bad_change' }; break; }
+      if (ch.seq <= lastApplied) { skipped++; continue; }
+      const spec = protocol.TABLES[ch.tbl];
+      if (!spec || !protocol.SYNC_TABLES.includes(ch.tbl)) {
+        failure = { seq: ch.seq, error: `unknown_table:${ch.tbl}` };
+        break;
+      }
+      try {
+        if (ch.op === 'upsert') {
+          const row = protocol.manifestRow(ch.tbl, ch.row || {});
+          await execute(upsertSql(ch.tbl), spec.columns.map(c => row[c]));
+        } else if (ch.op === 'delete') {
+          await execute(
+            `DELETE FROM ${ch.tbl} WHERE ${spec.pk.map(c => `${c}=?`).join(' AND ')}`,
+            spec.pk.map(c => (ch.pk || {})[c])
+          );
+        } else {
+          failure = { seq: ch.seq, error: `unknown_op:${ch.op}` };
+          break;
+        }
+        const evId = await eventIdForChange(ch.tbl, ch.pk || {}, ch.row);
+        if (evId) touchedEvents.add(evId);
+        lastApplied = ch.seq;
+      } catch (e) {
+        failure = { seq: ch.seq, error: e.message };
+        break;
+      }
+    }
+
+    await execute(
+      `UPDATE meets SET last_applied_seq=?, last_sync_at=datetime('now'), updated_at=updated_at WHERE id=?`,
+      [lastApplied, meet.id]
+    );
+
+    // FR-19: one generic per-event nudge; no semantic WS reconstruction.
+    if (req.app.broadcast) {
+      for (const evId of touchedEvents) req.app.broadcast(evId, 'sync_applied', {});
+    }
+
+    if (failure) {
+      return res.status(422).json({ error: 'apply_failed', applied_through_seq: lastApplied, skipped, failure });
+    }
+    res.json({ applied_through_seq: lastApplied, skipped });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

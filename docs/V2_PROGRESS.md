@@ -247,7 +247,65 @@ Run: `node run.js` (all suites) or `node run.js step0` (filtered by filename).
 - Control token satisfies every role rank locally (LAN trusted, R3); venue never
   uses cloud accounts.
 - Crew PIN is client-side page gating only (tablet endpoints stay public, V6).
-## Step 4 — Upsync — NOT STARTED
+## Step 4 — Upsync ✅ COMPLETE
+
+**Built:**
+- `sync_outbox` venue-local table (seq AUTOINCREMENT, meet_id, tbl, pk JSON, op,
+  row_json, idempotency_key).
+- `server/sync/outbox.js` — FR-5 write-capture layer implemented as a schema.js
+  WRITE HOOK (`setWriteHook`; the only cloud-path change is one null check —
+  cloud never installs it). Wraps `execute` AND `batch`. Per statement:
+  UPDATE/DELETE (incl. non-PK predicates) take a pre-image SELECT reusing the
+  statement's own WHERE (top-level-WHERE finder + trailing-args slicing);
+  INSERT/REPLACE/IGNORE/ON-CONFLICT parse the explicit column list, pre-image
+  displaced rows under non-PK UNIQUE keys (phase_run_order, dual_judge_points,
+  judge_scores) and post-image the row that actually landed; unparseable SQL
+  falls back to a loud full-table diff. Active only while venue_meet_state is
+  adopted/checking_in (adoption imports are never captured). batch() captures
+  pre-images first, runs the real atomic batch, post-images in statement order.
+- `server/sync/worker.js` — event-driven (wake on append; 400ms batch window ≤
+  R14's 500ms), size-aware batching (≤500 rows AND ≤2MB), exponential backoff
+  1s→30s ONLY while the uplink is down (reset on success), ordering by seq,
+  rows deleted only after cloud ACK, 410 → permanent stop (revoked, R8),
+  `flushNow()` for check-in, `getSyncStatus()` for the home screen.
+- Cloud `POST /api/sync/meets/:meetId/changes` — sync-token auth (401 bad token
+  / 409 not adopted / 410 revoked-or-closed), protocol handshake, ordered apply
+  with last_applied_seq idempotency (skip ≤), upserts via INSERT..ON CONFLICT
+  DO UPDATE over MANIFEST columns only (cloud lock state + orphan columns
+  never touched), partial-failure stop-and-report, per-event `sync_applied` WS
+  nudge (FR-19), last_sync_at bookkeeping.
+- Path-scoped `express.json({limit:'64mb'})` for /api/sync + /api/venue ONLY
+  (registered before the global parser; every other route keeps the 100kb v1
+  default — found via harness: large outbox batches 413'd otherwise).
+- Home-screen sync status (`/api/venue/status.sync`): Up to date / N queued /
+  Offline since HH:MM / revoked.
+
+**Tested (harness/tests/step4.test.js — 52/52; cumulative 299/299; verify_v16 123/123):**
+- FR-7 OUTBOX AUDIT GATE: full meet played against the venue with the cloud DOWN
+  (mogul runs, HJ approve + reject/resubmit, DNS, full dual bracket 8 matches,
+  best_of_2 phase + reorder → phase_run_order REPLACE displacement,
+  run_round_status REPLACE, batch() reorders, athlete/bib/officials/course/meet
+  edits, training-day exclusion toggle, scratch-event cascade delete) → 391
+  outbox records replayed onto the post-adoption base ≡ live venue DB for ALL
+  18 sync tables.
+- Outage recovery: cloud restart mid-adoption → queue drains; mirror checksums ≡
+  venue for every checksum table; cloud lock state survives meets upserts;
+  idempotent replay (skip + no regression). 3 repeated short outages during
+  active scoring → zero dupes/losses (checksums equal).
+- R14 LATENCY GATE: HJ approval → visible on cloud in ~420ms (max), incl.
+  immediately after an outage. FR-19 nudge received by a subscribed WS client.
+- Auth: wrong token 401, protocol mismatch 409, post-force-unlock 410.
+- VIEWER-API PARITY GATE: same script on venue-adopted (synced) vs directly
+  cloud-scored meet → /status, /results, /results/scores, /rounds identical
+  after FR-23 normalization (scores/runs arrays canonically sorted — order is
+  not part of that endpoint's contract; documented in SYNC_PROTOCOL.md §8).
+
+**Implementation choices:**
+- Write capture as an execute/batch wrapper (single choke point) rather than
+  per-route calls — the FR-7 audit gate proves coverage; route files untouched.
+- Worker backoff max 30s so post-outage catch-up is never worse than 30s even
+  without a wake signal; any new append wakes it immediately.
+- 413-proofing via path-scoped body limits instead of raising the global limit.
 ## Step 5 — Check-in, handback, snapshots — NOT STARTED
 ## Step 6 — Packaging + docs — NOT STARTED
 ## Step 7 (optional) — Tablet submission buffering — NOT STARTED (may defer per plan)

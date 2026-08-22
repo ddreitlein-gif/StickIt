@@ -40,21 +40,34 @@ async function getVenueState() {
   };
 }
 
+// v2.0.00 (Step 4) -- every state change refreshes the outbox capture layer
+// (capture is active only while meet_state is 'adopted'/'checking_in') and,
+// when newly adopted, wakes the sync worker.
+async function notifySync() {
+  try {
+    await require('../sync/outbox').refreshCaptureState();
+    require('../sync/worker').wake();
+  } catch (_) { /* modules absent in cloud mode paths */ }
+}
+
 async function setVenueState({ meet_id, sync_token, cloud_url, meet_state }) {
   await setSetting('venue_meet_id', meet_id || '');
   if (sync_token !== undefined) await setSetting('venue_sync_token', sync_token || '');
   if (cloud_url !== undefined) await setSetting('venue_cloud_url', cloud_url || '');
   await setSetting('venue_meet_state', meet_state || 'adopted');
+  await notifySync();
 }
 
 async function setMeetState(meet_state) {
   await setSetting('venue_meet_state', meet_state);
+  await notifySync();
 }
 
 async function clearVenueState() {
   await setSetting('venue_meet_id', '');
   await setSetting('venue_sync_token', '');
   await setSetting('venue_meet_state', '');
+  await notifySync();
 }
 
 module.exports = { getVenueState, setVenueState, setMeetState, clearVenueState, getSetting, setSetting };

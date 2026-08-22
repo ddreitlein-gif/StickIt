@@ -18,6 +18,12 @@ app.startedAt = Date.now();
 app.errorLog = [];
 
 app.use(cors());
+// v2.0.00 (Step 4) -- sync/venue payloads (outbox batches, adoption packages)
+// far exceed express.json's 100kb default. Path-scoped parsers registered
+// BEFORE the global one give ONLY these routes a large limit; every other
+// route keeps the v1 default (a later json() skips an already-parsed body).
+app.use('/api/sync', express.json({ limit: '64mb' }));
+app.use('/api/venue', express.json({ limit: '64mb' }));
 app.use(express.json());
 
 // Track write operations for autosave
@@ -186,6 +192,9 @@ app.get('/api/venue/status', async (req, res) => {
         out.adopted_meet = meet || null;
         out.meet_state = state.meet_state;
         out.cloud_url = state.cloud_url;
+        // v2.0.00 (Step 4) -- home-screen sync status: Up to date / N queued /
+        // Offline since HH:MM / revoked.
+        out.sync = await require('./sync/worker').getSyncStatus();
       } else {
         out.adopted_meet = null;
         out.meet_state = null;
@@ -210,6 +219,15 @@ app.get('/api/venue/status', async (req, res) => {
     app.use('/api/venue', venueRouter);
     // Venue-local tables (seat registry) — created at boot, never synced.
     venueRouter.ensureVenueTables().catch(e => console.error('[venue] ensureVenueTables failed:', e.message));
+    // v2.0.00 (Step 4) -- outbox write-capture hook (FR-5) + event-driven
+    // upsync worker (R14). The hook is installed only here, so cloud-mode
+    // write paths never see it. A restart resumes any queued outbox rows.
+    const outboxMod = require('./sync/outbox');
+    const workerMod = require('./sync/worker');
+    outboxMod.setOnAppend(() => workerMod.wake());
+    outboxMod.installCaptureHook()
+      .then(() => workerMod.wake(1000))
+      .catch(e => console.error('[venue] outbox capture install failed:', e.message));
   }
 }
 
@@ -319,6 +337,13 @@ initSchema().then(async () => {
   // Clear any stale dual mogul manual-entry locks from a prior run. If the
   // server crashed (or the operator's browser closed) while a manual-entry
   // session was open, judges' tablets would otherwise stay locked indefinitely.
+  // v2.0.00 (Step 4) -- in venue mode, make sure the outbox capture layer is
+  // active BEFORE any boot-time mutation below, so a venue reboot mid-meet
+  // never mutates synced tables uncaptured.
+  if (require('./venue/mode').isVenueMode()) {
+    try { await require('./sync/outbox').refreshCaptureState(); } catch (_) {}
+  }
+
   // v2.0.00 (FR-9) -- never touch rows of an adopted meet at boot: a cloud
   // restart mid-meet must not mutate the venue's mirror.
   try {

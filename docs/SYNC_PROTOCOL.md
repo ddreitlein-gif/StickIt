@@ -269,7 +269,12 @@ values before deep-equality:
 4. **Volatile server fields** (uptime, startedAt, writes counters, backup
    listings) are deleted before comparison.
 5. Key order is irrelevant (structural comparison); array order is
-   significant (run orders, rankings are ordered data).
+   significant (run orders, rankings are ordered data) — EXCEPT arrays whose
+   order is not part of the API contract and follows physical row order:
+   the viewer `/results/scores` endpoint's `scores` and `runs` arrays (the
+   client groups them by `run_id`, v1.23.00). Those are canonically sorted by
+   semantic keys (run_time/jump codes, score_type, role, judge_number) before
+   comparison.
 
 The same aliasing applies to both corpora independently; comparison is then
 strict deep-equality.
