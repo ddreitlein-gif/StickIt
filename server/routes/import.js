@@ -37,6 +37,15 @@ async function importRow(norm, eventId) {
     );
   }
 
+  // v2.0.00 (FR-8) -- an athlete registered in an adopted meet is locked on
+  // the cloud; skip the update rather than silently diverging from the venue.
+  if (existing) {
+    const { isAthleteAdoptionLocked } = require('../sync/adoption');
+    if (await isAthleteAdoptionLocked(existing.id)) {
+      return { status: 'skipped', reason: 'Athlete is registered in a meet currently adopted by a venue server (locked)' };
+    }
+  }
+
   if (existing) {
     // Merge: overwrite only with non-blank incoming values
     await execute(
@@ -137,6 +146,13 @@ router.post('/athletes', async (req, res) => {
     const { rows, eventId } = req.body;
     if (!rows || !Array.isArray(rows))
       return res.status(400).json({ error: 'rows array required' });
+    // v2.0.00 -- refuse imports that target an event of an adopted meet
+    if (eventId) {
+      const { meetIdForEvent, isMeetAdopted } = require('../sync/adoption');
+      if (await isMeetAdopted(await meetIdForEvent(eventId))) {
+        return res.status(423).json({ error: 'meet_adopted', message: 'This event belongs to a meet adopted by a venue server; enter registrations on the venue server instead.' });
+      }
+    }
     const summary = await runImport(rows, eventId || null);
     try { await logAudit('import', 'athletes', null, null, { added: summary.added, updated: summary.updated, total: summary.total }); } catch (_) {}
     res.json(summary);
@@ -164,6 +180,13 @@ router.post('/athletes/csv', async (req, res) => {
     if (!rows.length) return res.status(400).json({ error: 'No data rows found in CSV' });
 
     const eventId = req.query.eventId || null;
+    // v2.0.00 -- refuse imports that target an event of an adopted meet
+    if (eventId) {
+      const { meetIdForEvent, isMeetAdopted } = require('../sync/adoption');
+      if (await isMeetAdopted(await meetIdForEvent(eventId))) {
+        return res.status(423).json({ error: 'meet_adopted', message: 'This event belongs to a meet adopted by a venue server; enter registrations on the venue server instead.' });
+      }
+    }
     const summary = await runImport(rows, eventId);
     try { await logAudit('import', 'athletes', null, null, { added: summary.added, updated: summary.updated, total: summary.total, eventId }); } catch (_) {}
     res.json(summary);

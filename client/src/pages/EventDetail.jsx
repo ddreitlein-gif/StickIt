@@ -5698,6 +5698,17 @@ export default function EventDetail() {
 
   useEffect(() => { refresh().finally(()=>setLoading(false)) }, [eventId])
 
+  // v2.0.00 (Step 1) — read-only mirror banner while the meet runs at the venue.
+  // The server refuses every mutation with 423; this banner explains why.
+  const [adoption, setAdoption] = useState(null)
+  useEffect(() => {
+    let alive = true
+    const load = () => api.getMeetAdoption(meetId).then(a => { if (alive) setAdoption(a) }).catch(() => {})
+    load()
+    const id = setInterval(load, 15000)
+    return () => { alive = false; clearInterval(id) }
+  }, [meetId])
+
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!event)  return null
 
@@ -5716,6 +5727,14 @@ export default function EventDetail() {
         <span>/</span>
         <span className="text-slate-300">{event.name}</span>
       </div>
+      {adoption?.adopted && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-700 bg-amber-900/30 text-amber-200">
+          <div className="font-semibold">🏔 This meet is running at the venue — this view is live but read-only.</div>
+          <div className="text-sm text-amber-300/80 mt-1">
+            All scoring and edits happen on the venue server and sync here automatically. Editing unlocks after the venue hands back or checks in.
+          </div>
+        </div>
+      )}
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="font-display text-4xl text-white">{event.name}</h1>

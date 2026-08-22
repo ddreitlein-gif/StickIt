@@ -285,8 +285,14 @@ router.post('/reconcile/apply', requireAuth, async (req, res) => {
       added++;
     }
 
+    // v2.0.00 (FR-8) -- athlete rows registered in an adopted meet are locked
+    const { athleteIdsLockedByAdoption } = require('../sync/adoption');
+    const lockedIds = await athleteIdsLockedByAdoption();
+    let skipped_locked = 0;
+
     for (const item of update) {
       if (!item.id || !item.fields || !Object.keys(item.fields).length) continue;
+      if (lockedIds.has(item.id)) { skipped_locked++; continue; }
       const ALLOWED = ['first_name','last_name','ussa_num','fis_id','birth_year','gender','club','division'];
       const sets = [], vals = [];
       for (const [f, v] of Object.entries(item.fields)) {
@@ -301,7 +307,7 @@ router.post('/reconcile/apply', requireAuth, async (req, res) => {
       updated++;
     }
 
-    res.json({ added, updated });
+    res.json({ added, updated, skipped_locked });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -313,9 +319,14 @@ router.post('/reconcile/apply', requireAuth, async (req, res) => {
 router.post('/usss-sync', requireAuth, async (req, res) => {
   try {
     const athletes = await queryAll("SELECT * FROM athletes WHERE deleted_at IS NULL AND ussa_num IS NOT NULL AND ussa_num != ''");
-    let matched = 0, updated = 0, not_found = 0;
+    let matched = 0, updated = 0, not_found = 0, skipped_locked = 0;
+
+    // v2.0.00 (FR-8) -- athlete rows registered in an adopted meet are locked
+    const { athleteIdsLockedByAdoption } = require('../sync/adoption');
+    const lockedIds = await athleteIdsLockedByAdoption();
 
     for (const a of athletes) {
+      if (lockedIds.has(a.id)) { skipped_locked++; continue; }
       const usss = await queryOne('SELECT * FROM usss_people WHERE ussa_id = ?', [a.ussa_num]);
       if (!usss) { not_found++; continue; }
       matched++;
@@ -340,7 +351,7 @@ router.post('/usss-sync', requireAuth, async (req, res) => {
       }
     }
 
-    res.json({ matched, updated, not_found });
+    res.json({ matched, updated, not_found, skipped_locked });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

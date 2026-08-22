@@ -53,8 +53,8 @@ async function main() {
     for (const [table, spec] of Object.entries(protocol.TABLES)) {
       const info = await vdb.queryAll(`PRAGMA table_info(${table})`);
       const physical = info.map(r => r.name).sort();
-      const manifest = [...spec.columns].sort();
-      c.deepEq(manifest, physical, `manifest matches fresh schema: ${table}`);
+      const manifest = [...spec.columns, ...(protocol.NON_SYNC_COLUMNS[table] || [])].sort();
+      c.deepEq(manifest, physical, `manifest (+ documented exclusions) matches fresh schema: ${table}`);
       const missingPk = spec.pk.filter(k => !spec.columns.includes(k));
       c.deepEq(missingPk, [], `pk columns are in manifest: ${table}`);
     }

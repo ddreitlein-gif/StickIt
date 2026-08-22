@@ -232,6 +232,14 @@ export const api = {
   toggleTrainingExclusionBulk: (id, athlete_ids, exclude) =>
     apiFetch(`/training-days/${id}/exclusions`, { method: 'POST', body: { athlete_ids, exclude } }),
   resetTrainingExclusions: (id) => apiFetch(`/training-days/${id}/reset`, { method: 'POST' }),
+
+  // v2.0.00 — venue adoption (Step 1)
+  getMeetAdoption: (id) => apiFetch(`/meets/${id}/adoption`),
+  releaseForAdoption: (id) => apiFetch(`/meets/${id}/release-for-adoption`, { method: 'POST' }),
+  unreleaseMeet: (id) => apiFetch(`/meets/${id}/unrelease`, { method: 'POST' }),
+  adminAdoptionList: () => apiFetch('/admin/adoption'),
+  adminForceUnlock: (meetId, confirmName) =>
+    apiFetch(`/admin/adoption/${meetId}/force-unlock`, { method: 'POST', body: { confirm_name: confirmName } }),
   downloadTrainingDayPdf: (id, suggestedName) =>
     downloadAuthed(`/api/pdf/training-day/${id}`, {
       method: 'POST',

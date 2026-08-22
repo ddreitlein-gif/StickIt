@@ -168,7 +168,96 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (meet_ranking !== undefined) {
       await execute(`UPDATE meets SET meet_ranking=?, updated_at=datetime('now') WHERE id=?`, [meet_ranking, req.params.id]);
     }
+    // v2.0.00 (6.7) -- remote-judging flag: per-meet, default OFF, changeable
+    // during setup. Locked once adopted (the adoption-lock middleware already
+    // refuses every mutation of an adopted meet before this handler runs).
+    if (req.body.remote_judging !== undefined) {
+      await execute(`UPDATE meets SET remote_judging=?, updated_at=datetime('now') WHERE id=?`,
+        [req.body.remote_judging ? 1 : 0, req.params.id]);
+    }
     res.json(await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// v2.0.00 (Step 1, R13) -- Release for Adoption.
+// An official clicks Release for Adoption; the cloud generates a short
+// one-time code (displayed once — only its hash is stored). The venue redeems
+// it via POST /api/sync/adopt (Step 2). Releasing can be undone until a venue
+// server redeems the code. Remote-judging meets can never be released (6.7).
+// ---------------------------------------------------------------------------
+router.post('/:id/release-for-adoption', requireAuth, async (req, res) => {
+  try {
+    const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    const { generateReleaseCode, hashToken } = require('../sync/adoption');
+    if (meet.remote_judging) {
+      return res.status(409).json({
+        error: 'remote_judging_meet',
+        message: 'This meet is configured for remote judging and is cloud-only. It cannot be adopted by a venue server.',
+      });
+    }
+    if (meet.adoption_status === 'adopted') {
+      // Defense-in-depth; the adoption-lock middleware already refuses this.
+      return res.status(423).json({ error: 'meet_adopted' });
+    }
+    const code = generateReleaseCode();
+    const ttlHours = parseFloat(process.env.STICKIT_RELEASE_CODE_TTL_HOURS) || 24;
+    const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000).toISOString();
+    const releasedBy = (req.user && (req.user.username || req.user.display_name)) || null;
+    await execute(
+      `UPDATE meets SET release_code_hash=?, release_code_expires_at=?, released_at=datetime('now'), released_by=?, updated_at=datetime('now') WHERE id=?`,
+      [hashToken(code), expiresAt, releasedBy, req.params.id]
+    );
+    const { logAudit } = require('./audit');
+    try { await logAudit('meet_released_for_adoption', 'meet', req.params.id, null, { expires_at: expiresAt }); } catch (_) {}
+    res.json({ code, expires_at: expiresAt });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Undo a release before any venue has redeemed the code.
+router.post('/:id/unrelease', requireAuth, async (req, res) => {
+  try {
+    const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    if (meet.adoption_status === 'adopted') {
+      return res.status(423).json({ error: 'meet_adopted', message: 'The code was already redeemed; the meet is adopted. Use check-in, handback, or admin force-unlock.' });
+    }
+    if (!meet.release_code_hash) return res.status(400).json({ error: 'Meet is not released for adoption' });
+    await execute(
+      `UPDATE meets SET release_code_hash=NULL, release_code_expires_at=NULL, released_at=NULL, released_by=NULL, updated_at=datetime('now') WHERE id=?`,
+      [req.params.id]
+    );
+    const { logAudit } = require('./audit');
+    try { await logAudit('meet_release_undone', 'meet', req.params.id, null, {}); } catch (_) {}
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Adoption state for UI banners + polling. Public read (discloses only lock
+// state, no codes or token material).
+router.get('/:id/adoption', async (req, res) => {
+  try {
+    const meet = await queryOne(
+      `SELECT id, name, adoption_status, adopted_at, last_sync_at, remote_judging,
+              released_at, released_by, release_code_expires_at,
+              (release_code_hash IS NOT NULL) AS released
+       FROM meets WHERE id = ?`,
+      [req.params.id]
+    );
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    res.json({
+      meet_id: meet.id,
+      adoption_status: meet.adoption_status || null,
+      adopted: meet.adoption_status === 'adopted',
+      adopted_at: meet.adopted_at || null,
+      last_sync_at: meet.last_sync_at || null,
+      remote_judging: !!meet.remote_judging,
+      released: !!meet.released && meet.adoption_status !== 'adopted',
+      released_at: meet.released_at || null,
+      released_by: meet.released_by || null,
+      release_code_expires_at: meet.release_code_expires_at || null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1568,7 +1657,12 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req, res
         }
 
         if (conflictAction === 'overwrite') {
-          const existing = await queryOne('SELECT id FROM meets WHERE LOWER(name) = LOWER(?)', [data.meet.name ?? '']);
+          const existing = await queryOne('SELECT id, adoption_status FROM meets WHERE LOWER(name) = LOWER(?)', [data.meet.name ?? '']);
+          // v2.0.00 -- never overwrite a meet that is adopted by a venue server
+          if (existing && existing.adoption_status === 'adopted') {
+            try { fs.unlinkSync(zipPath); } catch {}
+            return res.status(423).json({ error: 'meet_adopted', message: 'The existing meet is adopted by a venue server and cannot be overwritten.' });
+          }
           if (existing) await deleteMeetCascade(existing.id);
           const result = await executeImport(data, zipPath);
           try { fs.unlinkSync(zipPath); } catch {}
@@ -1587,7 +1681,12 @@ router.post('/import', requireAuth, importUpload.single('file'), async (req, res
         }
 
         if (conflictAction === 'merge') {
-          const existing = await queryOne('SELECT id FROM meets WHERE LOWER(name) = LOWER(?)', [data.meet.name ?? '']);
+          const existing = await queryOne('SELECT id, adoption_status FROM meets WHERE LOWER(name) = LOWER(?)', [data.meet.name ?? '']);
+          // v2.0.00 -- never merge into a meet that is adopted by a venue server
+          if (existing && existing.adoption_status === 'adopted') {
+            try { fs.unlinkSync(zipPath); } catch {}
+            return res.status(423).json({ error: 'meet_adopted', message: 'The existing meet is adopted by a venue server and cannot be merged into.' });
+          }
           if (!existing) {
             // Meet was deleted between step 1 and step 2; just do a fresh import
             const result = await executeImport(data, zipPath);

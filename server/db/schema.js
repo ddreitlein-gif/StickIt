@@ -301,6 +301,20 @@ async function initSchema() {
     // (judge_number 3), stored blue 0 / red 0 with air_tied=1, mirroring the
     // J4 time_tied convention.
     `ALTER TABLE dual_judge_points ADD COLUMN air_tied INTEGER NOT NULL DEFAULT 0`,
+    // v2.0.00 (Step 1) -- cloud adoption lock state + remote-judging flag.
+    // Transport/lock state, NOT meet data: excluded from the sync manifest
+    // (see NON_SYNC_COLUMNS in server/sync/protocol.js). All additive so a
+    // v1.30.03 build runs cleanly against this database (Section 10).
+    `ALTER TABLE meets ADD COLUMN adoption_status TEXT`,
+    `ALTER TABLE meets ADD COLUMN adopted_at TEXT`,
+    `ALTER TABLE meets ADD COLUMN sync_token_hash TEXT`,
+    `ALTER TABLE meets ADD COLUMN last_sync_at TEXT`,
+    `ALTER TABLE meets ADD COLUMN last_applied_seq INTEGER`,
+    `ALTER TABLE meets ADD COLUMN remote_judging INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE meets ADD COLUMN release_code_hash TEXT`,
+    `ALTER TABLE meets ADD COLUMN release_code_expires_at TEXT`,
+    `ALTER TABLE meets ADD COLUMN released_at TEXT`,
+    `ALTER TABLE meets ADD COLUMN released_by TEXT`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }
@@ -337,15 +351,32 @@ async function initSchema() {
     console.error('[FR-11 migration] FAILED to dedup/create UNIQUE index on judge_scores(run_id, judge_id, score_type):', e.message);
   }
 
+  // v2.0.00 (FR-9): every boot-time mutation below is guarded so it never
+  // touches a row belonging to an adopted meet — a cloud restart mid-meet
+  // must not mutate the venue's mirror. Adopted-meet subqueries:
+  const NOT_ADOPTED_MEET = `(adoption_status IS NULL OR adoption_status <> 'adopted')`;
+  const EVENT_NOT_ADOPTED = `meet_id NOT IN (SELECT id FROM meets WHERE adoption_status='adopted')`;
+  const ATHLETE_NOT_LOCKED = `id NOT IN (
+    SELECT r.athlete_id FROM registrations r
+    JOIN events e ON e.id = r.event_id
+    JOIN meets m ON m.id = e.meet_id
+    WHERE m.adoption_status = 'adopted')`;
+
   // Migrate usss_code_men/usss_code_women → usss_code (one-time)
   try {
-    await c.execute(`UPDATE events SET usss_code = CASE WHEN gender='M' THEN usss_code_men ELSE usss_code_women END WHERE usss_code IS NULL AND (usss_code_men IS NOT NULL OR usss_code_women IS NOT NULL)`);
+    await c.execute(`UPDATE events SET usss_code = CASE WHEN gender='M' THEN usss_code_men ELSE usss_code_women END WHERE usss_code IS NULL AND (usss_code_men IS NOT NULL OR usss_code_women IS NOT NULL) AND ${EVENT_NOT_ADOPTED}`);
   } catch (_) {}
 
-  // Backfill short_code for existing rows that don't have one
+  // Backfill short_code for existing rows that don't have one (FR-9: skip
+  // adopted meets' rows)
+  const SHORT_CODE_SCOPE = {
+    meets: `short_code IS NULL AND ${NOT_ADOPTED_MEET}`,
+    events: `short_code IS NULL AND ${EVENT_NOT_ADOPTED}`,
+    judges: `short_code IS NULL AND event_id IN (SELECT id FROM events WHERE ${EVENT_NOT_ADOPTED})`,
+  };
   for (const table of ['meets', 'events', 'judges']) {
     try {
-      const rows = await queryAll(`SELECT id FROM ${table} WHERE short_code IS NULL`);
+      const rows = await queryAll(`SELECT id FROM ${table} WHERE ${SHORT_CODE_SCOPE[table]}`);
       for (const row of rows) {
         await c.execute(`UPDATE ${table} SET short_code=? WHERE id=?`, [shortCode(), row.id]);
       }
@@ -354,10 +385,10 @@ async function initSchema() {
 
   // Normalize gender values to single-letter codes ('M'/'F') on every startup
   try {
-    await c.execute(`UPDATE events   SET gender = 'M' WHERE gender IN ('male',   'Male'  )`);
-    await c.execute(`UPDATE events   SET gender = 'F' WHERE gender IN ('female', 'Female')`);
-    await c.execute(`UPDATE athletes SET gender = 'M' WHERE gender IN ('male',   'Male'  )`);
-    await c.execute(`UPDATE athletes SET gender = 'F' WHERE gender IN ('female', 'Female')`);
+    await c.execute(`UPDATE events   SET gender = 'M' WHERE gender IN ('male',   'Male'  ) AND ${EVENT_NOT_ADOPTED}`);
+    await c.execute(`UPDATE events   SET gender = 'F' WHERE gender IN ('female', 'Female') AND ${EVENT_NOT_ADOPTED}`);
+    await c.execute(`UPDATE athletes SET gender = 'M' WHERE gender IN ('male',   'Male'  ) AND ${ATHLETE_NOT_LOCKED}`);
+    await c.execute(`UPDATE athletes SET gender = 'F' WHERE gender IN ('female', 'Female') AND ${ATHLETE_NOT_LOCKED}`);
   } catch (_) {}
 
   // v1.6 -- one-time backfill of athletes.bib from each athlete's most
@@ -366,7 +397,8 @@ async function initSchema() {
   try {
     const anyBib = await queryOne("SELECT COUNT(*) AS cnt FROM athletes WHERE bib IS NOT NULL");
     if (anyBib && parseInt(anyBib.cnt) === 0) {
-      const athletes = await queryAll("SELECT id FROM athletes");
+      // FR-9: skip athletes locked by a current venue adoption
+      const athletes = await queryAll(`SELECT id FROM athletes WHERE ${ATHLETE_NOT_LOCKED}`);
       let backfilled = 0;
       for (const a of athletes) {
         const recent = await queryOne(
@@ -409,8 +441,11 @@ async function initSchema() {
 // to runs.air_score for manually-entered rows with no per-judge data.
 async function backfillAirScoreNoDd() {
   try {
+    // v2.0.00 (FR-9): never backfill runs belonging to an adopted meet.
     const rows = await queryAll(
-      `SELECT id, air_score FROM runs WHERE air_score_no_dd IS NULL AND status='complete'`
+      `SELECT id, air_score FROM runs WHERE air_score_no_dd IS NULL AND status='complete'
+         AND event_id IN (SELECT e.id FROM events e JOIN meets m ON m.id = e.meet_id
+                          WHERE m.adoption_status IS NULL OR m.adoption_status <> 'adopted')`
     );
     if (rows.length === 0) return;
     let updated = 0;

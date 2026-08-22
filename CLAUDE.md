@@ -257,6 +257,30 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   file DBs, cloud+venue modes, kill/restart for crash tests) + Playwright layer
   (FR-21). Step-0 suite: 84/84; `verify_v16.js` 123/123.
 
+**Step 1 — Remote judging flag + cloud lock machinery (complete).**
+- Additive `meets` columns for adoption/lock state (`adoption_status`, `adopted_at`,
+  `sync_token_hash`, `last_sync_at`, `last_applied_seq`, `remote_judging`,
+  `release_code_hash`, `release_code_expires_at`, `released_at`, `released_by`) —
+  excluded from the sync manifest via `NON_SYNC_COLUMNS` (transport state, not meet data).
+- `server/middleware/adoptionLock.js` (`requireNotAdopted`, HTTP 423) mounted on the
+  meet-scoped path prefixes in `index.js` BEFORE all routers — every mutation of an
+  adopted meet, including public tablet endpoints and inline routes, is refused before
+  any handler runs; reads stay open (live read-only mirror). In-route guards cover
+  import merge/overwrite targets, athlete-import updates, usss-sync, reconcile/apply,
+  and admin bulk athlete deletes (FR-8). FR-9: every boot-time mutation now excludes
+  adopted meets' rows.
+- Release for Adoption (R13): `POST /api/meets/:id/release-for-adoption` (one-time
+  8-char code, hash-only storage, TTL default 24h, re-release + undo), public
+  `GET /:id/adoption`, remote-judging meets refused (6.7; flag editable in Edit Meet
+  Settings, locked once adopted). Admin force-unlock (R8) at
+  `POST /api/admin/adoption/:meetId/force-unlock` (typed meet-name confirm,
+  audit-logged, token invalidated) + new Admin → Venue Adoption page.
+- FR-20: `server/utils/routeList.js` route enumeration behind `STICKIT_DEBUG_ROUTES=1`;
+  the harness gate enumerates every mutation route (160), requires each to be in-scope
+  or documented-exempt, and drives all in-scope routes (111) to 423 against an adopted
+  meet. Cloud UI: read-only mirror banners on MeetDetail/EventDetail.
+- Step-1 suite 52/52; cumulative harness 136/136; `verify_v16.js` 123/123.
+
 ---
 
 ## v1.30.03 Feature Notes

@@ -161,6 +161,21 @@ const TABLES = {
   },
 };
 
+/**
+ * Documented physical-column exclusions (FR-6): columns that exist on a v2
+ * database but are deliberately NOT part of the sync protocol. The harness
+ * drift test asserts: physical columns === manifest columns ∪ this list.
+ * Cloud-only adoption/lock state on `meets` is transport state, not meet data
+ * — it must never sync, checksum, or ride an adoption package.
+ */
+const NON_SYNC_COLUMNS = {
+  meets: [
+    'adoption_status', 'adopted_at', 'sync_token_hash', 'last_sync_at',
+    'last_applied_seq', 'remote_judging', 'release_code_hash',
+    'release_code_expires_at', 'released_at', 'released_by',
+  ],
+};
+
 /** Tables captured by the venue outbox (FR-5 write capture set). */
 const SYNC_TABLES = Object.keys(TABLES).filter(t => TABLES[t].sync);
 /** Tables participating in the check-in/handback checksum. */
@@ -287,6 +302,7 @@ function manifestRow(table, row) {
 module.exports = {
   SYNC_PROTOCOL_VERSION,
   TABLES,
+  NON_SYNC_COLUMNS,
   SYNC_TABLES,
   CHECKSUM_TABLES,
   SNAPSHOT_TABLES,

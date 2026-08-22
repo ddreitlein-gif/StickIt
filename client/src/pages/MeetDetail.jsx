@@ -1018,7 +1018,7 @@ function CloseExportModal({ meetId, onClose, onClosed }) {
 }
 
 function EditMeetModal({ meet, onClose, onSave }) {
-  const [form, setForm] = useState({ name: meet.name || '', location: meet.location || '', date: meet.date || '' })
+  const [form, setForm] = useState({ name: meet.name || '', location: meet.location || '', date: meet.date || '', remote_judging: !!meet.remote_judging })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -1027,7 +1027,7 @@ function EditMeetModal({ meet, onClose, onSave }) {
     if (!form.name.trim() || !form.location.trim() || !form.date) { setError('All fields are required.'); return }
     setLoading(true)
     try {
-      await api.updateMeet(meet.id, form)
+      await api.updateMeet(meet.id, { ...form, remote_judging: form.remote_judging ? 1 : 0 })
       onSave()
       onClose()
     } catch (err) { setError(err.message) }
@@ -1051,6 +1051,21 @@ function EditMeetModal({ meet, onClose, onSave }) {
             <label className="label">Start Date</label>
             <input type="date" className="input" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
           </div>
+          {/* v2.0.00 (6.7) — remote-judging meets are cloud-only and can never
+              be adopted by a venue server. Changeable during setup; the server
+              refuses all edits once the meet is adopted. */}
+          <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={!!form.remote_judging}
+              onChange={e => setForm({ ...form, remote_judging: e.target.checked })}
+            />
+            <span>
+              Remote judging meet (cloud-only)
+              <span className="block text-xs text-slate-500">Judges score over the internet. This meet cannot be adopted by a venue server.</span>
+            </span>
+          </label>
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
@@ -1074,6 +1089,38 @@ export default function MeetDetail() {
   const [showCloseExport, setShowCloseExport] = useState(false)
   const [showEditMeet, setShowEditMeet] = useState(false)
   const [writeCount, setWriteCount] = useState(null)
+  // v2.0.00 (Step 1) — venue adoption state + release-code modal
+  const [adoption, setAdoption] = useState(null)
+  const [releaseInfo, setReleaseInfo] = useState(null)
+
+  const refreshAdoption = () => api.getMeetAdoption(meetId).then(setAdoption).catch(() => {})
+
+  useEffect(() => { refreshAdoption() }, [meetId])
+  // While adopted, poll adoption state so the banner clears after check-in.
+  useEffect(() => {
+    if (!adoption?.adopted) return
+    const id = setInterval(refreshAdoption, 15000)
+    return () => clearInterval(id)
+  }, [adoption?.adopted])
+
+  const adopted = !!adoption?.adopted
+
+  const handleRelease = async () => {
+    if (!window.confirm('Release this meet for venue adoption? A one-time code will be shown for the venue volunteer. The cloud copy locks read-only once a venue server redeems the code.')) return
+    try {
+      const info = await api.releaseForAdoption(meetId)
+      setReleaseInfo(info)
+      refreshAdoption()
+    } catch (e) { alert('Release failed: ' + e.message) }
+  }
+
+  const handleUnrelease = async () => {
+    if (!window.confirm('Undo the release? The previously shown code will stop working.')) return
+    try {
+      await api.unreleaseMeet(meetId)
+      refreshAdoption()
+    } catch (e) { alert('Undo release failed: ' + e.message) }
+  }
 
   const reopenMeet = async () => {
     if (!window.confirm('Reopen this meet?  All events in this meet will return to active status.')) return
@@ -1184,6 +1231,24 @@ export default function MeetDetail() {
         <span className="text-slate-300">{meet.name}</span>
       </div>
 
+      {/* v2.0.00 — read-only mirror banner while the meet runs at the venue */}
+      {adopted && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-700 bg-amber-900/30 text-amber-200">
+          <div className="font-semibold">🏔 This meet is running at the venue — this view is live but read-only.</div>
+          <div className="text-sm text-amber-300/80 mt-1">
+            A venue server adopted this meet{adoption.adopted_at ? ` on ${adoption.adopted_at}` : ''}. Scores sync here automatically
+            {adoption.last_sync_at ? ` (last sync ${adoption.last_sync_at})` : ''}. Editing unlocks after the venue hands back or checks in.
+          </div>
+        </div>
+      )}
+      {!adopted && adoption?.released && (
+        <div className="mb-6 p-3 rounded-xl border border-mountain-700 bg-mountain-900/30 text-mountain-200 text-sm">
+          Released for venue adoption{adoption.released_at ? ` at ${adoption.released_at}` : ''} — waiting for a venue server to redeem the code
+          {adoption.release_code_expires_at ? ` (code expires ${adoption.release_code_expires_at})` : ''}.
+          <button onClick={handleUnrelease} className="ml-3 underline hover:text-white">Undo Release</button>
+        </div>
+      )}
+
       {/* Meet header */}
       <div className="flex items-start justify-between mb-8">
         <div>
@@ -1192,7 +1257,7 @@ export default function MeetDetail() {
             <span>📍 {meet.location}</span>
             <span>📅 {new Date(meet.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span>
           </div>
-          <button onClick={() => setShowEditMeet(true)} className="text-xs text-slate-500 hover:text-mountain-400 mt-1 transition-colors">Edit Meet Settings</button>
+          <button onClick={() => setShowEditMeet(true)} disabled={adopted} className="text-xs text-slate-500 hover:text-mountain-400 mt-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Edit Meet Settings</button>
           <div className="mt-3 flex items-center gap-3">
             <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold uppercase tracking-wide border
               ${meet.status === 'active' ? 'bg-green-900/50 text-green-400 border-green-800' :
@@ -1203,8 +1268,9 @@ export default function MeetDetail() {
             <label className="flex items-center gap-1 text-xs text-slate-600">
               Status:
               <select
-                className="bg-transparent text-xs text-slate-600 hover:text-slate-400 cursor-pointer"
+                className="bg-transparent text-xs text-slate-600 hover:text-slate-400 cursor-pointer disabled:opacity-40"
                 value={meet.status}
+                disabled={adopted}
                 onChange={e => setMeetStatus(e.target.value)}
               >
                 <option value="setup">Setup</option>
@@ -1228,12 +1294,12 @@ export default function MeetDetail() {
             Training Days
           </button>
           {meet.status === 'active' && (
-            <button onClick={() => setShowCloseExport(true)} className="btn-ghost text-sm text-orange-400 border-orange-800 hover:bg-orange-900/30">
+            <button onClick={() => setShowCloseExport(true)} disabled={adopted} className="btn-ghost text-sm text-orange-400 border-orange-800 hover:bg-orange-900/30 disabled:opacity-40 disabled:cursor-not-allowed">
               Close Meet and Export to USSS
             </button>
           )}
           {meet.status === 'complete' && (
-            <button onClick={reopenMeet} className="btn-ghost text-sm">
+            <button onClick={reopenMeet} disabled={adopted} className="btn-ghost text-sm disabled:opacity-40 disabled:cursor-not-allowed">
               Reopen Meet
             </button>
           )}
@@ -1271,11 +1337,28 @@ export default function MeetDetail() {
                   >
                     USSS Transmit
                   </button>
+                  {/* v2.0.00 (R13) — venue adoption release */}
+                  {!adopted && !adoption?.remote_judging && (
+                    <button
+                      onClick={() => { setShowMore(false); handleRelease() }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      {adoption?.released ? 'New Release Code' : 'Release for Adoption'}
+                    </button>
+                  )}
+                  {!adopted && adoption?.released && (
+                    <button
+                      onClick={() => { setShowMore(false); handleUnrelease() }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Undo Release
+                    </button>
+                  )}
                 </div>
               </>
             )}
           </div>
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
+          <button onClick={() => setShowCreate(true)} disabled={adopted} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed">
             + Add Event
           </button>
         </div>
@@ -1375,6 +1458,20 @@ export default function MeetDetail() {
           onClose={() => setShowCloseExport(false)}
           onClosed={async () => { setShowCloseExport(false); await refreshMeet() }}
         />
+      )}
+
+      {/* v2.0.00 (R13) — one-time release code display. Only the hash is stored;
+          the code cannot be shown again (generate a new one if lost). */}
+      {releaseInfo && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md text-center">
+            <h2 className="font-display text-2xl text-white mb-2">Release Code</h2>
+            <p className="text-slate-400 text-sm mb-4">Give this code to the venue volunteer. It works once and cannot be shown again — write it down now.</p>
+            <div className="font-mono text-4xl tracking-[0.3em] text-mountain-300 bg-slate-800 rounded-xl py-4 mb-4 select-all">{releaseInfo.code}</div>
+            <p className="text-slate-500 text-xs mb-4">Expires {releaseInfo.expires_at}</p>
+            <button onClick={() => setReleaseInfo(null)} className="btn-primary w-full">Done — I wrote it down</button>
+          </div>
+        </div>
       )}
 
       {showEditMeet && (

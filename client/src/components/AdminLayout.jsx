@@ -34,6 +34,7 @@ const ADMIN_NAV = [
   { to: '/admin/usss-people', label: 'USSS People', icon: 'usss' },
   { to: '/admin/athletes', label: 'Athletes', icon: 'athletes' },
   { to: '/admin/backups', label: 'Backups', icon: 'backups' },
+  { to: '/admin/adoption', label: 'Venue Adoption', icon: 'events' },
   { to: '/admin/audit', label: 'Audit Log', icon: 'audit' },
   { to: '/help', label: 'Help', icon: 'help' },
 ]

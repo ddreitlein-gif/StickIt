@@ -398,6 +398,14 @@ router.get('/athletes/divisions', async (req, res) => {
 async function buildDeleteFilter(body) {
   const { mode, ids, division } = body || {};
   const baseConds = ['deleted_at IS NULL'];
+  // v2.0.00 (FR-8) -- athletes registered in an adopted meet are locked on
+  // the cloud; bulk deletes always exclude them (preview and delete share
+  // this filter, so counts stay consistent).
+  baseConds.push(`id NOT IN (
+    SELECT r.athlete_id FROM registrations r
+    JOIN events e ON e.id = r.event_id
+    JOIN meets m ON m.id = e.meet_id
+    WHERE m.adoption_status = 'adopted')`);
   const args = [];
   if (mode === 'reset') {
     // no extra
@@ -607,6 +615,64 @@ router.post('/backups/:filename/restore', async (req, res) => {
       await logAudit('backup_restored', 'backup', filename, null, { filename });
     } catch (_) {}
     res.json({ ok: true, restart_required: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── v2.0.00 (Step 1, R8) — Venue adoption admin ────────────────────────────
+// Lives at /api/admin/adoption/... — deliberately OUTSIDE the guarded
+// /api/admin/meets/:meetId prefix so force-unlock works on an adopted meet.
+
+// List meets with any adoption/release state, for the admin page.
+router.get('/adoption', async (req, res) => {
+  try {
+    const meets = await queryAll(
+      `SELECT id, name, location, date, adoption_status, adopted_at, last_sync_at,
+              last_applied_seq, remote_judging, released_at, released_by,
+              release_code_expires_at,
+              (release_code_hash IS NOT NULL) AS released
+       FROM meets
+       WHERE adoption_status IS NOT NULL OR release_code_hash IS NOT NULL OR remote_judging = 1
+       ORDER BY date DESC`
+    );
+    res.json({ meets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Force-unlock an abandoned adoption (R8): system_admin only (router mount is
+// already requireRole('system_admin')), typed meet-name confirmation,
+// audit-logged. Invalidates the sync token; the orphaned venue server's next
+// upsync gets a clear "adoption revoked" error and stops (its local data
+// stays intact for USB recovery).
+router.post('/adoption/:meetId/force-unlock', async (req, res) => {
+  try {
+    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.meetId]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    if (meet.adoption_status !== 'adopted') {
+      return res.status(400).json({ error: 'Meet is not adopted' });
+    }
+    const { confirm_name } = req.body || {};
+    if (!confirm_name || confirm_name.trim() !== meet.name.trim()) {
+      return res.status(400).json({
+        error: 'confirm_name_mismatch',
+        message: 'Type the exact meet name to confirm the force-unlock.',
+      });
+    }
+    await execute(
+      `UPDATE meets SET adoption_status=NULL, sync_token_hash=NULL,
+              release_code_hash=NULL, release_code_expires_at=NULL,
+              updated_at=datetime('now')
+       WHERE id=?`,
+      [req.params.meetId]
+    );
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('meet_force_unlocked', 'meet', req.params.meetId, { adoption_status: 'adopted', adopted_at: meet.adopted_at }, {
+        by: (req.user && req.user.username) || null,
+        last_sync_at: meet.last_sync_at || null,
+        last_applied_seq: meet.last_applied_seq ?? null,
+      });
+    } catch (_) {}
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

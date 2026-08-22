@@ -100,6 +100,32 @@ app.get('/api/resolve', async (req, res) => {
 
 const { requireAuth, requireRole } = require('./middleware/auth');
 
+// v2.0.00 (Step 1, FR-20) -- adoption lock. One shared middleware mounted on
+// every meet-scoped path prefix BEFORE the routers, so a mutation against an
+// adopted meet is refused (423) before any route handler runs — including the
+// public tablet endpoints. Reads pass through untouched. Registered here (not
+// per-route) so a future route added under these prefixes is guarded
+// automatically; the FR-20 generated harness test enforces total coverage.
+const {
+  requireNotAdopted, byMeetParam, byEventParam, byTrainingDayParam, byAthleteParam,
+} = require('./middleware/adoptionLock');
+app.use('/api/meets/:meetId', requireNotAdopted(byMeetParam('meetId')));
+app.use('/api/events/:eventId', requireNotAdopted(byEventParam('eventId')));
+app.use('/api/athletes/:athleteId', requireNotAdopted(byAthleteParam('athleteId')));
+app.use('/api/training-days/:trainingDayId', requireNotAdopted(byTrainingDayParam('trainingDayId')));
+app.use('/api/admin/events/:eventId', requireNotAdopted(byEventParam('eventId')));
+// Admin meet-scoped mutations (lock-all/hide-all etc.) are guarded too;
+// force-unlock deliberately lives at /api/admin/adoption/... outside this prefix.
+app.use('/api/admin/meets/:meetId', requireNotAdopted(byMeetParam('meetId')));
+
+// v2.0.00 (FR-20) -- route enumeration for the generated lock-coverage test.
+// Only exists when STICKIT_DEBUG_ROUTES=1 (the harness sets it; never set in
+// production).
+if (process.env.STICKIT_DEBUG_ROUTES === '1') {
+  const { listRoutes } = require('./utils/routeList');
+  app.get('/api/_debug/routes', (req, res) => res.json({ routes: listRoutes(app) }));
+}
+
 // Mixed-auth routers: individual endpoints inside these files apply requireAuth
 app.use('/api/meets', require('./routes/meets'));
 app.use('/api/meets/:meetId/events', require('./routes/events'));
@@ -253,8 +279,13 @@ initSchema().then(async () => {
   // Clear any stale dual mogul manual-entry locks from a prior run. If the
   // server crashed (or the operator's browser closed) while a manual-entry
   // session was open, judges' tablets would otherwise stay locked indefinitely.
+  // v2.0.00 (FR-9) -- never touch rows of an adopted meet at boot: a cloud
+  // restart mid-meet must not mutate the venue's mirror.
   try {
-    await execute(`UPDATE events SET dual_manual_entry=0 WHERE dual_manual_entry=1`);
+    await execute(
+      `UPDATE events SET dual_manual_entry=0 WHERE dual_manual_entry=1
+         AND meet_id NOT IN (SELECT id FROM meets WHERE adoption_status='adopted')`
+    );
   } catch (e) {
     console.error('[startup] failed to clear stale dual_manual_entry flags:', e.message);
   }
