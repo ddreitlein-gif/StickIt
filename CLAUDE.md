@@ -337,6 +337,18 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   checksum equality, R14 latency ~0.4s, viewer-API parity (FR-23 normalized).
 - Step-4 suite 52/52; cumulative harness 299/299.
 
+**Step 5 — Check-in, handback, snapshots (complete).**
+- Check-in/handback (R7/D8/FR-10): venue freezes first (server-side 423 guard +
+  role-page stop screens), final flush, per-table checksums verified on BOTH
+  sides, cloud never unlocks on mismatch (auto-repush of differing tables +
+  re-verify), checkin → 'checked_in' permanent record / handback → NULL for
+  overnight cloud bracket building; every venue failure path reverts cleanly
+  to 'adopted'. R11 USB snapshot worker (5-min, graceful degrade + warning).
+  VenueHome end-of-day actions + revoked/snapshot banners.
+- Two-day cycle, FR-10 freeze, R7 mismatch, crash test (SIGKILL + outbox
+  continuity + role memory), snapshots — all green. Step-5 suite 39/39;
+  cumulative harness 338/338.
+
 ---
 
 ## v1.30.03 Feature Notes

@@ -253,4 +253,110 @@ router.post('/meets/:meetId/changes', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Step 5 — checksums / check-in / handback / repush (Section 5.4, R7, D8).
+// ---------------------------------------------------------------------------
+
+const { queryAll } = require('../db/schema');
+
+async function cloudChecksums(meetId) {
+  const out = {};
+  for (const t of protocol.CHECKSUM_TABLES) {
+    const rows = await queryAll(protocol.selectForMeet(t), [meetId]);
+    out[t] = protocol.tableChecksum(t, rows.map(r => protocol.manifestRow(t, r)));
+  }
+  return out;
+}
+
+function compareChecksums(venueSums, cloudSums) {
+  const mismatched = [];
+  for (const t of protocol.CHECKSUM_TABLES) {
+    const v = venueSums[t];
+    const c = cloudSums[t];
+    if (!v || !c || v.hash !== c.hash || v.count !== c.count) mismatched.push(t);
+  }
+  return { match: mismatched.length === 0, mismatched };
+}
+
+// Diagnostic comparison (no state change).
+router.post('/meets/:meetId/checksums', async (req, res) => {
+  try {
+    const meet = await authSyncRequest(req, res);
+    if (!meet) return;
+    const { protocol_version, checksums } = req.body || {};
+    if (protocol_version !== protocol.SYNC_PROTOCOL_VERSION) return protocolMismatch(res, protocol_version);
+    const cloud = await cloudChecksums(meet.id);
+    const cmp = compareChecksums(checksums || {}, cloud);
+    res.json({ ...cmp, cloud });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Full re-push of named tables after a checksum mismatch: the venue sends its
+// complete meet-scoped row set for each table; the cloud replaces its own
+// meet-scoped rows for that table (delete rows absent from the push, upsert
+// all pushed rows). Applied via the same manifest-only upsert as /changes.
+router.post('/meets/:meetId/repush', async (req, res) => {
+  try {
+    const meet = await authSyncRequest(req, res);
+    if (!meet) return;
+    const { protocol_version, tables } = req.body || {};
+    if (protocol_version !== protocol.SYNC_PROTOCOL_VERSION) return protocolMismatch(res, protocol_version);
+    if (!tables || typeof tables !== 'object') return res.status(400).json({ error: 'tables_required' });
+    const replaced = {};
+    for (const [t, rows] of Object.entries(tables)) {
+      const spec = protocol.TABLES[t];
+      if (!spec || !protocol.CHECKSUM_TABLES.includes(t)) {
+        return res.status(400).json({ error: `bad_table:${t}` });
+      }
+      const pushed = (rows || []).map(r => protocol.manifestRow(t, r));
+      const pushedKeys = new Set(pushed.map(r => protocol.pkString(t, r)));
+      // Delete cloud meet-scoped rows not present in the pushed set.
+      const existing = await queryAll(protocol.selectForMeet(t), [meet.id]);
+      for (const row of existing) {
+        if (!pushedKeys.has(protocol.pkString(t, row))) {
+          await execute(
+            `DELETE FROM ${t} WHERE ${spec.pk.map(cn => `${cn}=?`).join(' AND ')}`,
+            spec.pk.map(cn => row[cn])
+          );
+        }
+      }
+      for (const row of pushed) {
+        await execute(upsertSql(t), spec.columns.map(cn => row[cn]));
+      }
+      replaced[t] = pushed.length;
+    }
+    await execute(`UPDATE meets SET last_sync_at=datetime('now'), updated_at=updated_at WHERE id=?`, [meet.id]);
+    res.json({ ok: true, replaced });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Check-in / handback: verify checksums, then unlock. NEVER unlocks on a
+// failed checksum — the response names exactly which tables differ (R7).
+// mode 'checkin' → adoption_status='checked_in' (permanent record);
+// mode 'handback' (D8) → adoption_status=NULL (cloud fully editable again for
+// overnight bracket building). Both clear the sync token.
+router.post('/meets/:meetId/checkin', async (req, res) => {
+  try {
+    const meet = await authSyncRequest(req, res);
+    if (!meet) return;
+    const { protocol_version, checksums, mode } = req.body || {};
+    if (protocol_version !== protocol.SYNC_PROTOCOL_VERSION) return protocolMismatch(res, protocol_version);
+    if (mode !== 'checkin' && mode !== 'handback') return res.status(400).json({ error: 'mode must be checkin or handback' });
+    const cloud = await cloudChecksums(meet.id);
+    const cmp = compareChecksums(checksums || {}, cloud);
+    if (!cmp.match) {
+      return res.status(409).json({ error: 'checksum_mismatch', ...cmp, cloud });
+    }
+    await execute(
+      `UPDATE meets SET adoption_status=?, sync_token_hash=NULL, last_sync_at=datetime('now'), updated_at=updated_at WHERE id=?`,
+      [mode === 'checkin' ? 'checked_in' : null, meet.id]
+    );
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit(mode === 'checkin' ? 'meet_checked_in' : 'meet_handed_back', 'meet', meet.id, null, { verified_tables: protocol.CHECKSUM_TABLES.length });
+    } catch (_) {}
+    res.json({ ok: true, mode, verified_tables: protocol.CHECKSUM_TABLES.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

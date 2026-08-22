@@ -247,6 +247,7 @@ export const api = {
   venueRoleTarget: (role, seat) => apiFetch(`/venue/role-target?role=${role}${seat ? `&seat=${seat}` : ''}`),
   venueOverlayPin: (event_id) => apiFetch('/venue/overlay-pin', { method: 'POST', body: { event_id } }),
   venueConnectionInfo: () => apiFetch('/venue/connection-info'),
+  venueCheckin: (mode, control_token) => apiFetch('/venue/checkin', { method: 'POST', body: { mode, control_token } }),
 
   // v2.0.00 — venue adoption (Step 1)
   getMeetAdoption: (id) => apiFetch(`/meets/${id}/adoption`),

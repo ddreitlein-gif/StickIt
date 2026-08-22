@@ -102,9 +102,11 @@ async function playRejection(api, db, eventId, judges, registrationId, runNumber
  * officials auth): seed-random → seed-fis → paper-score every real match to
  * completion. Returns match count.
  */
-async function playDualBracket(api, authApi, eventId) {
-  await authApi.must('POST', `/api/events/${eventId}/dual/seed-random`, {});
-  await authApi.must('POST', `/api/events/${eventId}/dual/seed-fis`, {});
+async function playDualBracket(api, authApi, eventId, opts = {}) {
+  if (!opts.skipSeed) {
+    await authApi.must('POST', `/api/events/${eventId}/dual/seed-random`, {});
+    await authApi.must('POST', `/api/events/${eventId}/dual/seed-fis`, {});
+  }
   // Score matches round by round until every match is complete.
   for (let guard = 0; guard < 40; guard++) {
     const bracket = await api.must('GET', `/api/events/${eventId}/dual`);

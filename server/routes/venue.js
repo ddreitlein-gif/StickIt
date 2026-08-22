@@ -433,5 +433,130 @@ router.post('/import-package', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Step 5 — check-in / handback (FR-10 order, Section 5.4, D8).
+// Control-PIN action from the Scoring Computer, on the end-of-day run sheet.
+// Order: freeze the venue (read-only; role pages show "checking in") → final
+// outbox flush → checksums both sides → cloud unlock → local archive mark.
+// On any failure the venue returns to 'adopted' so scoring is never stranded.
+// ---------------------------------------------------------------------------
+
+async function requireControlToken(req, res) {
+  const tok = await getSetting('venue_control_token');
+  if (!tok) return true; // PINs not set (pre-PIN operation) — pass
+  const header = (req.headers.authorization || '').replace(/^Bearer /, '');
+  if (header === tok || (req.body || {}).control_token === tok) return true;
+  res.status(403).json({ error: 'control_token_required', message: 'This action needs the Control PIN.' });
+  return false;
+}
+
+async function venueChecksums(meetId) {
+  const out = {};
+  for (const t of protocol.CHECKSUM_TABLES) {
+    const rows = await queryAll(protocol.selectForMeet(t), [meetId]);
+    out[t] = protocol.tableChecksum(t, rows.map(r => protocol.manifestRow(t, r)));
+  }
+  return out;
+}
+
+router.post('/checkin', async (req, res) => {
+  const { setMeetState } = require('../venue/state');
+  try {
+    if (!(await requireControlToken(req, res))) return;
+    const { mode } = req.body || {};
+    if (mode !== 'checkin' && mode !== 'handback') {
+      return res.status(400).json({ error: 'mode must be checkin or handback' });
+    }
+    const state = await getVenueState();
+    if (!state || state.meet_state !== 'adopted') {
+      return res.status(409).json({ error: 'not_adopted', message: `Venue meet state is ${state ? state.meet_state : 'none'}.` });
+    }
+
+    // 1. Freeze (FR-10): all role pages show "checking in"; venue mutations
+    //    are refused server-side by the freeze guard from this moment.
+    await setMeetState('checking_in');
+    const revert = async (httpCode, body) => {
+      await setMeetState('adopted');
+      res.status(httpCode).json(body);
+    };
+
+    // 2. Final flush.
+    const worker = require('../sync/worker');
+    const flush = await worker.flushNow(45000);
+    if (!flush.ok) {
+      return revert(502, {
+        error: 'flush_failed',
+        reason: flush.reason,
+        message: flush.reason === 'offline'
+          ? 'The cloud is unreachable — check-in needs internet. Scoring stays available; try again when the uplink is back.'
+          : flush.reason === 'revoked'
+            ? 'This adoption was revoked on the cloud. Call the office.'
+            : 'Could not push the last changes to the cloud in time. Try again.',
+      });
+    }
+
+    // 3+4. Checksums → cloud unlock (cloud verifies independently and NEVER
+    //      unlocks on mismatch). On mismatch: full re-push of the differing
+    //      tables, then one re-verify.
+    const sums = await venueChecksums(state.meet_id);
+    const call = (body) => fetch(`${state.cloud_url}/api/sync/meets/${state.meet_id}/checkin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sync_token}` },
+      body: JSON.stringify(body),
+    });
+    let resp, data;
+    try {
+      resp = await call({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, checksums: sums, mode });
+      data = await resp.json().catch(() => ({}));
+    } catch (e) {
+      return revert(502, { error: 'cloud_unreachable', message: 'Lost the cloud connection during check-in. Scoring stays available; try again.' });
+    }
+
+    let repushed = null;
+    if (resp.status === 409 && data.error === 'checksum_mismatch') {
+      const tables = {};
+      for (const t of data.mismatched || []) {
+        const rows = await queryAll(protocol.selectForMeet(t), [state.meet_id]);
+        tables[t] = rows.map(r => protocol.manifestRow(t, r));
+      }
+      try {
+        const rp = await fetch(`${state.cloud_url}/api/sync/meets/${state.meet_id}/repush`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sync_token}` },
+          body: JSON.stringify({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, tables }),
+        });
+        if (!rp.ok) {
+          const rpData = await rp.json().catch(() => ({}));
+          return revert(502, { error: 'repush_failed', detail: rpData, mismatched: data.mismatched });
+        }
+        repushed = data.mismatched;
+      } catch (e) {
+        return revert(502, { error: 'cloud_unreachable', message: 'Lost the cloud connection during re-push. Try again.' });
+      }
+      // Re-verify once.
+      const sums2 = await venueChecksums(state.meet_id);
+      resp = await call({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, checksums: sums2, mode });
+      data = await resp.json().catch(() => ({}));
+    }
+
+    if (!resp.ok) {
+      return revert(resp.status === 409 ? 409 : 502, {
+        error: data.error || 'checkin_failed',
+        mismatched: data.mismatched || null,
+        message: data.error === 'checksum_mismatch'
+          ? `Verification failed — these tables still differ from the cloud: ${(data.mismatched || []).join(', ')}. The cloud stays locked; nothing was lost. Try again or call the office.`
+          : (data.message || `Cloud refused the ${mode} (HTTP ${resp.status}).`),
+      });
+    }
+
+    // 5. Local archive mark. The meet is now read-only here for good.
+    await setMeetState(mode === 'checkin' ? 'checked_in' : 'handed_back');
+    res.json({ ok: true, mode, repushed, verified_tables: protocol.CHECKSUM_TABLES.length });
+  } catch (e) {
+    try { await setMeetState('adopted'); } catch (_) {}
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
 module.exports.ensureVenueTables = ensureVenueTables;

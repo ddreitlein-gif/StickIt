@@ -306,7 +306,53 @@ Run: `node run.js` (all suites) or `node run.js step0` (filtered by filename).
 - Worker backoff max 30s so post-outage catch-up is never worse than 30s even
   without a wake signal; any new append wakes it immediately.
 - 413-proofing via path-scoped body limits instead of raising the global limit.
-## Step 5 — Check-in, handback, snapshots — NOT STARTED
+## Step 5 — Check-in, handback, snapshots ✅ COMPLETE
+
+**Built:**
+- Cloud (`server/routes/sync.js`): `POST /meets/:id/checksums` (diagnostic
+  compare), `POST /meets/:id/checkin` (mode checkin|handback — recomputes cloud
+  checksums independently, NEVER unlocks on mismatch [R7], names differing
+  tables; checkin → adoption_status='checked_in', handback → NULL [D8]; token
+  cleared; audit-logged), `POST /meets/:id/repush` (full-table replace of
+  named tables: delete-absent + manifest-only upsert).
+- Venue (`server/routes/venue.js` `POST /api/venue/checkin`, Control token):
+  FR-10 order — freeze ('checking_in') → final outbox flush (flushNow; offline
+  → clean revert to 'adopted' with plain-language error) → checksums → cloud
+  checkin → on mismatch AUTO-REPUSH of differing tables + one re-verify →
+  local archive mark ('checked_in'/'handed_back'). Every failure path reverts
+  to 'adopted' so scoring is never stranded.
+- `server/venue/freeze.js` — FR-10 server-side venue freeze guard, mounted
+  (venue mode only) on the meet-data prefixes: mutations 423 `venue_frozen`
+  during checking_in and permanently after check-in/handback. /api/venue stays
+  reachable (home screen + flow itself).
+- `server/venue/snapshot.js` — R11 USB snapshot worker: 5-min cadence
+  (STICKIT_SNAPSHOT_INTERVAL_MS override), copies db+wal to
+  STICKIT_SNAPSHOT_DIR, keeps last 20, graceful degrade + home-screen warning;
+  status always in /api/venue/status.snapshot.
+- Client (VenueHome): End-of-day section — Hand Back to Cloud / Check In Meet
+  (Control PIN + confirm + progress + error surfacing), revoked-adoption red
+  banner, snapshot warning, handed-back morning note. Role pages' freeze
+  screens (built in Step 3) now driven by the real states.
+
+**Tested (harness/tests/step5.test.js — 39/39; cumulative 338/338; verify_v16 123/123):**
+- TWO-DAY MEET CYCLE (Section 11 item 3): adopt → interleaved M/F singles day
+  with every role auto-following each boundary + concurrent Scoring Computer
+  work on the idle event (reorder + locally-printed results PDF mid-run) →
+  handback (checksums verified; cloud archive ≡ venue) → duals bracket seeded
+  ON THE CLOUD from synced singles results → re-release → one-tap replace
+  re-adopt (bracket arrives; PINs survive) → duals day (4 matches) → final
+  check-in ('checked_in'; archive ≡ venue; cloud editable; venue archival
+  read-only).
+- FR-10: tablet write after handback 423 `venue_frozen`; Playwright freeze
+  screen ("checked in — stop").
+- R7: direct checkin with bogus checksums → 409 + 17 mismatched tables named +
+  cloud stays adopted. Tampered cloud runs table → venue flow auto-repushes
+  `runs` and verifies.
+- Crash test (item 9): SIGKILL mid-scoring during an outage → restart → run
+  intact, outbox continuity (40 rows), drains after reconnect, tablet returns
+  to its seat (role memory).
+- R11: snapshots on the stick, latest snapshot opens and contains the meet;
+  absent stick → home-screen warning.
 ## Step 6 — Packaging + docs — NOT STARTED
 ## Step 7 (optional) — Tablet submission buffering — NOT STARTED (may defer per plan)
 

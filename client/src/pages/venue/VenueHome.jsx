@@ -154,6 +154,31 @@ export default function VenueHome() {
   const [adoptBusy, setAdoptBusy] = useState(false)
   const [pinModal, setPinModal] = useState(null) // { kind, then }
   const [showSeats, setShowSeats] = useState(false)
+  const [checkinBusy, setCheckinBusy] = useState(null)
+  const [checkinErr, setCheckinErr] = useState('')
+
+  // v2.0.00 (Step 5) — Hand Back / Check In: Control PIN, confirm, run, report.
+  const startCheckin = (mode) => {
+    const doIt = async (token) => {
+      const label = mode === 'handback' ? 'Hand Back to Cloud' : 'Check In Meet'
+      if (!window.confirm(mode === 'handback'
+        ? 'Hand this meet back to the cloud?\n\nScoring STOPS on this server. All results are verified against stickitski.com first. Do this only after the last run of the day.'
+        : 'Check this meet in?\n\nThis is final: results are verified against stickitski.com and scoring closes on this server for good.')) return
+      setCheckinBusy(`${label} — verifying every score against the cloud…`)
+      setCheckinErr('')
+      try {
+        await api.venueCheckin(mode, token)
+        await refresh()
+      } catch (e) {
+        setCheckinErr(e.message)
+      } finally { setCheckinBusy(null) }
+    }
+    if (pins?.control_set) {
+      setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doIt(r.token) } })
+    } else {
+      doIt(null)
+    }
+  }
 
   const refresh = () => Promise.all([
     fetchVenueStatus(true).then(setStatus),
@@ -262,6 +287,13 @@ export default function VenueHome() {
             <input type="file" accept=".json,application/json" className="text-sm text-slate-400"
               onChange={e => e.target.files?.[0] && importFile(e.target.files[0])} />
           </div>
+          {status.meet_state === 'handed_back' && status.adopted_meet && (
+            <div className="card mt-6 border-mountain-800 bg-mountain-900/10 text-mountain-300 text-sm">
+              "{status.adopted_meet.name}" was handed back to the cloud for tonight — brackets are
+              built on stickitski.com. In the morning, adopt it again with the NEW release code
+              (this server will offer to replace its local copy).
+            </div>
+          )}
           {status.meet_state === 'checked_in' && status.adopted_meet && (
             <div className="card mt-6 border-green-800 bg-green-900/10 text-green-300 text-sm">
               "{status.adopted_meet.name}" was checked in to the cloud. This server is ready for the next meet.
@@ -278,10 +310,21 @@ export default function VenueHome() {
                 <p className="text-slate-500 text-sm">{status.adopted_meet.location} · {status.adopted_meet.date}</p>
               </div>
               <div className="text-right text-sm">
-                <div className="text-slate-400">Sync: <span className="text-slate-500">{status.sync ? status.sync.label : '—'}</span></div>
+                <div className="text-slate-400">Sync: <span className={status.sync && status.sync.state !== 'up_to_date' ? 'text-amber-300' : 'text-green-400'}>{status.sync ? status.sync.label : '—'}</span></div>
+                {status.snapshot && status.snapshot.warning && (
+                  <div className={status.snapshot.configured ? 'text-amber-400 text-xs mt-1' : 'text-slate-600 text-xs mt-1'}>
+                    💾 {status.snapshot.warning}
+                  </div>
+                )}
               </div>
             </div>
           </div>
+          {status.sync && status.sync.revoked && (
+            <div className="card mb-6 border-red-800 bg-red-900/20 text-red-300 text-sm">
+              ⚠️ This adoption was revoked on the cloud — scores entered here are NOT reaching
+              stickitski.com. Nothing local is lost. Call the office before continuing.
+            </div>
+          )}
 
           {pins && !pins.control_set && <PinSetupCard onDone={refresh} />}
 
@@ -310,6 +353,32 @@ export default function VenueHome() {
               <div className="font-display text-2xl">📶 Connection Info</div>
               <div className="text-slate-500 text-sm">Address + QR code for new tablets · overlay URL for the livestream box</div>
             </button>
+          </div>
+
+          {/* v2.0.00 (Step 5, D8/FR-10) — end-of-day actions (Control PIN) */}
+          <div className="mt-8 p-4 rounded-2xl border border-slate-800 bg-slate-900/60">
+            <div className="text-slate-500 text-xs uppercase tracking-wide mb-3">End of day (see the run sheet)</div>
+            {checkinBusy ? (
+              <div className="text-amber-300 text-sm">⏳ {checkinBusy}</div>
+            ) : (
+              <div className="flex gap-3">
+                <button
+                  className="btn-secondary flex-1 text-sm"
+                  onClick={() => startCheckin('handback')}
+                >
+                  🌙 Hand Back to Cloud
+                  <span className="block text-xs text-slate-500">Two-day meet: tonight's bracket work happens on stickitski.com</span>
+                </button>
+                <button
+                  className="btn-secondary flex-1 text-sm"
+                  onClick={() => startCheckin('checkin')}
+                >
+                  ✅ Check In Meet
+                  <span className="block text-xs text-slate-500">Meet is finished — results become the permanent cloud record</span>
+                </button>
+              </div>
+            )}
+            {checkinErr && <p className="text-red-400 text-sm mt-3">{checkinErr}</p>}
           </div>
         </>
       )}

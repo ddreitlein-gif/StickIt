@@ -130,6 +130,16 @@ app.use('/api/admin/events/:eventId', requireNotAdopted(byEventParam('eventId'))
 // force-unlock deliberately lives at /api/admin/adoption/... outside this prefix.
 app.use('/api/admin/meets/:meetId', requireNotAdopted(byMeetParam('meetId')));
 
+// v2.0.00 (Step 5, FR-10) -- venue-side freeze: once check-in starts (and
+// forever after check-in/handback) the venue refuses every meet-data mutation
+// server-side. Cloud mode never mounts this.
+if (require('./venue/mode').isVenueMode()) {
+  const { venueFreezeGuard } = require('./venue/freeze');
+  for (const prefix of ['/api/meets', '/api/events', '/api/athletes', '/api/training-days', '/api/import']) {
+    app.use(prefix, venueFreezeGuard());
+  }
+}
+
 // v2.0.00 (FR-20) -- route enumeration for the generated lock-coverage test.
 // Only exists when STICKIT_DEBUG_ROUTES=1 (the harness sets it; never set in
 // production).
@@ -199,6 +209,8 @@ app.get('/api/venue/status', async (req, res) => {
         out.adopted_meet = null;
         out.meet_state = null;
       }
+      // Snapshot health is device state, not meet state — always reported.
+      out.snapshot = require('./venue/snapshot').getSnapshotStatus();
     } catch (e) {
       out.adopted_meet = null;
       out.meet_state = null;
@@ -228,6 +240,9 @@ app.get('/api/venue/status', async (req, res) => {
     outboxMod.installCaptureHook()
       .then(() => workerMod.wake(1000))
       .catch(e => console.error('[venue] outbox capture install failed:', e.message));
+    // v2.0.00 (Step 5, R11) -- USB snapshot worker (5-minute cadence; graceful
+    // degrade when the stick is absent).
+    require('./venue/snapshot').startVenueSnapshots();
   }
 }
 
