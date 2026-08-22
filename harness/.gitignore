@@ -1,2 +1,4 @@
 node_modules/
 .scratch/
+.tools/
+.v1baseline/

@@ -558,5 +558,59 @@ router.post('/checkin', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Step 6 — routine software update (Section 7). Home-screen button, shown only
+// in State 1 (no meet adopted) with internet reachable. "Plug the Pi in at
+// home, open stickit.local, click Update."
+// ---------------------------------------------------------------------------
+
+router.get('/update-check', async (req, res) => {
+  try {
+    const { VERSION } = require('../version');
+    const repo = process.env.STICKIT_UPDATE_REPO || 'ddreitlein-gif/StickIt';
+    const apiUrl = process.env.STICKIT_UPDATE_URL || `https://api.github.com/repos/${repo}/releases/latest`;
+    let latest = null;
+    try {
+      const r = await fetch(apiUrl, { headers: { 'User-Agent': 'stickit-venue' } });
+      if (r.ok) {
+        const data = await r.json();
+        latest = data.tag_name || null;
+      }
+    } catch (_) { /* offline */ }
+    const norm = (v) => String(v || '').replace(/^v/, '');
+    res.json({
+      current: VERSION,
+      latest,
+      internet: latest !== null,
+      update_available: !!latest && norm(latest) !== norm(VERSION),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/update', async (req, res) => {
+  try {
+    const state = await getVenueState();
+    if (state && (state.meet_state === 'adopted' || state.meet_state === 'checking_in')) {
+      return res.status(409).json({ error: 'meet_adopted', message: 'Never update while a meet is on this server. Check it in or hand it back first.' });
+    }
+    const script = process.env.STICKIT_UPDATE_SCRIPT;
+    if (!script || !require('fs').existsSync(script)) {
+      return res.status(400).json({ error: 'no_update_script', message: 'No update script configured on this device. Use SSH: sudo /opt/stickit/update-stickit.sh' });
+    }
+    // Fire and respond: the script restarts the service, killing this process.
+    const { spawn } = require('child_process');
+    // On the Pi the stickit user runs the script via passwordless sudo
+    // (sudoers drop-in from provision.sh); the harness sets
+    // STICKIT_UPDATE_SUDO=0 to run it directly.
+    const useSudo = process.env.STICKIT_UPDATE_SUDO !== '0';
+    const child = useSudo
+      ? spawn('sudo', ['-n', script], { detached: true, stdio: 'ignore' })
+      : spawn('bash', [script], { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+    res.json({ ok: true, message: 'Updating — the server restarts itself in a minute or two. Refresh this page after.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
 module.exports.ensureVenueTables = ensureVenueTables;

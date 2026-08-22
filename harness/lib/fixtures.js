@@ -22,6 +22,8 @@ async function buildMeet(api, opts = {}) {
     athletes: athleteCount = 2,
     judges: judgeRoles = ['TL1', 'Air1'],
     startRun = true,
+    bibStart = null,
+    ussaStart = null,
   } = opts;
 
   const meet = await api.must('POST', '/api/meets', {
@@ -42,11 +44,11 @@ async function buildMeet(api, opts = {}) {
   for (let i = 0; i < athleteCount; i++) {
     const a = await api.must('POST', '/api/athletes', {
       first_name: `Ath${i}`, last_name: `Of${name.replace(/[^A-Za-z0-9]/g, '')}`,
-      gender, birth_year: 2008, ussa_num: String(ussaCounter++),
+      gender, birth_year: 2008, ussa_num: String(ussaStart != null ? ussaStart + i : ussaCounter++),
     });
     athletes.push(a);
     regs.push(await api.must('POST', `/api/events/${event.id}/registrations`, {
-      athlete_id: a.id, bib_number: ++bibCounter,
+      athlete_id: a.id, bib_number: bibStart != null ? bibStart + i : ++bibCounter,
     }));
   }
 

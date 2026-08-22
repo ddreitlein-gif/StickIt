@@ -1,0 +1,20 @@
+# StickIt Venue Server — systemd unit (v2 Step 6, D5).
+# Auto-starts at boot (~1 minute to ready), restarts on any failure.
+[Unit]
+Description=StickIt Venue Server
+After=network.target
+
+[Service]
+Type=simple
+User=stickit
+WorkingDirectory=/opt/stickit/server
+Environment=STICKIT_MODE=venue
+Environment=PORT=3001
+Environment=STICKIT_SNAPSHOT_DIR=/media/stickit-snapshot
+Environment=STICKIT_UPDATE_SCRIPT=/opt/stickit/update-stickit.sh
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

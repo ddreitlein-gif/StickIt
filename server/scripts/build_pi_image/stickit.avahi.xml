@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- StickIt Venue Server mDNS record (D3): advertises the HTTP port so
+     stickit.local is discoverable; the hostname itself is "stickit". -->
+<service-group>
+  <name replace-wildcards="yes">StickIt Venue Server on %h</name>
+  <service>
+    <type>_http._tcp</type>
+    <port>3001</port>
+  </service>
+</service-group>

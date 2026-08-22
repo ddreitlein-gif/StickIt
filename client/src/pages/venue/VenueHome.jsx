@@ -156,6 +156,8 @@ export default function VenueHome() {
   const [showSeats, setShowSeats] = useState(false)
   const [checkinBusy, setCheckinBusy] = useState(null)
   const [checkinErr, setCheckinErr] = useState('')
+  const [update, setUpdate] = useState(null)
+  const [updating, setUpdating] = useState(false)
 
   // v2.0.00 (Step 5) — Hand Back / Check In: Control PIN, confirm, run, report.
   const startCheckin = (mode) => {
@@ -186,6 +188,11 @@ export default function VenueHome() {
   ])
 
   useEffect(() => { refresh() }, [])
+  // v2.0.00 (Step 6) — update check, only meaningful with no meet adopted.
+  useEffect(() => {
+    if (!status || status.adopted_meet) { setUpdate(null); return }
+    api.venueUpdateCheck().then(setUpdate).catch(() => setUpdate(null))
+  }, [status?.adopted_meet ? 1 : 0, status ? 1 : 0])
   useEffect(() => { const id = setInterval(() => refresh(), 10000); return () => clearInterval(id) }, [])
 
   // Device role memory: a rebooted tablet goes straight back to its role page.
@@ -287,6 +294,38 @@ export default function VenueHome() {
             <input type="file" accept=".json,application/json" className="text-sm text-slate-400"
               onChange={e => e.target.files?.[0] && importFile(e.target.files[0])} />
           </div>
+
+          {/* v2.0.00 (Step 6) — routine update: "plug the Pi in at home, open
+              stickit.local, click Update." Shown only with internet reachable. */}
+          {update && update.internet && (
+            <div className="card mt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-display text-xl text-slate-300">StickIt software</h2>
+                  <p className="text-slate-500 text-sm">
+                    Installed: {update.current} · Latest: {update.latest}
+                    {!update.update_available && <span className="text-green-400"> — up to date</span>}
+                  </p>
+                </div>
+                {update.update_available && (
+                  <button
+                    className="btn-primary"
+                    disabled={updating}
+                    onClick={async () => {
+                      if (!window.confirm(`Update StickIt from ${update.current} to ${update.latest}? The server restarts itself — takes a minute or two.`)) return
+                      setUpdating(true)
+                      try {
+                        const r = await api.venueUpdate()
+                        alert(r.message || 'Updating…')
+                      } catch (e) { alert('Update failed: ' + e.message); setUpdating(false) }
+                    }}
+                  >
+                    {updating ? 'Updating…' : 'Update StickIt'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {status.meet_state === 'handed_back' && status.adopted_meet && (
             <div className="card mt-6 border-mountain-800 bg-mountain-900/10 text-mountain-300 text-sm">
               "{status.adopted_meet.name}" was handed back to the cloud for tonight — brackets are

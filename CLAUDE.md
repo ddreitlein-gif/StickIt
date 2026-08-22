@@ -349,6 +349,37 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   continuity + role memory), snapshots — all green. Step-5 suite 39/39;
   cumulative harness 338/338.
 
+**Step 6 — Packaging + docs (complete).**
+- `server/scripts/build_pi_image/`: pi-gen build script, provisioning (Node 22,
+  systemd `stickit-venue.service` with Restart=always, Avahi `stickit.local`,
+  NTP + fake-hwclock [FR-17], STICKIT-SNAP snapshot auto-mount [R11], sudoers
+  hook), Imager os_list catalog template, README. Routine update: home-screen
+  Update button (`/api/venue/update-check` + `/update`, refused while a meet is
+  adopted) + `update-stickit.sh` SSH fallback.
+- Printed volunteer material generator (`server/scripts/venue_cards/
+  build_venue_docs.js`, pdfkit + qrcode → `server/public/docs/venue/`): venue
+  card with QR, run sheets 1–5, pre-event checklist (UniFi + Starlink),
+  Mac-fallback sheet. `docs/VENUE_MAC_FALLBACK.md` (R9) + `docs/VENUE_OPS.md`
+  (Section 10 rollback incl. mid-adoption case). Step-6 suite 29/29.
+
+**Release gates (Section 11) — ALL GREEN, full suite 398/398.**
+- Regression gate: v2 vs a real v1.30.03 worktree, identical cloud-only API
+  responses after FR-23 normalization; ranked totals numerically identical.
+- Rollback gate: v1.30.03 boots + scores against the v2-migrated DB; v2 boots
+  again after. Scratch-Turso gate (FR-22): full adopt→outage→replay→check-in
+  against local sqld. Plus (earlier steps): FR-7 outbox audit, FR-20 generated
+  lock coverage (111 routes), viewer parity, R14 latency ~0.4s, two-day cycle,
+  crash tests. `verify_v16.js` 123/123 throughout.
+
+**Step 7 (optional tablet submission buffering): DEFERRED** — touches the live
+judge-tablet submit path (constraint 1) for marginal venue benefit; plan
+explicitly allows deferral. Revisit post-release.
+
+**Remaining for release (David):** physical confirmation run (Section 11 item
+10), then merge `v2` → `main`, bump `server/version.js` to v2.0.00, build &
+package (zip excludes `harness/*`; assets now include ~4MB of self-hosted
+fonts), push tag `v1.30.03`, build + publish the Pi image.
+
 ---
 
 ## v1.30.03 Feature Notes

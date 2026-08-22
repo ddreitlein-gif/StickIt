@@ -1,0 +1,16 @@
+{
+  "_comment": "Raspberry Pi Imager custom catalog (Section 7, preferred provisioning path). Host this JSON at a stable URL (GitHub Pages or a Releases asset) and open Imager with it: rpi-imager --repo <url-to-this-file>. Update url/image_download_size/extract_size/extract_sha256/release_date on every image release.",
+  "os_list": [
+    {
+      "name": "StickIt Venue Server (latest)",
+      "description": "StickIt local scoring server for USSS freestyle events. Boots to stickit.local:3001.",
+      "url": "https://github.com/ddreitlein-gif/StickIt/releases/latest/download/stickit-venue.img.xz",
+      "icon": "https://stickitski.com/logo.png",
+      "release_date": "2026-08-22",
+      "extract_size": 0,
+      "extract_sha256": "REPLACE_WITH_SHA256_OF_UNCOMPRESSED_IMG",
+      "image_download_size": 0,
+      "devices": ["pi4-64bit", "pi5-64bit"]
+    }
+  ]
+}

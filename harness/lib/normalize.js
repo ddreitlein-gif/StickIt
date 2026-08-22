@@ -11,6 +11,7 @@
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TS_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/;
+const EMBEDDED_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const SHORT_CODE_KEY_RE = /(^|_)short_code$/;
 
 function normalizeCorpus(value, { dropKeys = [] } = {}) {
@@ -28,9 +29,14 @@ function normalizeCorpus(value, { dropKeys = [] } = {}) {
       return codeAlias.get(s);
     }
     if (TS_RE.test(s)) return '«ts»';
-    // Strings that embed short codes in URLs (e.g. /judge/abc123?judge=xyz) —
-    // rewrite embedded uuids only; embedded short codes stay (they are
-    // compared only within a corpus, where they alias consistently above).
+    // Embedded UUIDs inside longer strings (e.g. composite ids "<uuid>-1",
+    // URLs) alias the same way as bare UUIDs.
+    if (EMBEDDED_UUID_RE.test(s)) {
+      return s.replace(EMBEDDED_UUID_RE, (m) => {
+        if (!uuidAlias.has(m)) uuidAlias.set(m, `«uuid-${uuidAlias.size + 1}»`);
+        return uuidAlias.get(m);
+      });
+    }
     return s;
   };
 

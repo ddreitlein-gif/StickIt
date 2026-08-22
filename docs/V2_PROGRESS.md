@@ -353,12 +353,82 @@ Run: `node run.js` (all suites) or `node run.js step0` (filtered by filename).
   to its seat (role memory).
 - R11: snapshots on the stick, latest snapshot opens and contains the meet;
   absent stick → home-screen warning.
-## Step 6 — Packaging + docs — NOT STARTED
-## Step 7 (optional) — Tablet submission buffering — NOT STARTED (may defer per plan)
+## Step 6 — Packaging + docs ✅ COMPLETE
+
+**Built:**
+- `server/scripts/build_pi_image/` — reproducible image build (Section 7):
+  `build.sh` (pi-gen wrapper: 64-bit Lite + stage-stickit, hostname `stickit`,
+  bakes in `server/` only exactly like the cloud hosts), `provision.sh`
+  (Node 22, /opt/stickit, systemd enable, Avahi record, systemd-timesyncd +
+  fake-hwclock [FR-17], STICKIT-SNAP auto-mount [R11], sudoers hook for the
+  Update button), `stickit-venue.service` (STICKIT_MODE=venue, Restart=always),
+  `stickit.avahi.xml`, `update-stickit.sh` (SSH fallback + Update button
+  target), `os_list_stickit.json` (Imager custom catalog template), README
+  (build/publish/flash/update procedures).
+- Routine update (Section 7): venue `GET /api/venue/update-check` (GitHub
+  latest-release probe; env overrides for the harness) + `POST /api/venue/update`
+  (refuses 409 while a meet is adopted; runs the configured script). VenueHome
+  State-1 update card (internet-reachable only).
+- Printed material generator `server/scripts/venue_cards/build_venue_docs.js`
+  (pdfkit + qrcode) → `server/public/docs/venue/`: judges'-stand venue card
+  (QR + overlay-URL blank), run sheets 1–5 (kit setup, adoption, tablets,
+  livestream, end-of-day with the two endings), pre-event checklist (UniFi +
+  Starlink profiles), Mac-fallback sheet (R9). Served by BOTH venue and cloud.
+- `docs/VENUE_MAC_FALLBACK.md` (R9 manual-run document) and `docs/VENUE_OPS.md`
+  (Section 10 rollback note incl. the mid-adoption case, force-unlock aftermath,
+  venue-logo + athlete-dedup limitations, FR-17 clock note).
+
+**Tested (harness/tests/step6.test.js — 29/29):** shell scripts bash -n; unit/
+provisioning content assertions (venue env, restart, mDNS/NTP/fake-hwclock,
+snapshot mount, sudoers); os_list JSON; generator idempotent, 8 real PDFs,
+served by both servers; update-check against a faked release feed; update
+refused while adopted / runs the script otherwise; ops docs present.
+
+**Note:** an actual .img build requires Linux/Docker + pi-gen and is part of the
+physical confirmation run's prep, not the simulated suite.
+
+## Release gates (Section 11 items 4/8, FR-22) ✅ ALL GREEN
+
+`harness/tests/zz-gates.test.js` — 31/31:
+- REGRESSION GATE (item 4): identical cloud-only meet script on the v2 build vs
+  a REAL v1.30.03 checkout (git worktree harness/.v1baseline): /api/version,
+  meets, events, results, runs, and all four viewer endpoints identical after
+  FR-23 normalization (v2's additive meets columns dropped per documented
+  list); ranked totals numerically identical.
+- ROLLBACK GATE (item 8): v1.30.03 boots against the v2-migrated DB (adoption
+  columns populated), reads v2 data, scores normally; v2 boots again after.
+- SCRATCH-TURSO GATE (FR-22): full adopt → outage → replay → check-in against
+  a local sqld (libsql-server 0.24.32, harness/.tools, gitignored) —
+  checksums verified on the Turso side, rows mirrored, checked_in recorded.
+
+**FULL SUITE: 398/398** (step0 84, step1 52, step2 57, step3 54, step4 52,
+step5 39, step6 29, gates 31) + verify_v16 123/123.
+## Step 7 (optional) — Tablet submission buffering — DEFERRED (decision)
+
+Deferred per the plan's own terms ("may be deferred without affecting anything
+above"). Rationale: it modifies the judge tablets' live submit path — the most
+safety-critical v1 surface (constraint 1) — for marginal venue-mode benefit
+(the venue LAN makes failed submits vanishingly rare, and V3 polling remains
+the correctness path). Deferring keeps the physical confirmation run a
+confirmation, not a debugging session. Revisit post-release as its own change.
 
 ---
 
 ## Full-suite status (Section 11)
 
-Not yet runnable — items 1–9 accumulate as Steps 1–6 land. Item 10 (physical
-confirmation run) is David's, after everything else passes.
+Items 1–9 ALL GREEN (398/398): two-instance harness (1), outage simulation +
+repeated short outages (2), two-day meet cycle incl. interleaved roles +
+concurrent Scoring Computer ops (3), regression gate vs v1.30.03 (4),
+viewer-API parity gate (5), latency gate ~0.4s (6), lock enforcement incl.
+FR-20 generated coverage + remote-judging + handshake + force-unlock (7),
+rollback gate (8), crash tests (9). Plus FR-7 outbox audit gate and FR-22
+scratch-Turso gate. Item 10 (physical confirmation run) remains for David —
+prep: build the Pi image per server/scripts/build_pi_image/README.md.
+
+## Remaining before release (David)
+1. Physical confirmation run (Section 11 item 10) — UniFi + Starlink profiles,
+   power-pull test.
+2. Merge v2 → main, bump server/version.js to v2.0.00, build & package per
+   CLAUDE.md (zip now excludes harness/*; assets include ~4MB of bundled
+   fonts), push tag v1.30.03 to origin as the rollback point.
+3. Build + publish the Pi image (.img.xz) and the Imager os_list JSON.
