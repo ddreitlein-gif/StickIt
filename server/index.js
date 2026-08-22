@@ -133,6 +133,20 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', requireAuth, requireRole('system_admin'), require('./routes/admin'));
 app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 
+// v2.0.00 (FR-13) -- explicit venue-mode detection. A NEW endpoint (rather than
+// a new field on /api/version) so the /api/version response stays byte-identical
+// to v1.30.03 for the regression gate. Returned in both modes; the client roots
+// on it to decide whether to show the venue home screen (Step 3).
+app.get('/api/venue/status', (req, res) => {
+  const { isVenueMode } = require('./venue/mode');
+  const { SYNC_PROTOCOL_VERSION } = require('./sync/protocol');
+  res.json({
+    mode: isVenueMode() ? 'venue' : 'cloud',
+    protocol_version: SYNC_PROTOCOL_VERSION,
+    version: VERSION,
+  });
+});
+
 // POST finalize event (mark as complete after all phases done)
 // v1.26.02 -- public: called by the Head Judge tablet (no login token). Per the
 // access model, HJ/judge/timekeeper tablets must never be locked out mid-meet.

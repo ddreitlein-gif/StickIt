@@ -73,13 +73,14 @@ Then create the zip directly from the `StickIt/` parent (never use a staging fol
 ```bash
 cd /Users/daviddreitlein/Desktop/StickIt
 zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
-  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*"
+  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*" "harness/*"
 
 # Why each exclusion:
 #   */node_modules/*  → installed deps (~100MB)
 #   */.claude/*       → Claude Code worktrees + chat artifacts (can balloon zip to 15M+)
 #   */data/*          → runtime DB + uploaded logos + backups (production has its own)
 #   client/dist/*     → Vite build intermediate (final assets already in server/public/assets)
+#   harness/*         → v2 simulation test harness (R16) — dev-Mac only, never deployed
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
@@ -221,6 +222,40 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.0.00 Feature Notes (IN PROGRESS — branch `v2`, not released)
+
+### Local Venue Server + One-Way Cloud Sync (v2.0.00)
+
+Implements `StickIt_v2.0_Local_Venue_Server_Design_Plan_08-21-26.md` (Revision 4).
+Build progress + per-step test results: `docs/V2_PROGRESS.md`. Protocol contract:
+`docs/SYNC_PROTOCOL.md`. Test harness: top-level `harness/` (R16 — dev-Mac only,
+never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on main.
+
+**Step 0 — Foundations (complete).**
+- `server/sync/protocol.js`: `SYNC_PROTOCOL_VERSION = 1` (R12) + the version-pinned
+  per-table column manifest (FR-6) for 19 tables + `selectForMeet()` meet-scoping SQL
+  (incl. FR-8 registered-athletes scope) + canonical value serialization and
+  row/table SHA-256 checksums, computed identically on both sides in pure JS.
+  Any future migration touching a manifest table must update the manifest (the
+  harness drift test fails otherwise) and consider a protocol version bump.
+- `server/venue/mode.js`: `isVenueMode()` — `STICKIT_MODE=venue` selects venue mode;
+  cloud mode is the default and byte-for-byte unchanged (D4).
+- New `GET /api/venue/status` → `{ mode, protocol_version, version }` (FR-13
+  detection endpoint; `/api/version` deliberately untouched so its response stays
+  byte-identical to v1.30.03).
+- FR-11: `judge_scores` gets `UNIQUE INDEX idx_judge_scores_run_judge_type
+  (run_id, judge_id, score_type)` — created OUTSIDE the error-swallowing migration
+  loop after a dedup that keeps the most recent duplicate (`submitted_at` DESC,
+  rowid DESC), loud non-fatal logging; the tablet score-submit INSERT in
+  `server/routes/runs.js` retries as an UPDATE on constraint violation so racing
+  judge submits never see an error. Additive — a v1.30.03 build runs cleanly
+  against the migrated DB.
+- Harness foundations: two-instance driver (real server child processes, scratch
+  file DBs, cloud+venue modes, kill/restart for crash tests) + Playwright layer
+  (FR-21). Step-0 suite: 84/84; `verify_v16.js` 123/123.
 
 ---
 

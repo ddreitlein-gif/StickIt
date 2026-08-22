@@ -306,6 +306,37 @@ async function initSchema() {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }
   }
 
+  // v2.0.00 (FR-11) -- the judge_scores app-level upsert (POST /runs/:runId/scores)
+  // has no backing UNIQUE index, so racing INSERTs can produce duplicate
+  // (run_id, judge_id, score_type) rows. Dedup first (keep the most recent
+  // submission), then create the UNIQUE index OUTSIDE the error-swallowing
+  // migration loop with explicit failure logging. The insert site in runs.js
+  // retries as an UPDATE on constraint violation so a judge tablet never sees
+  // a hard error. Additive (an index), so a v1.30.03 build runs cleanly
+  // against this database.
+  try {
+    const dedup = await c.execute(
+      `DELETE FROM judge_scores WHERE rowid NOT IN (
+         SELECT rowid FROM (
+           SELECT rowid, ROW_NUMBER() OVER (
+             PARTITION BY run_id, judge_id, score_type
+             ORDER BY submitted_at DESC, rowid DESC
+           ) AS rn FROM judge_scores
+         ) WHERE rn = 1
+       )`
+    );
+    if (dedup.rowsAffected > 0) {
+      console.log(`[FR-11 migration] removed ${dedup.rowsAffected} duplicate judge_scores rows (kept most recent per run/judge/type)`);
+    }
+    await c.execute(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_judge_scores_run_judge_type ON judge_scores(run_id, judge_id, score_type)`
+    );
+  } catch (e) {
+    // Loud, non-fatal: the app-level upsert still works without the index;
+    // this must never prevent a production boot.
+    console.error('[FR-11 migration] FAILED to dedup/create UNIQUE index on judge_scores(run_id, judge_id, score_type):', e.message);
+  }
+
   // Migrate usss_code_men/usss_code_women → usss_code (one-time)
   try {
     await c.execute(`UPDATE events SET usss_code = CASE WHEN gender='M' THEN usss_code_men ELSE usss_code_women END WHERE usss_code IS NULL AND (usss_code_men IS NOT NULL OR usss_code_women IS NOT NULL)`);

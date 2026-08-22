@@ -1236,16 +1236,40 @@ router.post('/:runId/scores', async (req, res) => {
          ex.id]
       );
     } else {
-      await execute(
-        `INSERT INTO judge_scores
-           (id,run_id,judge_id,score_type,raw_score,tl_carving,tl_abext,tl_upper_body,tl_deduction)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-        [uuidv4(), run.id, judge_id, score_type, raw_score,
-         isTurns ? (carving    ?? null) : null,
-         isTurns ? (abext      ?? null) : null,
-         isTurns ? (upper_body ?? null) : null,
-         isTurns ? (deduction  ?? null) : null]
-      );
+      try {
+        await execute(
+          `INSERT INTO judge_scores
+             (id,run_id,judge_id,score_type,raw_score,tl_carving,tl_abext,tl_upper_body,tl_deduction)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+          [uuidv4(), run.id, judge_id, score_type, raw_score,
+           isTurns ? (carving    ?? null) : null,
+           isTurns ? (abext      ?? null) : null,
+           isTurns ? (upper_body ?? null) : null,
+           isTurns ? (deduction  ?? null) : null]
+        );
+      } catch (insErr) {
+        // v2.0.00 (FR-11) -- the UNIQUE(run_id, judge_id, score_type) index can
+        // reject a racing INSERT (two concurrent submits from the same judge
+        // for the same score slot). Retry as an UPDATE of the row that won the
+        // race so the tablet never sees a hard error.
+        if (!/unique|constraint/i.test(String(insErr && insErr.message))) throw insErr;
+        const won = await queryOne(
+          'SELECT id FROM judge_scores WHERE run_id=? AND judge_id=? AND score_type=?',
+          [run.id, judge_id, score_type]
+        );
+        if (!won) throw insErr;
+        await execute(
+          `UPDATE judge_scores SET raw_score=?, submitted_at=datetime('now'),
+             tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?
+           WHERE id=?`,
+          [raw_score,
+           isTurns ? (carving    ?? null) : null,
+           isTurns ? (abext      ?? null) : null,
+           isTurns ? (upper_body ?? null) : null,
+           isTurns ? (deduction  ?? null) : null,
+           won.id]
+        );
+      }
     }
 
     // Store T&L component scores on the run row when a turns score is submitted
