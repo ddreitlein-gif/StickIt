@@ -139,7 +139,51 @@ Run: `node run.js` (all suites) or `node run.js step0` (filtered by filename).
   meets-prefix guard.
 - Reads of adopted meets stay open everywhere (mirror is live by design).
 - Adoption in step1 tests is set by direct DB update — redemption endpoint is Step 2.
-## Step 2 — Adoption package + ID-preserving import — NOT STARTED
+## Step 2 — Adoption package + ID-preserving import ✅ COMPLETE
+
+**Built:**
+- `server/sync/package.js` — `buildAdoptionPackage(meetId)`: manifest-driven (FR-6)
+  export of every SNAPSHOT table via `selectForMeet` + `manifestRow` (never SELECT *),
+  plus usss_people snapshot (R5) and meet logo file as base64.
+- `server/routes/sync.js` (cloud mode only, mounted at /api/sync):
+  `POST /adopt` — protocol handshake (R12) → code hash lookup → expiry check →
+  ATOMIC redemption (conditional UPDATE, single winner, FR-4; burns the code, sets
+  `adoption_status='adopted'` + `sync_token_hash` + `last_applied_seq=0`) → 300ms
+  drain → snapshot → returns `{sync_token, package}`. `POST /peek` — validates a code
+  WITHOUT redeeming, so the venue can detect an existing local copy and offer the
+  one-tap replace BEFORE the one-time code is burned.
+- `server/sync/adoptionImport.js` — `executeAdoptionImport(pkg, {replace})`: generic
+  all-columns row copier from the FR-6 manifest; refuses `meet_exists` for meet-keyed
+  tables unless replace; UPSERTs athletes + usss_people (master rows survive);
+  `clearMeetLocal(meetId)` (children-first manifest-driven delete) used by replace and
+  by revert-on-error; logo file written; protocol-mismatch refusal.
+- `server/routes/venue.js` (venue mode only, /api/venue): `POST /adopt` (peek →
+  meet_exists check → redeem → import → store venue state), `POST /import-package`
+  (USB plan B, token from the file). `server/venue/state.js` — venue-local adoption
+  state in app_settings (venue_meet_id/sync_token/cloud_url/meet_state).
+- USB plan B cloud side: `POST /api/meets/:id/export-for-adoption` (requireAuth) —
+  lock set ATOMICALLY at export (no lock-later variant), package + sync_token as a
+  downloadable JSON file.
+- `/api/venue/status` enriched in venue mode: `adopted_meet`, `meet_state`, `cloud_url`.
+
+**Tested (harness/tests/step2.test.js — 57/57; cumulative 193/193; verify_v16 123/123):**
+- Full adopt cycle via real endpoints; cloud locked; code burned; venue status.
+- Byte-for-byte parity: protocol checksums identical cloud↔venue for all 19 snapshot
+  tables (populated: meets/events/athletes/registrations/judges/officials/course_specs/
+  runs/judge_scores/training_days/exclusions/usss_people); short_code + created_at
+  literal preservation; venue meets row carries NO lock state; logo round-trip.
+- Handshake refusals (cloud adopt, venue import), expired code, wrong code,
+  already_hosting, double redemption (code burned).
+- Replace re-adoption (D8): meet_exists refusal WITHOUT burning the code (peek),
+  replace discards local divergence, checksums match after replace.
+- USB: export-for-adoption locks at export; import on fresh venue; checksum parity.
+
+**Implementation choices:**
+- Added `POST /api/sync/peek` (not in plan text, consistent with D8's one-tap
+  re-adoption): without it, the meet_exists refusal would burn the one-time code.
+- 300ms post-lock drain before snapshot (single-process Express; writes are short);
+  post-lock writes are 423 and pre-lock writes are inside the snapshot either way.
+- Venue keeps the raw sync token in local app_settings (local disk trusted, R3).
 ## Step 3 — Venue mode + home screen — NOT STARTED
 ## Step 4 — Upsync — NOT STARTED
 ## Step 5 — Check-in, handback, snapshots — NOT STARTED

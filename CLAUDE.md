@@ -281,6 +281,24 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   meet. Cloud UI: read-only mirror banners on MeetDetail/EventDetail.
 - Step-1 suite 52/52; cumulative harness 136/136; `verify_v16.js` 123/123.
 
+**Step 2 — Adoption package + ID-preserving import (complete).**
+- Cloud `/api/sync` (cloud mode only): `POST /adopt` — R12 handshake, atomic
+  single-winner code redemption (burns the code, locks the meet, issues the sync
+  token), 300ms drain, then the manifest-driven snapshot (`server/sync/package.js`,
+  FR-6 — includes usss_people [R5] + meet logo base64). `POST /peek` validates a code
+  without redeeming so re-adoption can offer "replace local copy" before the one-time
+  code is burned (D8).
+- Venue `/api/venue` (venue mode only): `POST /adopt` (code → cloud redeem → import →
+  venue state in app_settings), `POST /import-package` (USB plan B).
+  `server/sync/adoptionImport.js` is the ID-preserving importer: generic all-columns
+  row copier from the FR-6 manifest (UUIDs/short codes/timestamps byte-for-byte),
+  meet-keyed tables refuse if present (replace flag clears first via
+  `clearMeetLocal`), athletes + usss_people upsert.
+- USB plan B cloud side: `POST /api/meets/:id/export-for-adoption` sets the lock
+  atomically at export (no lock-later window) and emits package + sync token as a file.
+- Step-2 suite 57/57 incl. per-table checksum parity cloud↔venue for all snapshot
+  tables; cumulative harness 193/193.
+
 ---
 
 ## v1.30.03 Feature Notes

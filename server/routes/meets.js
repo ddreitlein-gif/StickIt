@@ -234,6 +234,41 @@ router.post('/:id/unrelease', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// v2.0.00 (Step 2) — USB plan B: Export for Adoption. Sets the adoption lock
+// ATOMICALLY at export time (same lock-drain-snapshot order as the release-code
+// flow; there is no "lock later" variant — a window between export and lock
+// would let public tablet writes land on the cloud and be silently overwritten
+// by upsync). The produced file carries the sync token — it is the only
+// transport in the USB flow.
+router.post('/:id/export-for-adoption', requireAuth, async (req, res) => {
+  try {
+    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.id]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    if (meet.remote_judging) return res.status(409).json({ error: 'remote_judging_meet' });
+    // (adoption_status='adopted' is already refused by the adoption-lock guard.)
+    const crypto = require('crypto');
+    const { hashToken } = require('../sync/adoption');
+    const syncToken = crypto.randomBytes(32).toString('hex');
+    const result = await execute(
+      `UPDATE meets SET adoption_status='adopted', adopted_at=datetime('now'),
+              sync_token_hash=?, release_code_hash=NULL, release_code_expires_at=NULL,
+              last_applied_seq=0, updated_at=datetime('now')
+       WHERE id=? AND adoption_status IS NULL`,
+      [hashToken(syncToken), req.params.id]
+    );
+    if (!result.rowsAffected) return res.status(409).json({ error: 'already_adopted' });
+    await new Promise(r => setTimeout(r, 300)); // drain in-flight writes
+    const { buildAdoptionPackage } = require('../sync/package');
+    const pkg = await buildAdoptionPackage(req.params.id);
+    const { logAudit } = require('./audit');
+    try { await logAudit('meet_adopted', 'meet', req.params.id, null, { via: 'usb_export' }); } catch (_) {}
+    const fileName = `StickIt_Adoption_${meet.name.replace(/[^A-Za-z0-9]+/g, '_')}.json`;
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.send(JSON.stringify({ ...pkg, sync_token: syncToken }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Adoption state for UI banners + polling. Public read (discloses only lock
 // state, no codes or token material).
 router.get('/:id/adoption', async (req, res) => {

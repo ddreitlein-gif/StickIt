@@ -163,15 +163,46 @@ app.get('/api/version', (req, res) => res.json({ version: VERSION }));
 // a new field on /api/version) so the /api/version response stays byte-identical
 // to v1.30.03 for the regression gate. Returned in both modes; the client roots
 // on it to decide whether to show the venue home screen (Step 3).
-app.get('/api/venue/status', (req, res) => {
+app.get('/api/venue/status', async (req, res) => {
   const { isVenueMode } = require('./venue/mode');
   const { SYNC_PROTOCOL_VERSION } = require('./sync/protocol');
-  res.json({
+  const out = {
     mode: isVenueMode() ? 'venue' : 'cloud',
     protocol_version: SYNC_PROTOCOL_VERSION,
     version: VERSION,
-  });
+  };
+  if (isVenueMode()) {
+    try {
+      const { getVenueState } = require('./venue/state');
+      const state = await getVenueState();
+      if (state) {
+        const meet = await queryOne('SELECT id, name, date, location FROM meets WHERE id=?', [state.meet_id]);
+        out.adopted_meet = meet || null;
+        out.meet_state = state.meet_state;
+        out.cloud_url = state.cloud_url;
+      } else {
+        out.adopted_meet = null;
+        out.meet_state = null;
+      }
+    } catch (e) {
+      out.adopted_meet = null;
+      out.meet_state = null;
+    }
+  }
+  res.json(out);
 });
+
+// v2.0.00 (Step 2) -- mode-gated sync/venue routers (D4: both ship in every
+// build, inert when not selected). Cloud serves /api/sync (adopt + upsync
+// apply); venue serves /api/venue (adoption, home-screen support).
+{
+  const { isVenueMode } = require('./venue/mode');
+  if (!isVenueMode()) {
+    app.use('/api/sync', require('./routes/sync'));
+  } else {
+    app.use('/api/venue', require('./routes/venue'));
+  }
+}
 
 // POST finalize event (mark as complete after all phases done)
 // v1.26.02 -- public: called by the Head Judge tablet (no login token). Per the
