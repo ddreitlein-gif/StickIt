@@ -26,6 +26,11 @@ app.use('/api/sync', express.json({ limit: '64mb' }));
 app.use('/api/venue', express.json({ limit: '64mb' }));
 app.use(express.json());
 
+// v2.0.00 (M-2) -- count mutating requests in flight so the adoption drain can
+// wait for a real zero instead of a fixed sleep. Response bytes are untouched
+// (D4-safe).
+app.use(require('./utils/inflight').trackMutations());
+
 // Track write operations for autosave
 app.use((req, res, next) => {
   const writeMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
@@ -135,7 +140,12 @@ app.use('/api/admin/meets/:meetId', requireNotAdopted(byMeetParam('meetId')));
 // server-side. Cloud mode never mounts this.
 if (require('./venue/mode').isVenueMode()) {
   const { venueFreezeGuard } = require('./venue/freeze');
-  for (const prefix of ['/api/meets', '/api/events', '/api/athletes', '/api/training-days', '/api/import']) {
+  // H-7: /api/admin and /api/usss are included — admin mutations (reopen,
+  // lock/hide flags, athlete soft-delete/restore, backup restore) touch
+  // checksummed data and must freeze with everything else once check-in
+  // starts. /api/venue itself stays outside the guard so the check-in flow,
+  // abandon, and the home screen keep working.
+  for (const prefix of ['/api/meets', '/api/events', '/api/athletes', '/api/training-days', '/api/import', '/api/admin', '/api/usss']) {
     app.use(prefix, venueFreezeGuard());
   }
 }
@@ -357,6 +367,20 @@ initSchema().then(async () => {
   // never mutates synced tables uncaptured.
   if (require('./venue/mode').isVenueMode()) {
     try { await require('./sync/outbox').refreshCaptureState(); } catch (_) {}
+    // v2.0.00 (C-1) -- interrupted check-in recovery: a crash/power cut during
+    // POST /api/venue/checkin leaves venue_meet_state='checking_in' persisted
+    // with nobody to revert it, which would freeze every mutation (FR-10) and
+    // refuse a check-in retry forever. The cloud never unlocked (it commits
+    // only after verifying checksums), so resetting to 'adopted' is always safe.
+    try {
+      const { getSetting, setMeetState } = require('./venue/state');
+      if ((await getSetting('venue_meet_state')) === 'checking_in') {
+        console.error('[venue] boot: interrupted check-in detected — resuming as adopted (the cloud never unlocked; retry check-in when ready)');
+        await setMeetState('adopted');
+      }
+    } catch (e) {
+      console.error('[venue] boot: interrupted check-in recovery failed:', e.message);
+    }
   }
 
   // v2.0.00 (FR-9) -- never touch rows of an adopted meet at boot: a cloud

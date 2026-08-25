@@ -469,16 +469,24 @@ router.post('/athletes/restore', async (req, res) => {
   try {
     const { ids } = req.body || {};
     if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'ids array required' });
-    const placeholders = ids.map(() => '?').join(',');
-    await execute(
-      `UPDATE athletes SET deleted_at=NULL WHERE id IN (${placeholders}) AND deleted_at IS NOT NULL`,
-      ids
-    );
+    // v2.0.00 (M-16, FR-8) — skip adoption-locked athlete rows (checksummed
+    // under the registered-athletes scope of an adopted meet).
+    const { athleteIdsLockedByAdoption } = require('../sync/adoption');
+    const lockedIds = await athleteIdsLockedByAdoption();
+    const allowed = ids.filter(id => !lockedIds.has(id));
+    const skipped = ids.length - allowed.length;
+    if (allowed.length) {
+      const placeholders = allowed.map(() => '?').join(',');
+      await execute(
+        `UPDATE athletes SET deleted_at=NULL WHERE id IN (${placeholders}) AND deleted_at IS NOT NULL`,
+        allowed
+      );
+    }
     try {
       const { logAudit } = require('./audit');
-      await logAudit('athletes_restored', 'athlete', null, null, { count: ids.length, ids });
+      await logAudit('athletes_restored', 'athlete', null, null, { count: allowed.length, ids: allowed, skipped_locked: skipped });
     } catch (_) {}
-    res.json({ restored: ids.length });
+    res.json({ restored: allowed.length, skipped_locked: skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -607,6 +615,32 @@ router.post('/backups/:filename/restore', async (req, res) => {
     }
     const fullPath = path.join(BACKUP_DIR, filename);
     if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'Backup not found' });
+    // v2.0.00 (H-8) — a restore replaces adoption/sync state wholesale.
+    // Venue mode: never restore while a meet is on this server (it would wipe
+    // the venue state, sync token, and outbox mid-meet).
+    if (require('../venue/mode').isVenueMode()) {
+      const { getVenueState } = require('../venue/state');
+      const vstate = await getVenueState();
+      if (vstate && (vstate.meet_state === 'adopted' || vstate.meet_state === 'checking_in')) {
+        return res.status(409).json({
+          error: 'venue_meet_adopted',
+          message: 'A meet is currently on this venue server — restoring a backup would destroy its sync state. Check the meet in (or hand it back) first.',
+        });
+      }
+    } else {
+      // Cloud mode: restoring a backup taken before an adoption erases the
+      // adoption lock + sync token — the mirror becomes editable mid-meet and
+      // the venue's upsync dies with a misleading "revoked". Require explicit
+      // acknowledgement when adopted meets exist in the CURRENT database.
+      const adopted = await queryAll(`SELECT id, name FROM meets WHERE adoption_status='adopted'`);
+      if (adopted.length && !(req.body || {}).acknowledge_adoptions) {
+        return res.status(409).json({
+          error: 'meets_adopted',
+          adopted_meets: adopted.map(m => m.name),
+          message: `These meets are currently adopted by a venue server: ${adopted.map(m => m.name).join(', ')}. Restoring this backup would break their sync. Re-send with acknowledge_adoptions: true only if you are certain.`,
+        });
+      }
+    }
     await doBackup(); // pre-restore safety copy of the current DB
     const dbPath = path.join(__dirname, '../data/scoring.db');
     fs.copyFileSync(fullPath, dbPath);
@@ -647,7 +681,9 @@ router.post('/adoption/:meetId/force-unlock', async (req, res) => {
   try {
     const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.meetId]);
     if (!meet) return res.status(404).json({ error: 'Meet not found' });
-    if (meet.adoption_status !== 'adopted') {
+    // H-2: 'checked_in' is force-unlockable too — it is otherwise a one-way
+    // state and day-2 recovery may need the record cleared.
+    if (meet.adoption_status !== 'adopted' && meet.adoption_status !== 'checked_in') {
       return res.status(400).json({ error: 'Meet is not adopted' });
     }
     const { confirm_name } = req.body || {};
@@ -666,7 +702,7 @@ router.post('/adoption/:meetId/force-unlock', async (req, res) => {
     );
     try {
       const { logAudit } = require('./audit');
-      await logAudit('meet_force_unlocked', 'meet', req.params.meetId, { adoption_status: 'adopted', adopted_at: meet.adopted_at }, {
+      await logAudit('meet_force_unlocked', 'meet', req.params.meetId, { adoption_status: meet.adoption_status, adopted_at: meet.adopted_at }, {
         by: (req.user && req.user.username) || null,
         last_sync_at: meet.last_sync_at || null,
         last_applied_seq: meet.last_applied_seq ?? null,

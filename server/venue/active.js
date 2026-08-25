@@ -12,16 +12,28 @@ const { queryOne } = require('../db/schema');
 
 let lastActive = { eventId: null, at: 0 };
 
+// M-14: how stale the spotlight holder must be before OTHER activity (paper/
+// manual scoring emits score_update/run_updated but never run_started) can
+// take it over. Without this, a morning tablet-scored event pins every
+// surface for the whole afternoon of a paper-scored event.
+const TAKEOVER_AFTER_MS = 3 * 60 * 1000;
+
 /** Called from the venue-mode broadcast hook in index.js. */
 function noteActivity(eventId, type) {
   if (!eventId) return;
+  // M-14: when the tracked event finalizes, release the spotlight so the DB
+  // fallback (or the next activity) picks the live event.
+  if (type === 'event_finalized') {
+    if (lastActive.eventId === eventId) resetActive();
+    return;
+  }
   // Starting a run/match takes the spotlight immediately; score updates keep
-  // an already-active event current but never steal it from a newer start.
+  // an already-active event current but never steal it from a FRESH holder.
   if (type === 'run_started' || type === 'dual_match_started') {
     lastActive = { eventId, at: Date.now() };
   } else if (lastActive.eventId === eventId) {
     lastActive.at = Date.now();
-  } else if (!lastActive.eventId) {
+  } else if (!lastActive.eventId || Date.now() - lastActive.at > TAKEOVER_AFTER_MS) {
     lastActive = { eventId, at: Date.now() };
   }
 }

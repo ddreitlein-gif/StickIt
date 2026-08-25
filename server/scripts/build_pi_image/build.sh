@@ -61,13 +61,21 @@ touch "$STAGE/EXPORT_IMAGE"
 
 # 3. pi-gen config: 64-bit Lite + our stage; hostname "stickit" so tablets
 #    reach http://stickit.local:3001 with zero DNS setup (D3).
+#    H-11: SSH enabled + a user password baked in — every documented recovery
+#    path (update fallback, C-1/M-11 repair, VENUE_MAC_FALLBACK) assumes
+#    `ssh stickit@stickit.local`, and Bookworm may lock a passwordless user
+#    entirely. Override the default credential with STICKIT_PI_PASSWORD; the
+#    credential in use is printed on the venue run sheet (venue_cards).
+STICKIT_PI_PASSWORD="${STICKIT_PI_PASSWORD:-stickitvenue}"
 cat > pi-gen/config <<EOS
 IMG_NAME=stickit-venue
 RELEASE=bookworm
 DEPLOY_COMPRESSION=xz
 TARGET_HOSTNAME=stickit
 FIRST_USER_NAME=stickit
+FIRST_USER_PASS=${STICKIT_PI_PASSWORD}
 DISABLE_FIRST_BOOT_USER_RENAME=1
+ENABLE_SSH=1
 STAGE_LIST="stage0 stage1 stage2 stage-stickit"
 EOS
 

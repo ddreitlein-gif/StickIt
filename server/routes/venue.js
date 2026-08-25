@@ -32,6 +32,19 @@ async function ensureVenueTables() {
   )`);
 }
 
+// H-4a: every new adoption starts with an empty outbox — rows stranded by a
+// revoked adoption, an aborted check-in, or a poison row belong to a dead
+// token and must never replay against the next adoption.
+// L-1: the seat registry resets with it — the next meet must not start with
+// every seat showing "in use" from the previous meet's tablets.
+async function clearOutboxForNewAdoption() {
+  const outbox = require('../sync/outbox');
+  await outbox.ensureOutboxTable();
+  await execute('DELETE FROM sync_outbox');
+  await ensureVenueTables();
+  await execute('DELETE FROM venue_seats');
+}
+
 // ---------------------------------------------------------------------------
 // PINs (R3 / 6.3). Two 4-digit PINs, stored hashed in local app_settings.
 // Control PIN gates Scoring Computer + Head Judge (client tiles AND, via the
@@ -61,6 +74,12 @@ router.post('/pins', async (req, res) => {
         return res.status(403).json({ error: 'control_token_required', message: 'Enter the current Control PIN before changing PINs.' });
       }
     }
+    // L-2: the first-set window is open to the LAN by design (the volunteer
+    // sets PINs immediately after adoption, per the run sheet) — log it
+    // loudly so an unexpected claimant is at least visible.
+    if (!existing) {
+      console.log(`[venue] PINs first set from ${req.ip || 'unknown ip'}`);
+    }
     await setSetting('venue_control_pin_hash', hashToken(control_pin));
     await setSetting('venue_crew_pin_hash', hashToken(crew_pin));
     // (Re)issue the Control session token — PIN change invalidates old sessions.
@@ -69,13 +88,44 @@ router.post('/pins', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// M-9: verify-pin throttle — the PIN space is 10,000 and the Control token it
+// yields satisfies system_admin everywhere in venue mode. Without a throttle
+// any device on venue Wi-Fi can iterate every PIN in under a minute.
+const PIN_FAIL_LIMIT = 10;
+const PIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const pinFailures = new Map(); // ip → { count, resetAt }
+
+function pinThrottleCheck(ip) {
+  const now = Date.now();
+  const rec = pinFailures.get(ip);
+  if (rec && rec.resetAt < now) pinFailures.delete(ip);
+  const cur = pinFailures.get(ip);
+  return !cur || cur.count < PIN_FAIL_LIMIT;
+}
+
+function pinThrottleFail(ip) {
+  const now = Date.now();
+  const rec = pinFailures.get(ip);
+  if (!rec || rec.resetAt < now) {
+    pinFailures.set(ip, { count: 1, resetAt: now + PIN_FAIL_WINDOW_MS });
+  } else {
+    rec.count++;
+  }
+}
+
 router.post('/verify-pin', async (req, res) => {
   try {
     const { kind, pin } = req.body || {};
     if (kind !== 'control' && kind !== 'crew') return res.status(400).json({ error: 'kind must be control or crew' });
+    const ip = req.ip || req.connection.remoteAddress || 'unknown';
+    if (!pinThrottleCheck(ip)) {
+      return res.status(429).json({ error: 'too_many_attempts', message: 'Too many wrong PINs from this device — wait 15 minutes.' });
+    }
     const hash = await getSetting(kind === 'control' ? 'venue_control_pin_hash' : 'venue_crew_pin_hash');
     if (!hash) return res.status(400).json({ error: 'pins_not_set', message: 'PINs have not been set yet — set them from the adoption flow.' });
     if (hashToken(String(pin || '')) !== hash) {
+      pinThrottleFail(ip);
+      await new Promise(r => setTimeout(r, 250)); // constant failure delay
       return res.status(403).json({ error: 'pin_incorrect', message: 'Wrong PIN.' });
     }
     if (kind === 'control') {
@@ -150,11 +200,13 @@ router.post('/seats/claim', async (req, res) => {
     await ensureVenueTables();
     const { seat, device_label } = req.body || {};
     if (!SEATS.includes(seat)) return res.status(400).json({ error: 'bad_seat' });
-    const existing = await queryOne('SELECT * FROM venue_seats WHERE seat=?', [seat]);
-    if (existing) {
-      return res.status(409).json({ error: 'seat_taken', message: `Seat ${seat} is already in use${existing.device_label ? ` by "${existing.device_label}"` : ''}. The Scoring Computer can force-release it.` });
+    // L-1: atomic claim — SELECT-then-INSERT raced a simultaneous claim into a
+    // raw UNIQUE-constraint 500 in front of a volunteer.
+    const r = await execute(`INSERT OR IGNORE INTO venue_seats (seat, device_label, claimed_at) VALUES (?,?,datetime('now'))`, [seat, device_label || null]);
+    if (!r.rowsAffected) {
+      const existing = await queryOne('SELECT * FROM venue_seats WHERE seat=?', [seat]);
+      return res.status(409).json({ error: 'seat_taken', message: `Seat ${seat} is already in use${existing && existing.device_label ? ` by "${existing.device_label}"` : ''}. The Scoring Computer can force-release it.` });
     }
-    await execute(`INSERT INTO venue_seats (seat, device_label, claimed_at) VALUES (?,?,datetime('now'))`, [seat, device_label || null]);
     res.json({ ok: true, seat });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -265,13 +317,25 @@ router.post('/overlay-pin', async (req, res) => {
 router.get('/connection-info', async (req, res) => {
   try {
     const port = process.env.PORT || 3001;
-    const addrs = [];
+    // L-5: deterministic primary-interface preference (wired first) so the
+    // QR/overlay URL doesn't name whichever interface enumerated first when
+    // both eth0 and wlan0 are up. All addresses are still listed.
+    const IFACE_PREFERENCE = ['eth0', 'en0', 'en1', 'wlan0', 'wlp', 'enp'];
+    const found = []; // { name, address }
     const ifaces = os.networkInterfaces();
-    for (const list of Object.values(ifaces)) {
+    for (const [name, list] of Object.entries(ifaces)) {
       for (const i of list || []) {
-        if (i.family === 'IPv4' && !i.internal) addrs.push(i.address);
+        if (i.family === 'IPv4' && !i.internal) found.push({ name, address: i.address });
       }
     }
+    found.sort((a, b) => {
+      const rank = (n) => {
+        const idx = IFACE_PREFERENCE.findIndex(p => n === p || n.startsWith(p));
+        return idx === -1 ? IFACE_PREFERENCE.length : idx;
+      };
+      return rank(a.name) - rank(b.name);
+    });
+    const addrs = found.map(f => f.address);
     const primary = addrs[0] || '127.0.0.1';
     res.json({
       port: Number(port),
@@ -295,7 +359,9 @@ router.post('/adopt', async (req, res) => {
       return res.status(400).json({ error: 'code_required', message: 'Enter the release code shown on the cloud meet page.' });
     }
     const existingState = await getVenueState();
-    if (existingState && existingState.meet_state === 'adopted') {
+    // L-9: 'checking_in' counts as hosting too — an adopt racing an
+    // in-progress check-in must not overwrite venue state mid-flow.
+    if (existingState && (existingState.meet_state === 'adopted' || existingState.meet_state === 'checking_in')) {
       return res.status(409).json({
         error: 'already_hosting',
         message: 'This venue server is already hosting a meet. Check it in or hand it back before adopting another.',
@@ -376,6 +442,11 @@ router.post('/adopt', async (req, res) => {
       return res.status(e.httpCode || 500).json({ error: e.code || 'import_failed', message: e.message });
     }
 
+    // H-4/H-5: a fresh adoption starts with a clean slate — stranded outbox
+    // rows from a prior (revoked/aborted) adoption must never replay under the
+    // new token, and the worker's terminal revoked flag belongs to the old one.
+    await clearOutboxForNewAdoption();
+    require('../sync/worker').reset();
     await setVenueState({
       meet_id: result.meet_id,
       sync_token: cloudResp.sync_token,
@@ -399,7 +470,9 @@ router.post('/import-package', async (req, res) => {
     const { package: pkg, replace } = req.body || {};
     if (!pkg) return res.status(400).json({ error: 'package_required' });
     const existingState = await getVenueState();
-    if (existingState && existingState.meet_state === 'adopted') {
+    // L-9: 'checking_in' counts as hosting too — an adopt racing an
+    // in-progress check-in must not overwrite venue state mid-flow.
+    if (existingState && (existingState.meet_state === 'adopted' || existingState.meet_state === 'checking_in')) {
       return res.status(409).json({
         error: 'already_hosting',
         message: 'This venue server is already hosting a meet. Check it in or hand it back before adopting another.',
@@ -419,6 +492,9 @@ router.post('/import-package', async (req, res) => {
       return res.status(e.httpCode || 500).json({ error: e.code || 'import_failed', message: e.message });
     }
 
+    // H-4/H-5: same clean-slate rules as the online adopt path.
+    await clearOutboxForNewAdoption();
+    require('../sync/worker').reset();
     await setVenueState({
       meet_id: result.meet_id,
       sync_token: pkg.sync_token,
@@ -459,6 +535,28 @@ async function venueChecksums(meetId) {
   return out;
 }
 
+// H-1: lost-response reconciliation. If the cloud committed a check-in/handback
+// but the response never reached the venue, the venue reverted to 'adopted' and
+// every later authed call gets 410 (the token hash was cleared at commit).
+// Before declaring failure, ask the cloud's PUBLIC adoption endpoint whether
+// the requested mode already took effect.
+async function cloudCompletedMode(state, mode) {
+  try {
+    const r = await fetch(`${state.cloud_url}/api/meets/${state.meet_id}/adoption`);
+    if (!r.ok) return false;
+    const a = await r.json();
+    if (mode === 'checkin') return a.adoption_status === 'checked_in';
+    return a.adoption_status === null; // handback → cloud unlocked
+  } catch (_) { return false; }
+}
+
+async function outboxCountForMeet(meetId) {
+  try {
+    const row = await queryOne('SELECT COUNT(*) AS c FROM sync_outbox WHERE meet_id=?', [meetId]);
+    return parseInt(row.c) || 0;
+  } catch (_) { return 0; }
+}
+
 router.post('/checkin', async (req, res) => {
   const { setMeetState } = require('../venue/state');
   try {
@@ -468,7 +566,10 @@ router.post('/checkin', async (req, res) => {
       return res.status(400).json({ error: 'mode must be checkin or handback' });
     }
     const state = await getVenueState();
-    if (!state || state.meet_state !== 'adopted') {
+    // C-1: 'checking_in' is retryable — a prior attempt that died mid-flight
+    // (crash, power cut) persisted the frozen state; the flow below is
+    // idempotent up to the cloud call, so a retry from here is always safe.
+    if (!state || (state.meet_state !== 'adopted' && state.meet_state !== 'checking_in')) {
       return res.status(409).json({ error: 'not_adopted', message: `Venue meet state is ${state ? state.meet_state : 'none'}.` });
     }
 
@@ -480,25 +581,79 @@ router.post('/checkin', async (req, res) => {
       res.status(httpCode).json(body);
     };
 
-    // 2. Final flush.
-    const worker = require('../sync/worker');
-    const flush = await worker.flushNow(45000);
-    if (!flush.ok) {
-      return revert(502, {
-        error: 'flush_failed',
-        reason: flush.reason,
-        message: flush.reason === 'offline'
-          ? 'The cloud is unreachable — check-in needs internet. Scoring stays available; try again when the uplink is back.'
-          : flush.reason === 'revoked'
-            ? 'This adoption was revoked on the cloud. Call the office.'
-            : 'Could not push the last changes to the cloud in time. Try again.',
+    // H-1: finish locally when the cloud has provably already committed this
+    // mode and nothing is left to push (lost-response reconciliation).
+    // M-9: the Control token stops mattering once the meet is finally checked
+    // in — rotate it so a token captured during the meet dies with the meet.
+    // (Handback keeps it: the same meet resumes in the morning.)
+    const rotateControlTokenIfFinal = async () => {
+      if (mode !== 'checkin') return;
+      if (await getSetting('venue_control_token')) {
+        await setSetting('venue_control_token', crypto.randomBytes(24).toString('hex'));
+      }
+    };
+    const finishReconciled = async () => {
+      await setMeetState(mode === 'checkin' ? 'checked_in' : 'handed_back');
+      await rotateControlTokenIfFinal();
+      res.json({ ok: true, mode, reconciled: true, repushed: null, verified_tables: protocol.CHECKSUM_TABLES.length });
+    };
+    const tryReconcile = async () => {
+      if (!(await cloudCompletedMode(state, mode))) return false;
+      const pendingCount = await outboxCountForMeet(state.meet_id);
+      if (pendingCount === 0) {
+        await finishReconciled();
+        return true;
+      }
+      // Cloud committed but local changes recorded after the commit can never
+      // reach it (the token is burned). Accurate message instead of the false
+      // "revoked — call the office" (H-1).
+      await revert(409, {
+        error: 'completed_with_pending_changes',
+        pending: pendingCount,
+        message: `The cloud already completed this ${mode === 'checkin' ? 'check-in' : 'handback'}, but ${pendingCount} local change${pendingCount === 1 ? '' : 's'} recorded afterward never reached it. Do not keep scoring here — the venue data is intact; call the office to reconcile.`,
       });
+      return true;
+    };
+
+    // 2. Final flush — with a post-checksum write barrier (M-6): a request
+    //    already past the freeze guard when the state flipped can commit
+    //    during the flush/checksum window. Any such write necessarily
+    //    appended to the outbox (capture stays active during 'checking_in'),
+    //    so loop flush → checksums until the outbox is provably quiet
+    //    immediately before the cloud call.
+    const worker = require('../sync/worker');
+    let sums;
+    for (let attempt = 0; ; attempt++) {
+      const flush = await worker.flushNow(45000);
+      if (!flush.ok) {
+        // A 'revoked' flush after a lost check-in response is the H-1
+        // signature: the cloud cleared the token when it committed.
+        // Reconcile before failing.
+        if (flush.reason === 'revoked' && await tryReconcile()) return;
+        return revert(502, {
+          error: 'flush_failed',
+          reason: flush.reason,
+          message: flush.reason === 'offline'
+            ? 'The cloud is unreachable — check-in needs internet. Scoring stays available; try again when the uplink is back.'
+            : flush.reason === 'revoked'
+              ? 'This adoption was revoked on the cloud. Call the office.'
+              : 'Could not push the last changes to the cloud in time. Try again.',
+        });
+      }
+      sums = await venueChecksums(state.meet_id);
+      if ((await outboxCountForMeet(state.meet_id)) === 0) break;
+      if (attempt >= 3) {
+        return revert(502, {
+          error: 'flush_failed',
+          reason: 'writes_during_checkin',
+          message: 'Writes kept arriving during check-in. Make sure every tablet has stopped, then try again.',
+        });
+      }
     }
 
     // 3+4. Checksums → cloud unlock (cloud verifies independently and NEVER
     //      unlocks on mismatch). On mismatch: full re-push of the differing
     //      tables, then one re-verify.
-    const sums = await venueChecksums(state.meet_id);
     const call = (body) => fetch(`${state.cloud_url}/api/sync/meets/${state.meet_id}/checkin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.sync_token}` },
@@ -509,8 +664,15 @@ router.post('/checkin', async (req, res) => {
       resp = await call({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, checksums: sums, mode });
       data = await resp.json().catch(() => ({}));
     } catch (e) {
+      // H-1: the request may have committed on the cloud with only the
+      // response lost. Probe before reverting into a split brain.
+      if (await tryReconcile()) return;
       return revert(502, { error: 'cloud_unreachable', message: 'Lost the cloud connection during check-in. Scoring stays available; try again.' });
     }
+    // H-1: a 410 here means the token hash is already NULL on the cloud — the
+    // signature of a check-in that committed on a previous, lost-response
+    // attempt (or a force-unlock; the probe distinguishes them).
+    if (resp.status === 410 && await tryReconcile()) return;
 
     let repushed = null;
     if (resp.status === 409 && data.error === 'checksum_mismatch') {
@@ -549,8 +711,21 @@ router.post('/checkin', async (req, res) => {
       });
     }
 
+    // M-6: last barrier — a write that slipped in between the final checksum
+    // and the cloud's commit is stranded (the token is now burned). Report it
+    // accurately instead of silently archiving.
+    const lateWrites = await outboxCountForMeet(state.meet_id);
+    if (lateWrites > 0) {
+      return revert(409, {
+        error: 'completed_with_pending_changes',
+        pending: lateWrites,
+        message: `The cloud completed the ${mode === 'checkin' ? 'check-in' : 'handback'}, but ${lateWrites} change${lateWrites === 1 ? '' : 's'} landed during the final verification and never reached it. Do not keep scoring here — the venue data is intact; call the office to reconcile.`,
+      });
+    }
+
     // 5. Local archive mark. The meet is now read-only here for good.
     await setMeetState(mode === 'checkin' ? 'checked_in' : 'handed_back');
+    await rotateControlTokenIfFinal();
     res.json({ ok: true, mode, repushed, verified_tables: protocol.CHECKSUM_TABLES.length });
   } catch (e) {
     try { await setMeetState('adopted'); } catch (_) {}
@@ -577,21 +752,41 @@ router.get('/update-check', async (req, res) => {
         latest = data.tag_name || null;
       }
     } catch (_) { /* offline */ }
-    const norm = (v) => String(v || '').replace(/^v/, '');
+    // M-10: strictly-newer comparison — a yanked or lagging GitHub release
+    // must never be offered as an "update" that downgrades.
+    const parseVer = (v) => String(v || '').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+    const semverGt = (a, b) => {
+      const pa = parseVer(a), pb = parseVer(b);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d !== 0) return d > 0;
+      }
+      return false;
+    };
     res.json({
       current: VERSION,
       latest,
       internet: latest !== null,
-      update_available: !!latest && norm(latest) !== norm(VERSION),
+      update_available: !!latest && semverGt(latest, VERSION),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/update', async (req, res) => {
   try {
+    // M-10: Control-gated (any LAN device could otherwise trigger a sudo
+    // update + restart), and also refused in the overnight 'handed_back'
+    // state of a two-day meet — a version/protocol change overnight risks a
+    // mismatch at morning re-adoption.
+    if (!(await requireControlToken(req, res))) return;
     const state = await getVenueState();
-    if (state && (state.meet_state === 'adopted' || state.meet_state === 'checking_in')) {
-      return res.status(409).json({ error: 'meet_adopted', message: 'Never update while a meet is on this server. Check it in or hand it back first.' });
+    if (state && ['adopted', 'checking_in', 'handed_back'].includes(state.meet_state)) {
+      return res.status(409).json({
+        error: 'meet_adopted',
+        message: state.meet_state === 'handed_back'
+          ? 'This meet resumes in the morning — never update between days of a meet. Update after the final check-in.'
+          : 'Never update while a meet is on this server. Check it in or hand it back first.',
+      });
     }
     const script = process.env.STICKIT_UPDATE_SCRIPT;
     if (!script || !require('fs').existsSync(script)) {
@@ -609,6 +804,40 @@ router.post('/update', async (req, res) => {
     child.on('error', () => {});
     child.unref();
     res.json({ ok: true, message: 'Updating — the server restarts itself in a minute or two. Refresh this page after.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// H-5 — Abandon adoption (Control PIN). Recovery for a dead adoption (cloud
+// force-unlocked / revoked): clears the venue's adoption state and the
+// stranded outbox so the device can adopt another meet. Local meet data stays
+// in the database (USB recovery still possible).
+// ---------------------------------------------------------------------------
+router.post('/abandon', async (req, res) => {
+  try {
+    if (!(await requireControlToken(req, res))) return;
+    const state = await getVenueState();
+    if (!state) return res.status(409).json({ error: 'no_meet', message: 'No meet is adopted on this server.' });
+    const { clearVenueState } = require('../venue/state');
+    require('../sync/worker').reset();
+    await clearOutboxForNewAdoption();
+    await clearVenueState();
+    require('../venue/active').resetActive();
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit('venue_adoption_abandoned', 'meet', state.meet_id, { meet_state: state.meet_state }, {});
+    } catch (_) {}
+    res.json({ ok: true, message: 'Adoption abandoned. The local meet data is intact; this server can now adopt a meet.' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// H-6 — capture-layer health: full-table-diff fallbacks indicate an unparsed
+// SQL shape on a hot path (severe write amplification on the Pi). Surfaced
+// for the harness gate and diagnostics.
+router.get('/capture-stats', async (req, res) => {
+  try {
+    const { getCaptureStats } = require('../sync/outbox');
+    res.json(getCaptureStats());
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -24,7 +24,7 @@ function PinModal({ title, kind, onOk, onClose, hint }) {
       const r = await api.venueVerifyPin(kind, pin)
       onOk(r)
     } catch (e) {
-      setErr(e.message === 'pin_incorrect' ? 'Wrong PIN — try again.' : e.message)
+      setErr(e.code === 'pin_incorrect' ? 'Wrong PIN — try again.' : e.message)
     } finally { setBusy(false) }
   }
   return (
@@ -182,8 +182,10 @@ export default function VenueHome() {
     }
   }
 
+  // M-13: keep the previous status when a refresh poll fails — one transient
+  // failure must not re-render the operator console as the Adopt screen.
   const refresh = () => Promise.all([
-    fetchVenueStatus(true).then(setStatus),
+    fetchVenueStatus(true).then(setStatus).catch(() => {}),
     api.venuePinsStatus().then(setPins).catch(() => setPins({ control_set: false, crew_set: false })),
   ])
 
@@ -212,7 +214,10 @@ export default function VenueHome() {
       setCode('')
       await refresh()
     } catch (e) {
-      if (/already exists|Replace/i.test(e.message)) {
+      // H-9: branch on the machine code — apiFetch previously threw the bare
+      // code as the message, so the old text regex could never match and the
+      // day-2 replace offer was unreachable from the UI.
+      if (e.code === 'meet_exists') {
         if (window.confirm(e.message + '\n\nReplace the local copy with the current cloud version?')) {
           setAdoptBusy(false)
           return adopt(true)
@@ -230,7 +235,7 @@ export default function VenueHome() {
       await api.venueImportPackage(pkg, replace ? { replace: true } : {})
       await refresh()
     } catch (e) {
-      if (/already exists|Replace/i.test(e.message)) {
+      if (e.code === 'meet_exists') {
         if (window.confirm(e.message + '\n\nReplace the local copy with the current cloud version?')) {
           return importFile(file, true)
         }
@@ -311,13 +316,21 @@ export default function VenueHome() {
                   <button
                     className="btn-primary"
                     disabled={updating}
-                    onClick={async () => {
-                      if (!window.confirm(`Update StickIt from ${update.current} to ${update.latest}? The server restarts itself — takes a minute or two.`)) return
-                      setUpdating(true)
-                      try {
-                        const r = await api.venueUpdate()
-                        alert(r.message || 'Updating…')
-                      } catch (e) { alert('Update failed: ' + e.message); setUpdating(false) }
+                    onClick={() => {
+                      // M-10: the update endpoint is Control-gated.
+                      const doUpdate = async (token) => {
+                        if (!window.confirm(`Update StickIt from ${update.current} to ${update.latest}? The server restarts itself — takes a minute or two.`)) return
+                        setUpdating(true)
+                        try {
+                          const r = await api.venueUpdate(token)
+                          alert(r.message || 'Updating…')
+                        } catch (e) { alert('Update failed: ' + e.message); setUpdating(false) }
+                      }
+                      if (pins?.control_set) {
+                        setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doUpdate(r.token) } })
+                      } else {
+                        doUpdate(null)
+                      }
                     }}
                   >
                     {updating ? 'Updating…' : 'Update StickIt'}
@@ -362,6 +375,36 @@ export default function VenueHome() {
             <div className="card mb-6 border-red-800 bg-red-900/20 text-red-300 text-sm">
               ⚠️ This adoption was revoked on the cloud — scores entered here are NOT reaching
               stickitski.com. Nothing local is lost. Call the office before continuing.
+              <button
+                className="btn-secondary w-full mt-3 text-sm"
+                onClick={() => {
+                  // H-5: recovery from a dead adoption without DB surgery.
+                  const doAbandon = async (token) => {
+                    if (!window.confirm('Abandon this adoption?\n\nThe meet data stays on this server (USB recovery still works), but this server stops trying to sync and can adopt a meet again.')) return
+                    try { await api.venueAbandon(token); await refresh() }
+                    catch (e) { alert('Could not abandon: ' + e.message) }
+                  }
+                  if (pins?.control_set) {
+                    setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doAbandon(r.token) } })
+                  } else doAbandon(null)
+                }}
+              >
+                Abandon this adoption (Control PIN)
+              </button>
+            </div>
+          )}
+          {status.sync && status.sync.capture_failures > 0 && (
+            <div className="card mb-6 border-red-800 bg-red-900/20 text-red-300 text-sm">
+              ⚠️ {status.sync.capture_failures} score change{status.sync.capture_failures === 1 ? '' : 's'} could not be
+              recorded for cloud sync. Scoring still works and nothing local is lost — the differences
+              will be repaired at check-in — but call support if this number keeps growing.
+            </div>
+          )}
+          {status.sync && status.sync.stuck && (
+            <div className="card mb-6 border-amber-800 bg-amber-900/20 text-amber-300 text-sm">
+              ⚠️ Cloud sync is stuck on one change (seq {status.sync.stuck.seq}
+              {status.sync.stuck.table ? `, table ${status.sync.stuck.table}` : ''}). Scoring still works
+              and everything is saved locally; call the office if this does not clear.
             </div>
           )}
 

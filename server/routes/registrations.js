@@ -419,12 +419,17 @@ router.post('/export-bibs-to-athletes', async (req, res) => {
        WHERE r.event_id = ? AND r.status != 'scratched' AND r.bib_number IS NOT NULL`,
       [req.params.eventId]
     );
-    const stmts = regs.map(r => ({
+    // v2.0.00 (M-16, FR-8) — skip adoption-locked athlete rows (bib is a
+    // manifest column; a cloud-side edit would desync the venue checksum).
+    const { athleteIdsLockedByAdoption } = require('../sync/adoption');
+    const lockedIds = await athleteIdsLockedByAdoption();
+    const allowed = regs.filter(r => !lockedIds.has(r.athlete_id));
+    const stmts = allowed.map(r => ({
       sql:  `UPDATE athletes SET bib = ? WHERE id = ?`,
       args: [r.bib_number, r.athlete_id],
     }));
     if (stmts.length) await batch(stmts);
-    res.json({ ok: true, updated: stmts.length });
+    res.json({ ok: true, updated: stmts.length, skipped_locked: regs.length - allowed.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -600,7 +605,15 @@ async function processCsvRows(rows, event, eventId, commit, overrideEventCheck =
         if (!athlete.club && team) { updates.push('club=?'); params.push(team); }
         // v1.16.31 -- restore soft-deleted athlete when re-imported via CSV
         if (athlete.deleted_at) { updates.push('deleted_at=NULL'); }
-        if (updates.length) { params.push(athleteId); await execute(`UPDATE athletes SET ${updates.join(', ')} WHERE id=?`, params); }
+        // v2.0.00 (M-16, FR-8) -- never mutate an adoption-locked athlete row
+        // (it is checksummed on the venue; repush would revert this edit).
+        if (updates.length) {
+          const { isAthleteAdoptionLocked } = require('../sync/adoption');
+          if (!(await isAthleteAdoptionLocked(athleteId))) {
+            params.push(athleteId);
+            await execute(`UPDATE athletes SET ${updates.join(', ')} WHERE id=?`, params);
+          }
+        }
       }
     } else {
       athleteId = uuidv4();

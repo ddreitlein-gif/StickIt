@@ -249,17 +249,40 @@ router.post('/:id/export-for-adoption', requireAuth, async (req, res) => {
     const crypto = require('crypto');
     const { hashToken } = require('../sync/adoption');
     const syncToken = crypto.randomBytes(32).toString('hex');
+    // H-2: 'checked_in' is re-exportable (day-2 recovery after a mistaken
+    // Check In instead of Hand Back).
     const result = await execute(
       `UPDATE meets SET adoption_status='adopted', adopted_at=datetime('now'),
               sync_token_hash=?, release_code_hash=NULL, release_code_expires_at=NULL,
               last_applied_seq=0, updated_at=datetime('now')
-       WHERE id=? AND adoption_status IS NULL`,
+       WHERE id=? AND (adoption_status IS NULL OR adoption_status='checked_in')`,
       [hashToken(syncToken), req.params.id]
     );
     if (!result.rowsAffected) return res.status(409).json({ error: 'already_adopted' });
-    await new Promise(r => setTimeout(r, 300)); // drain in-flight writes
+    // M-2: adaptive drain of in-flight mutations (was a fixed 300 ms sleep).
+    await require('../utils/inflight').waitForMutationIdle();
     const { buildAdoptionPackage } = require('../sync/package');
-    const pkg = await buildAdoptionPackage(req.params.id);
+    // M-1: on package-build failure, revert the lock (and restore any release
+    // code the meet held) so the export can simply be retried.
+    let pkg;
+    try {
+      pkg = await buildAdoptionPackage(req.params.id);
+    } catch (e) {
+      try {
+        await execute(
+          `UPDATE meets SET adoption_status=NULL, adopted_at=NULL, sync_token_hash=NULL,
+                  release_code_hash=?, release_code_expires_at=?, updated_at=datetime('now')
+           WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
+          [meet.release_code_hash, meet.release_code_expires_at, req.params.id, hashToken(syncToken)]
+        );
+      } catch (revertErr) {
+        console.error(`[meets] export-for-adoption revert ALSO failed for meet ${req.params.id}: ${revertErr.message}`);
+      }
+      return res.status(500).json({
+        error: 'package_build_failed',
+        message: `Could not build the adoption file (${e.message}). The meet was NOT locked — try again.`,
+      });
+    }
     const { logAudit } = require('./audit');
     try { await logAudit('meet_adopted', 'meet', req.params.id, null, { via: 'usb_export' }); } catch (_) {}
     const fileName = `StickIt_Adoption_${meet.name.replace(/[^A-Za-z0-9]+/g, '_')}.json`;
@@ -290,7 +313,8 @@ router.get('/:id/adoption', async (req, res) => {
       remote_judging: !!meet.remote_judging,
       released: !!meet.released && meet.adoption_status !== 'adopted',
       released_at: meet.released_at || null,
-      released_by: meet.released_by || null,
+      // L-8: released_by (a username) deliberately NOT disclosed here — this
+      // endpoint is public; the admin adoption list (authed) still carries it.
       release_code_expires_at: meet.release_code_expires_at || null,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -298,6 +322,22 @@ router.get('/:id/adoption', async (req, res) => {
 
 // Shared helper: delete a meet and all its child data
 async function deleteMeetCascade(meetId) {
+  // v2.0.00 (M-3) — in venue mode the local meets row carries no adoption
+  // state, so nothing else guards this. Deleting the adopted meet would be
+  // captured to the outbox and replayed onto the cloud, erasing the meet on
+  // BOTH servers from one confirmed click. Refuse at the chokepoint (covers
+  // the DELETE route and overwrite-style imports alike).
+  if (require('../venue/mode').isVenueMode()) {
+    const { getVenueState } = require('../venue/state');
+    const vstate = await getVenueState();
+    if (vstate && vstate.meet_id === meetId &&
+        (vstate.meet_state === 'adopted' || vstate.meet_state === 'checking_in')) {
+      const err = new Error('This meet is currently adopted on this venue server — it cannot be deleted here. Check it in or hand it back first.');
+      err.code = 'venue_meet_adopted';
+      err.httpCode = 423;
+      throw err;
+    }
+  }
   const events = await queryAll('SELECT id FROM events WHERE meet_id = ?', [meetId]);
   const eventIds = events.map(e => e.id);
 
@@ -357,7 +397,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
   try {
     await deleteMeetCascade(req.params.id);
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.httpCode || 500).json({ error: e.code || e.message, message: e.message }); }
 });
 
 // GET /api/meets/:id/status -- per-event scoring progress for the meet dashboard

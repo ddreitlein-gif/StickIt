@@ -13,7 +13,14 @@ let _statusPromise = null;
 
 export function fetchVenueStatus(force = false) {
   if (!_statusPromise || force) {
-    _statusPromise = api.venueStatus().catch(() => ({ mode: 'cloud' }));
+    // M-13: never cache a failure — a transient error must not lock a venue
+    // Pi's client into cloud mode (unregistering the venue routes) for the
+    // whole session, and callers need to distinguish failure from "cloud".
+    const p = api.venueStatus().catch((e) => {
+      if (_statusPromise === p) _statusPromise = null;
+      throw e;
+    });
+    _statusPromise = p;
   }
   return _statusPromise;
 }
@@ -38,5 +45,9 @@ export function clearRoleMemory() {
 export function roleUrl(mem) {
   if (!mem || !mem.role) return null;
   if (mem.role === 'judge') return `/venue/role/judge?seat=${encodeURIComponent(mem.seat || 'J1')}`;
+  // M-15: the Scoring Computer is the officials console, not an iframe role
+  // page — /venue/role/dashboard resolves to bad_role and strands the device
+  // on a permanent "Waiting..." screen after a reboot.
+  if (mem.role === 'dashboard') return '/dashboard';
   return `/venue/role/${mem.role}`;
 }

@@ -58,15 +58,26 @@ async function apiFetch(path, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
+  // v2.0.00 (H-9/M-13) — errors carry the human-readable message when the
+  // server sent one, with the machine code preserved on `code` (and the whole
+  // parsed body on `body`) so callers can branch without string-matching UI text.
+  const throwApiError = (err, fallback, status) => {
+    const e = new Error(err.message || err.error || fallback);
+    e.code = err.error || null;
+    e.body = err;
+    e.status = status;
+    throw e;
+  };
+
   if (res.status === 401) {
     handle401();
     const err = await res.json().catch(() => ({ error: 'Authentication required' }));
-    throw new Error(err.error || 'Authentication required');
+    throwApiError(err, 'Authentication required', 401);
   }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throwApiError(err, `HTTP ${res.status}`, res.status);
   }
 
   return res.json();
@@ -234,7 +245,8 @@ export const api = {
   resetTrainingExclusions: (id) => apiFetch(`/training-days/${id}/reset`, { method: 'POST' }),
 
   // v2.0.00 — venue mode (Step 3)
-  venueStatus: () => apiFetch('/venue/status'),
+  // M-13: bounded — a hung status fetch must never blank first paint.
+  venueStatus: () => apiFetch('/venue/status', { signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined }),
   venueAdopt: (code, opts = {}) => apiFetch('/venue/adopt', { method: 'POST', body: { code, ...opts } }),
   venueImportPackage: (pkg, opts = {}) => apiFetch('/venue/import-package', { method: 'POST', body: { package: pkg, ...opts } }),
   venuePinsStatus: () => apiFetch('/venue/pins/status'),
@@ -249,7 +261,8 @@ export const api = {
   venueConnectionInfo: () => apiFetch('/venue/connection-info'),
   venueCheckin: (mode, control_token) => apiFetch('/venue/checkin', { method: 'POST', body: { mode, control_token } }),
   venueUpdateCheck: () => apiFetch('/venue/update-check'),
-  venueUpdate: () => apiFetch('/venue/update', { method: 'POST' }),
+  venueUpdate: (control_token) => apiFetch('/venue/update', { method: 'POST', body: { control_token } }),
+  venueAbandon: (control_token) => apiFetch('/venue/abandon', { method: 'POST', body: { control_token } }),
 
   // v2.0.00 — venue adoption (Step 1)
   getMeetAdoption: (id) => apiFetch(`/meets/${id}/adoption`),

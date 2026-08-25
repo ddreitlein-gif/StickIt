@@ -33,13 +33,25 @@ import './index.css'
 // exactly the v1 route tree.
 function useVenueMode() {
   const [mode, setMode] = useState(null)
-  useEffect(() => { fetchVenueStatus().then(s => setMode(s.mode === 'venue')) }, [])
-  return mode // null while loading
+  useEffect(() => {
+    let dead = false
+    // M-13: never blank the app on a slow or failed /api/venue/status — paint
+    // the cloud route tree after a short fallback and swap to venue if the
+    // answer later says so. Failures retry, so a venue Pi whose first fetch
+    // failed is not stuck rendering cloud routes for the whole session.
+    const fallback = setTimeout(() => setMode(m => (m === null ? false : m)), 1500)
+    const attempt = () => fetchVenueStatus(true)
+      .then(s => { if (!dead) setMode(s.mode === 'venue') })
+      .catch(() => { if (!dead) setTimeout(attempt, 5000) })
+    attempt()
+    return () => { dead = true; clearTimeout(fallback) }
+  }, [])
+  return mode // null only briefly while loading
 }
 
 export default function App() {
   const venue = useVenueMode()
-  if (venue === null) return null // one-poll gate before first paint
+  if (venue === null) return null // brief gate — 1.5s worst case (M-13)
   return (
     <BrowserRouter>
       <AuthProvider>

@@ -54,15 +54,22 @@ export default function VenueRole() {
 
   if (frozen) {
     const done = target.meet_state !== 'checking_in'
+    // L-6: handed_back gets its own copy — on night 1 of a two-day meet,
+    // "checked in … power tablets down" would be wrong and confusing.
+    const handedBack = target.meet_state === 'handed_back'
     return (
       <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8 text-center">
-        <div className="text-6xl mb-6">{done ? '✅' : '⏳'}</div>
+        <div className="text-6xl mb-6">{done ? (handedBack ? '🌙' : '✅') : '⏳'}</div>
         <h1 className="font-display text-4xl mb-3">
-          {done ? 'Meet checked in — you can stop' : 'Meet is checking in…'}
+          {done
+            ? (handedBack ? 'Handed back for tonight — you can stop' : 'Meet checked in — you can stop')
+            : 'Meet is checking in…'}
         </h1>
         <p className="text-slate-400 max-w-md">
           {done
-            ? 'All results are safely on stickitski.com. Scoring is closed on this server — thank you for your work today. You can power tablets down.'
+            ? (handedBack
+              ? 'Today\'s results are safely on stickitski.com and tonight\'s work (brackets, run orders) happens there. Scoring is done here for today — in the morning the meet is adopted again with a NEW release code.'
+              : 'All results are safely on stickitski.com. Scoring is closed on this server — thank you for your work today. You can power tablets down.')
             : 'The Scoring Computer is sending final results to the cloud. Please stop scoring — this screen will update when it finishes.'}
         </p>
         <button onClick={exit} className="mt-8 text-sm text-slate-600 underline">Back to menu</button>

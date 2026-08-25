@@ -10,7 +10,14 @@ User=stickit
 WorkingDirectory=/opt/stickit/server
 Environment=STICKIT_MODE=venue
 Environment=PORT=3001
+# M-11: pin the database OUTSIDE the swapped code tree (this is schema.js's
+# default path on the Pi anyway — pinned so a future tree change can never
+# silently relocate the live DB).
+Environment=LIBSQL_URL=file:/opt/stickit/data/scoring.db
 Environment=STICKIT_SNAPSHOT_DIR=/media/stickit-snapshot
+# H-10: the mountpoint dir is baked into the SD card (nofail fstab), so the
+# server must verify a real USB mount before treating snapshots as healthy.
+Environment=STICKIT_SNAPSHOT_REQUIRE_MOUNT=1
 Environment=STICKIT_UPDATE_SCRIPT=/opt/stickit/update-stickit.sh
 ExecStart=/usr/bin/node index.js
 Restart=always

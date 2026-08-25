@@ -20,6 +20,43 @@ const protocol = require('../sync/protocol');
 const { hashToken } = require('../sync/adoption');
 const { buildAdoptionPackage } = require('../sync/package');
 
+// L-8: release codes are 8-char one-time secrets — cheap per-IP failure
+// limiter on /peek and /adopt to match the auth posture (v1.25.00 A-7).
+const CODE_FAIL_LIMIT = 10;
+const CODE_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const codeFailures = new Map(); // ip → { count, resetAt }
+
+function codeThrottle(req, res) {
+  const ip = req.ip || 'unknown';
+  const rec = codeFailures.get(ip);
+  if (rec && rec.resetAt < Date.now()) codeFailures.delete(ip);
+  const cur = codeFailures.get(ip);
+  if (cur && cur.count >= CODE_FAIL_LIMIT) {
+    res.status(429).json({ error: 'too_many_attempts', message: 'Too many invalid release codes from this address — wait 15 minutes.' });
+    return false;
+  }
+  return true;
+}
+
+function codeThrottleFail(req) {
+  const ip = req.ip || 'unknown';
+  const rec = codeFailures.get(ip);
+  if (!rec || rec.resetAt < Date.now()) {
+    codeFailures.set(ip, { count: 1, resetAt: Date.now() + CODE_FAIL_WINDOW_MS });
+  } else {
+    rec.count++;
+  }
+}
+
+// L-8: constant-time hash comparison for token auth.
+function hashesEqual(aHex, bHex) {
+  try {
+    const a = Buffer.from(String(aHex), 'hex');
+    const b = Buffer.from(String(bHex), 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch (_) { return false; }
+}
+
 function protocolMismatch(res, received) {
   return res.status(409).json({
     error: 'protocol_mismatch',
@@ -43,9 +80,10 @@ router.post('/peek', async (req, res) => {
     if (!code || typeof code !== 'string') {
       return res.status(400).json({ error: 'code_required' });
     }
+    if (!codeThrottle(req, res)) return;
     const codeHash = hashToken(code.trim().toUpperCase());
     const meet = await queryOne('SELECT id, name, date, adoption_status, release_code_expires_at FROM meets WHERE release_code_hash=?', [codeHash]);
-    if (!meet) return res.status(404).json({ error: 'code_invalid', message: 'That release code is not valid.' });
+    if (!meet) { codeThrottleFail(req); return res.status(404).json({ error: 'code_invalid', message: 'That release code is not valid.' }); }
     if (meet.release_code_expires_at && new Date(meet.release_code_expires_at).getTime() < Date.now()) {
       return res.status(404).json({ error: 'code_expired', message: 'That release code has expired.' });
     }
@@ -72,9 +110,11 @@ router.post('/adopt', async (req, res) => {
     if (!code || typeof code !== 'string') {
       return res.status(400).json({ error: 'code_required', message: 'Release code required' });
     }
+    if (!codeThrottle(req, res)) return;
     const codeHash = hashToken(code.trim().toUpperCase());
     const meet = await queryOne('SELECT * FROM meets WHERE release_code_hash=?', [codeHash]);
     if (!meet) {
+      codeThrottleFail(req);
       return res.status(404).json({ error: 'code_invalid', message: 'That release code is not valid. Codes work once — ask the official to release the meet again for a new code.' });
     }
     if (meet.remote_judging) {
@@ -87,25 +127,59 @@ router.post('/adopt', async (req, res) => {
 
     // Atomic redemption + lock: conditional UPDATE — two venue servers can
     // never both succeed (FR-4). Clearing release_code_hash burns the code.
+    // H-2: a 'checked_in' meet is re-adoptable (day-2 recovery after a
+    // mistaken Check In instead of Hand Back).
     const syncToken = crypto.randomBytes(32).toString('hex');
     const result = await execute(
       `UPDATE meets
          SET adoption_status='adopted', adopted_at=datetime('now'),
              sync_token_hash=?, release_code_hash=NULL, release_code_expires_at=NULL,
              last_applied_seq=0, updated_at=datetime('now')
-       WHERE id=? AND release_code_hash=? AND adoption_status IS NULL`,
+       WHERE id=? AND release_code_hash=? AND (adoption_status IS NULL OR adoption_status='checked_in')`,
       [hashToken(syncToken), meet.id, codeHash]
     );
     if (!result.rowsAffected) {
-      return res.status(409).json({ error: 'already_adopted', message: 'Another venue server redeemed this code first.' });
+      // H-2: report the truth — distinguish a genuine race from any other
+      // zero-row outcome by re-reading the row.
+      const now = await queryOne('SELECT adoption_status, release_code_hash FROM meets WHERE id=?', [meet.id]);
+      if (now && now.adoption_status === 'adopted') {
+        return res.status(409).json({ error: 'already_adopted', message: 'Another venue server redeemed this code first.' });
+      }
+      return res.status(409).json({
+        error: 'adopt_conflict',
+        message: `The meet changed state while redeeming the code (status: ${now ? now.adoption_status || 'none' : 'missing'}). Ask the official to release it again.`,
+      });
     }
 
-    // Drain: the lock refuses new mutations from this instant; give requests
-    // already inside a handler a moment to finish their writes before the
-    // snapshot reads (single-process Express; writes are short).
-    await new Promise(r => setTimeout(r, 300));
+    // Drain: the lock refuses new mutations from this instant; wait for
+    // requests already inside a handler to finish their writes before the
+    // snapshot reads (M-2: adaptive — tracks actual in-flight mutations
+    // instead of a fixed 300 ms, with a longer allowance for remote Turso).
+    await require('../utils/inflight').waitForMutationIdle();
 
-    const pkg = await buildAdoptionPackage(meet.id);
+    // M-1: the code is burned and the meet locked at this point — if the
+    // snapshot build fails (transient Turso error), revert the lock and
+    // restore the release code so the volunteer can simply retry, instead of
+    // stranding a locked meet with a token nobody holds.
+    let pkg;
+    try {
+      pkg = await buildAdoptionPackage(meet.id);
+    } catch (e) {
+      try {
+        await execute(
+          `UPDATE meets SET adoption_status=NULL, adopted_at=NULL, sync_token_hash=NULL,
+                  release_code_hash=?, release_code_expires_at=?, updated_at=datetime('now')
+           WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
+          [meet.release_code_hash, meet.release_code_expires_at, meet.id, hashToken(syncToken)]
+        );
+      } catch (revertErr) {
+        console.error(`[sync] adopt revert after package failure ALSO failed for meet ${meet.id}: ${revertErr.message}`);
+      }
+      return res.status(500).json({
+        error: 'package_build_failed',
+        message: `Could not build the adoption package (${e.message}). The meet was NOT locked — try the code again.`,
+      });
+    }
 
     try {
       const { logAudit } = require('./audit');
@@ -144,7 +218,7 @@ async function authSyncRequest(req, res) {
     res.status(410).json({ error: 'adoption_revoked', message: 'This adoption was revoked or already closed on the cloud. Upsync from this venue server is no longer accepted; its local data is intact for USB recovery.' });
     return null;
   }
-  if (!token || hashToken(token) !== meet.sync_token_hash) {
+  if (!token || !hashesEqual(hashToken(token), meet.sync_token_hash)) {
     res.status(401).json({ error: 'invalid_sync_token' });
     return null;
   }
@@ -153,6 +227,28 @@ async function authSyncRequest(req, res) {
     return null;
   }
   return meet;
+}
+
+// M-8: non-PK UNIQUE keys. An upsert whose new id collides with a
+// DIFFERENT-id row under the unique key (e.g. a judge_scores re-submit after
+// an HJ reject, under the FR-11 index) would fail SQLITE_CONSTRAINT — the
+// worker would then retry the same batch forever. Mirror the venue's REPLACE
+// displacement semantics: remove the different-id row first (the venue's
+// ordered history is authoritative for its adopted meet).
+const UNIQUE_KEYS = {
+  judge_scores: ['run_id', 'judge_id', 'score_type'],
+  dual_judge_points: ['match_id', 'judge_number'],
+  phase_run_order: ['phase_id', 'registration_id'],
+};
+
+async function clearUniqueKeyConflicts(tbl, row) {
+  const uk = UNIQUE_KEYS[tbl];
+  if (!uk || uk.some(c => row[c] === null || row[c] === undefined)) return;
+  const pk = protocol.TABLES[tbl].pk;
+  await execute(
+    `DELETE FROM ${tbl} WHERE ${uk.map(c => `${c}=?`).join(' AND ')} AND ${pk.map(c => `${c} != ?`).join(' AND ')}`,
+    [...uk.map(c => row[c]), ...pk.map(c => row[c])]
+  );
 }
 
 function upsertSql(table) {
@@ -164,6 +260,80 @@ function upsertSql(table) {
     : 'DO NOTHING';
   return `INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})
           ON CONFLICT(${spec.pk.join(',')}) ${conflictUpdate}`;
+}
+
+/**
+ * H-4c: validate that a change targets rows inside the token's meet. The
+ * venue's worker is meet-scoped and the outbox is cleared at adoption, so a
+ * violation here means stranded/foreign data — reject it rather than blindly
+ * upserting into (or deleting from) another meet.
+ *
+ * Rules per scope:
+ *   self                  pk/row id must equal the meet id
+ *   meet                  row.meet_id (upsert) / existing row's meet (delete)
+ *   event/run/match/phase/training_day
+ *                         parent chain must resolve to the meet; ordered apply
+ *                         guarantees parents land before children
+ *   registered_athletes / global (master tables)
+ *                         upserts allowed (the registration that puts the
+ *                         athlete in scope may land later in the same push);
+ *                         DELETES are refused outright — no venue path hard-
+ *                         deletes master rows, and a stray delete would orphan
+ *                         registrations in every other meet (H-3 contract)
+ *   venue_all (audit_log) unscopable — allowed
+ * Deletes whose target row no longer exists are allowed (no-op).
+ */
+async function changeInMeetScope(meetId, tbl, op, pk, row) {
+  const spec = protocol.TABLES[tbl];
+  const scope = spec.scope;
+  if (scope === 'venue_all') return true;
+  if (scope === 'registered_athletes' || scope === 'global') {
+    return op !== 'delete';
+  }
+  if (scope === 'self') {
+    const id = op === 'upsert' ? row.id : pk.id;
+    return id === meetId;
+  }
+  // Resolve the meet of the referenced parent (upsert) or target row (delete).
+  const meetOf = {
+    meet: async (ref) => ref,
+    event: async (ref) => {
+      const r = await queryOne('SELECT meet_id FROM events WHERE id=?', [ref]);
+      return r ? r.meet_id : null;
+    },
+    run: async (ref) => {
+      const r = await queryOne('SELECT e.meet_id FROM runs t JOIN events e ON e.id=t.event_id WHERE t.id=?', [ref]);
+      return r ? r.meet_id : null;
+    },
+    match: async (ref) => {
+      const r = await queryOne('SELECT e.meet_id FROM dual_bracket t JOIN events e ON e.id=t.event_id WHERE t.id=?', [ref]);
+      return r ? r.meet_id : null;
+    },
+    phase: async (ref) => {
+      const r = await queryOne('SELECT e.meet_id FROM event_phases t JOIN events e ON e.id=t.event_id WHERE t.id=?', [ref]);
+      return r ? r.meet_id : null;
+    },
+    training_day: async (ref) => {
+      const r = await queryOne('SELECT meet_id FROM training_days WHERE id=?', [ref]);
+      return r ? r.meet_id : null;
+    },
+  };
+  const refColumn = {
+    meet: 'meet_id', event: 'event_id', run: 'run_id',
+    match: 'match_id', phase: 'phase_id', training_day: 'training_day_id',
+  }[scope];
+  if (!refColumn || !meetOf[scope]) return false;
+
+  if (op === 'upsert') {
+    const m = await meetOf[scope](row[refColumn]);
+    return m === meetId; // unknown parent → reject (would create an orphan)
+  }
+  // delete: resolve the existing target row's meet; absent → no-op, allow.
+  const where = spec.pk.map(c => `${c}=?`).join(' AND ');
+  const target = await queryOne(`SELECT ${refColumn} FROM ${tbl} WHERE ${where}`, spec.pk.map(c => pk[c]));
+  if (!target) return true;
+  const m = await meetOf[scope](target[refColumn]);
+  return m === null || m === meetId;
 }
 
 /** Resolve the event id a change belongs to, for the FR-19 nudge. */
@@ -215,11 +385,38 @@ router.post('/meets/:meetId/changes', async (req, res) => {
       try {
         if (ch.op === 'upsert') {
           const row = protocol.manifestRow(ch.tbl, ch.row || {});
+          // H-4c: a null pk value would INSERT an all-NULL-keyed row (TEXT
+          // pks accept NULL in SQLite); refuse it, and refuse rows that
+          // resolve outside the token's meet.
+          if (spec.pk.some(c => row[c] === null || row[c] === undefined)) {
+            failure = { seq: ch.seq, error: `null_pk:${ch.tbl}` };
+            break;
+          }
+          if (!(await changeInMeetScope(meet.id, ch.tbl, 'upsert', ch.pk || {}, row))) {
+            failure = { seq: ch.seq, error: `out_of_scope:${ch.tbl}` };
+            break;
+          }
+          await clearUniqueKeyConflicts(ch.tbl, row);
           await execute(upsertSql(ch.tbl), spec.columns.map(c => row[c]));
         } else if (ch.op === 'delete') {
+          // M-3: a meets delete arriving over upsync would erase the whole
+          // meet from the cloud archive. Never apply it.
+          if (ch.tbl === 'meets') {
+            failure = { seq: ch.seq, error: 'meet_delete_refused' };
+            break;
+          }
+          const pkVals = spec.pk.map(c => (ch.pk || {})[c]);
+          if (pkVals.some(v => v === null || v === undefined)) {
+            failure = { seq: ch.seq, error: `null_pk:${ch.tbl}` };
+            break;
+          }
+          if (!(await changeInMeetScope(meet.id, ch.tbl, 'delete', ch.pk || {}, null))) {
+            failure = { seq: ch.seq, error: `out_of_scope:${ch.tbl}` };
+            break;
+          }
           await execute(
             `DELETE FROM ${ch.tbl} WHERE ${spec.pk.map(c => `${c}=?`).join(' AND ')}`,
-            spec.pk.map(c => (ch.pk || {})[c])
+            pkVals
           );
         } else {
           failure = { seq: ch.seq, error: `unknown_op:${ch.op}` };
@@ -310,14 +507,22 @@ router.post('/meets/:meetId/repush', async (req, res) => {
       }
       const pushed = (rows || []).map(r => protocol.manifestRow(t, r));
       const pushedKeys = new Set(pushed.map(r => protocol.pkString(t, r)));
-      // Delete cloud meet-scoped rows not present in the pushed set.
-      const existing = await queryAll(protocol.selectForMeet(t), [meet.id]);
-      for (const row of existing) {
-        if (!pushedKeys.has(protocol.pkString(t, row))) {
-          await execute(
-            `DELETE FROM ${t} WHERE ${spec.pk.map(cn => `${cn}=?`).join(' AND ')}`,
-            spec.pk.map(cn => row[cn])
-          );
+      // Delete cloud meet-scoped rows not present in the pushed set — EXCEPT
+      // for master tables (H-3): `athletes` is the shared roster scoped only
+      // indirectly via registrations, and a scope difference between the two
+      // sides must never hard-delete a master row cloud-wide (it would orphan
+      // that athlete's registrations in every other meet). Master tables are
+      // upsert-only here, mirroring UPSERT_TABLES in adoptionImport.js.
+      const masterScoped = spec.scope === 'registered_athletes' || spec.scope === 'global';
+      if (!masterScoped) {
+        const existing = await queryAll(protocol.selectForMeet(t), [meet.id]);
+        for (const row of existing) {
+          if (!pushedKeys.has(protocol.pkString(t, row))) {
+            await execute(
+              `DELETE FROM ${t} WHERE ${spec.pk.map(cn => `${cn}=?`).join(' AND ')}`,
+              spec.pk.map(cn => row[cn])
+            );
+          }
         }
       }
       for (const row of pushed) {

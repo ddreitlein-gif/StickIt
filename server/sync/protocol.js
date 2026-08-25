@@ -159,6 +159,16 @@ const TABLES = {
     columns: ['ussa_id', 'type', 'last_name', 'first_name', 'division', 'gender', 'yob', 'club_name', 'ae_points', 'dm_points', 'mo_points', 'fis_id', 'updated_at'],
     sync: false, checksum: false, snapshot: true, scope: 'global',
   },
+  // M-4 — the DD chart is live-editable (Admin > Jump DDs) and scoring-
+  // critical: a venue must score with the cloud's CURRENT chart, not the
+  // stock seed (stored jump1_dd/jump2_dd bake the value into every run
+  // permanently). Snapshot-only, imported replace-all on adoption; never
+  // upsynced or checksummed (the cloud master is authoritative).
+  jump_dd_table: {
+    pk: ['id'],
+    columns: ['id', 'jump_code', 'dd_value', 'ruleset', 'discipline', 'notes', 'gender'],
+    sync: false, checksum: false, snapshot: true, scope: 'global',
+  },
 };
 
 /**

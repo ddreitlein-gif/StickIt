@@ -108,21 +108,81 @@ function countPlaceholders(s) {
   return (s.match(/\?/g) || []).length;
 }
 
-/** Parse `INSERT ... INTO t (a,b,c) VALUES (?,?,?),(...)` → { cols, tuples } from args. */
+/**
+ * H-6: sentinel for a tuple value the parser cannot evaluate statically
+ * (e.g. `datetime('now')`). Harmless in non-key positions — the post-image
+ * read supplies the real landed value; a pk/unique-key position forces the
+ * full-table fallback.
+ */
+const UNKNOWN = Symbol('unknown_sql_value');
+
+function literalValue(tok) {
+  if (/^NULL$/i.test(tok)) return null;
+  if (/^-?\d+$/.test(tok)) return parseInt(tok, 10);
+  if (/^-?\d*\.\d+$/.test(tok)) return parseFloat(tok);
+  if (/^'(?:[^']|'')*'$/.test(tok)) return tok.slice(1, -1).replace(/''/g, "'");
+  return UNKNOWN;
+}
+
+/**
+ * Parse `INSERT ... INTO t (a,b,c) VALUES (tuple),(tuple)...` → { cols, tuples }.
+ * H-6: tuples may mix `?` placeholders with SQL literals ('complete', 0, NULL)
+ * and function calls (datetime('now') → UNKNOWN). The hottest live-scoring
+ * INSERTs (Start Run, DNS helper, run_round_status finalize) all mix literals;
+ * the old placeholder-only parser silently fell back to a full-table diff on
+ * every one of them.
+ */
 function parseInsert(sql, args) {
-  const m = /INSERT(?:\s+OR\s+\w+)?\s+INTO\s+\w+\s*\(([^)]*)\)\s*VALUES/i.exec(sql);
+  const m = /INSERT(?:\s+OR\s+\w+)?\s+INTO\s+\w+\s*\(([^)]*)\)\s*VALUES\s*/i.exec(sql);
   if (!m) return null;
   const cols = m[1].split(',').map(c => c.trim());
   if (!cols.length) return null;
-  // Placeholder-only tuples (the whole codebase binds every value).
-  const totalQ = countPlaceholders(sql);
-  if (totalQ % cols.length !== 0 || totalQ !== args.length) return null;
+
+  let i = m.index + m[0].length;
+  let argIdx = countPlaceholders(sql.slice(0, i)); // placeholders before VALUES (normally 0)
+  const n = sql.length;
   const tuples = [];
-  for (let i = 0; i < args.length; i += cols.length) {
+  while (i < n) {
+    while (i < n && /[\s,]/.test(sql[i])) i++;
+    if (i >= n || sql[i] !== '(') break; // end of tuple list (e.g. ON CONFLICT ...)
+    i++;
+    const tokens = [];
+    let cur = '', depth = 0, inStr = false, closed = false;
+    for (; i < n; i++) {
+      const ch = sql[i];
+      if (inStr) {
+        cur += ch;
+        if (ch === "'") {
+          if (sql[i + 1] === "'") { cur += "'"; i++; } else inStr = false;
+        }
+        continue;
+      }
+      if (ch === "'") { inStr = true; cur += ch; continue; }
+      if (ch === '(') { depth++; cur += ch; continue; }
+      if (ch === ')') {
+        if (depth === 0) { tokens.push(cur.trim()); i++; closed = true; break; }
+        depth--; cur += ch; continue;
+      }
+      if (ch === ',' && depth === 0) { tokens.push(cur.trim()); cur = ''; continue; }
+      cur += ch;
+    }
+    if (!closed || tokens.length !== cols.length) return null;
     const row = {};
-    cols.forEach((c, j) => { row[c] = args[i + j]; });
+    for (let j = 0; j < cols.length; j++) {
+      const tok = tokens[j];
+      if (tok === '?') {
+        if (argIdx >= args.length) return null;
+        row[cols[j]] = args[argIdx++];
+      } else {
+        row[cols[j]] = literalValue(tok);
+        // A function token may itself bind args (e.g. datetime(?)) — keep the
+        // arg cursor aligned even though the value stays UNKNOWN.
+        argIdx += countPlaceholders(tok);
+      }
+    }
     tuples.push(row);
   }
+  if (!tuples.length) return null;
   return { cols, tuples };
 }
 
@@ -159,6 +219,7 @@ async function capturePre(sql, args) {
   if (!state.active) return null;
   const cls = classify(sql);
   if (!cls || !SYNC_SET.has(cls.table)) return null;
+  stats.captured_statements++;
   const { op, table } = cls;
   const spec = protocol.TABLES[table];
 
@@ -172,15 +233,21 @@ async function capturePre(sql, args) {
     }
     // insert / replace / insert_ignore
     const parsed = parseInsert(sql, args);
-    if (!parsed) return await fullTablePre(table, op);
+    if (!parsed) return await fullTablePre(table, op, sql);
     const uk = UNIQUE_KEYS[table];
+    // A pk (or, for conflict-capable ops, unique-key) value the parser could
+    // not evaluate forces the fallback — the pre/post reads need real values.
+    for (const tuple of parsed.tuples) {
+      if (spec.pk.some(c => tuple[c] === UNKNOWN)) return await fullTablePre(table, op, sql);
+      if (op !== 'insert' && uk && uk.some(c => tuple[c] === UNKNOWN)) return await fullTablePre(table, op, sql);
+    }
     const pending = { op, table, rows: [] };
     for (const tuple of parsed.tuples) {
       const entry = { insertedPk: null, displaced: [], ukVals: null };
       if (spec.pk.every(c => tuple[c] !== undefined)) {
         entry.insertedPk = protocol.pkOf(table, tuple);
       }
-      if (uk && uk.every(c => tuple[c] !== undefined)) {
+      if (uk && uk.every(c => tuple[c] !== undefined && tuple[c] !== UNKNOWN)) {
         entry.ukVals = uk.map(c => tuple[c]);
         // Rows displaced by REPLACE under the unique key (different PK).
         const r = await rawExecute(
@@ -197,13 +264,25 @@ async function capturePre(sql, args) {
     return pending;
   } catch (e) {
     console.error(`[outbox] capturePre failed for "${sql.slice(0, 80)}": ${e.message} — falling back to full-table diff`);
-    return fullTablePre(table, op);
+    return fullTablePre(table, op, sql);
   }
 }
 
-async function fullTablePre(table, op) {
+// H-6: the fallback is correct but severely write-amplifying (2 full-pk scans
+// + one read per table row + one outbox append per row, on the request the
+// operator is waiting on). It must never fire on a shipped code path — log
+// loudly and count, so the harness gate and /api/venue/capture-stats see it.
+const stats = { captured_statements: 0, full_table_fallbacks: 0, capture_failures: 0 };
+
+async function fullTablePre(table, op, sql = '') {
+  stats.full_table_fallbacks++;
+  console.error(`[outbox] FULL-TABLE-DIFF FALLBACK on ${table} (${op}) — unparsed statement: "${String(sql).slice(0, 120)}". This is a capture-parser gap; fix the statement or the parser.`);
   const pks = await selectPks(table, '', []);
   return { op: 'fulltable', table, prePks: pks };
+}
+
+function getCaptureStats() {
+  return { ...stats };
 }
 
 /** Phase 2 (after the write): post-image reads + outbox appends, in order. */
@@ -268,18 +347,59 @@ async function capturePost(pending) {
 
 // --- The schema.js write hook ----------------------------------------------
 
+function noteCaptureFailure(where, e) {
+  stats.capture_failures++;
+  console.error(`[outbox] ${where} failed:`, e.message);
+}
+
 const hook = {
   async execute(sql, args = []) {
+    // M-7a: for delete/update, the pre-image SELECT and the write run in ONE
+    // atomic batch — a racing insert can no longer slip between them (the
+    // "ghost row" a non-PK DELETE removes but the capture never pre-imaged).
+    if (state.active) {
+      const cls = classify(sql);
+      if (cls && SYNC_SET.has(cls.table) && (cls.op === 'delete' || cls.op === 'update')) {
+        stats.captured_statements++;
+        const wIdx = topLevelWhereIndex(sql);
+        const whereSql = wIdx >= 0 ? sql.slice(wIdx) : '';
+        const whereArgs = wIdx >= 0 ? args.slice(args.length - countPlaceholders(whereSql)) : [];
+        const spec = protocol.TABLES[cls.table];
+        const preSql = `SELECT ${spec.pk.join(',')} FROM ${cls.table}${whereSql ? ' ' + whereSql : ''}`;
+        try {
+          const { rawBatch } = require('../db/schema');
+          const rs = await rawBatch([{ sql: preSql, args: whereArgs }, { sql, args }]);
+          const pks = rs[0].rows.map(rowToObj);
+          try { await capturePost({ op: cls.op, table: cls.table, pks }); }
+          catch (e) { noteCaptureFailure('capturePost', e); }
+          return rs[1];
+        } catch (e) {
+          // The batch may have failed on the pre-image (unparsed WHERE shape)
+          // — a capture bug must never block the write itself. Retry with the
+          // full-table fallback; if the WRITE is what failed, it fails again
+          // identically and propagates as before.
+          const pending = await fullTablePre(cls.table, cls.op, sql).catch(() => null);
+          const result = await rawExecute(sql, args);
+          if (pending) {
+            try { await capturePost(pending); } catch (e2) { noteCaptureFailure('capturePost (fallback)', e2); }
+          }
+          return result;
+        }
+      }
+    }
     const pending = await capturePre(sql, args);
     const result = await rawExecute(sql, args);
     if (pending) {
       try { await capturePost(pending); } catch (e) {
-        console.error('[outbox] capturePost failed:', e.message);
+        noteCaptureFailure('capturePost', e);
       }
     }
     return result;
   },
   async batch(statements) {
+    // NOTE (M-7): pre-images here are captured before the whole batch runs —
+    // acceptable because batch() call sites (bracket seeding, imports) are
+    // not racing hot paths; the batch itself is atomic.
     const pendings = [];
     for (const st of statements) {
       pendings.push(await capturePre(st.sql, st.args || []));
@@ -289,7 +409,7 @@ const hook = {
     for (const p of pendings) {
       if (p) {
         try { await capturePost(p); } catch (e) {
-          console.error('[outbox] capturePost (batch) failed:', e.message);
+          noteCaptureFailure('capturePost (batch)', e);
         }
       }
     }
@@ -314,5 +434,6 @@ module.exports = {
   ensureOutboxTable,
   setOnAppend,
   outboxDepth,
-  _test: { classify, topLevelWhereIndex, parseInsert },
+  getCaptureStats,
+  _test: { classify, topLevelWhereIndex, parseInsert, UNKNOWN },
 };

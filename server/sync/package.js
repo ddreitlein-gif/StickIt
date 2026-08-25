@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { queryAll } = require('../db/schema');
+const { queryAll, getClient, rowToObj } = require('../db/schema');
 const protocol = require('./protocol');
 
 const MEET_LOGOS_DIR = path.join(__dirname, '..', 'data', 'logos');
@@ -33,10 +33,21 @@ function findLogoFile(meetId) {
  */
 async function buildAdoptionPackage(meetId) {
   const tables = {};
-  for (const table of protocol.SNAPSHOT_TABLES) {
-    const rows = await queryAll(protocol.selectForMeet(table), [meetId]);
-    tables[table] = rows.map(r => protocol.manifestRow(table, r));
+  // M-2: read every snapshot table inside ONE read transaction (batch mode
+  // 'read') so a slow concurrent write can never land between table reads and
+  // tear the snapshot. Falls back to sequential reads if the driver refuses.
+  const stmts = protocol.SNAPSHOT_TABLES.map(t => ({ sql: protocol.selectForMeet(t), args: [meetId] }));
+  let resultRows;
+  try {
+    const sets = await getClient().batch(stmts, 'read');
+    resultRows = sets.map(rs => rs.rows.map(rowToObj));
+  } catch (_) {
+    resultRows = [];
+    for (const s of stmts) resultRows.push(await queryAll(s.sql, s.args));
   }
+  protocol.SNAPSHOT_TABLES.forEach((table, i) => {
+    tables[table] = resultRows[i].map(r => protocol.manifestRow(table, r));
+  });
   if (!tables.meets || tables.meets.length !== 1) {
     throw new Error(`Adoption package: meet ${meetId} not found`);
   }

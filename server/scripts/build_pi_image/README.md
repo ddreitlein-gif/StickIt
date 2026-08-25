@@ -26,6 +26,12 @@ What the image contains (see `provision.sh`):
   has no battery clock; sequence numbers, not clocks, order the sync).
 - USB snapshot stick auto-mount: label a stick **STICKIT-SNAP** and it mounts
   at `/media/stickit-snapshot` (R11); absent stick = home-screen warning only.
+  The service sets `STICKIT_SNAPSHOT_REQUIRE_MOUNT=1`, so snapshots are only
+  reported healthy when a real USB stick is mounted (never the SD card, H-10).
+- SSH enabled with user `stickit`, default password `stickitvenue` (H-11 —
+  every recovery path assumes SSH). Override at build time with
+  `STICKIT_PI_PASSWORD=<pass> ./build.sh <ref>` and record the credential on
+  the printed venue run sheet.
 
 ## Publish
 

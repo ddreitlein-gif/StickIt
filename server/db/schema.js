@@ -346,22 +346,31 @@ async function initSchema() {
   // a hard error. Additive (an index), so a v1.30.03 build runs cleanly
   // against this database.
   try {
-    const dedup = await c.execute(
-      `DELETE FROM judge_scores WHERE rowid NOT IN (
-         SELECT rowid FROM (
-           SELECT rowid, ROW_NUMBER() OVER (
-             PARTITION BY run_id, judge_id, score_type
-             ORDER BY submitted_at DESC, rowid DESC
-           ) AS rn FROM judge_scores
-         ) WHERE rn = 1
-       )`
+    // L-7: the dedup is a ONE-TIME legacy migration — run it only when the
+    // UNIQUE index does not exist yet. Once the index is in place duplicates
+    // are impossible, and re-running the dedup on every boot would contradict
+    // FR-9 (its rowid tiebreak could diverge cloud vs venue on adopted rows).
+    const idx = await c.execute(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_judge_scores_run_judge_type'`
     );
-    if (dedup.rowsAffected > 0) {
-      console.log(`[FR-11 migration] removed ${dedup.rowsAffected} duplicate judge_scores rows (kept most recent per run/judge/type)`);
+    if (!idx.rows.length) {
+      const dedup = await c.execute(
+        `DELETE FROM judge_scores WHERE rowid NOT IN (
+           SELECT rowid FROM (
+             SELECT rowid, ROW_NUMBER() OVER (
+               PARTITION BY run_id, judge_id, score_type
+               ORDER BY submitted_at DESC, rowid DESC
+             ) AS rn FROM judge_scores
+           ) WHERE rn = 1
+         )`
+      );
+      if (dedup.rowsAffected > 0) {
+        console.log(`[FR-11 migration] removed ${dedup.rowsAffected} duplicate judge_scores rows (kept most recent per run/judge/type)`);
+      }
+      await c.execute(
+        `CREATE UNIQUE INDEX idx_judge_scores_run_judge_type ON judge_scores(run_id, judge_id, score_type)`
+      );
     }
-    await c.execute(
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_judge_scores_run_judge_type ON judge_scores(run_id, judge_id, score_type)`
-    );
   } catch (e) {
     // Loud, non-fatal: the app-level upsert still works without the index;
     // this must never prevent a production boot.

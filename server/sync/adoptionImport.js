@@ -34,42 +34,72 @@ const IMPORT_ORDER = [
   'meets', 'events', 'athletes', 'registrations', 'judges', 'officials',
   'course_specs', 'runs', 'judge_scores', 'dual_bracket', 'dual_judge_points',
   'heats', 'event_phases', 'phase_run_order', 'run_round_status',
-  'training_days', 'training_day_exclusions', 'usss_people',
+  'training_days', 'training_day_exclusions', 'usss_people', 'jump_dd_table',
 ];
 
 // Master tables upsert; everything else is meet-keyed and must not pre-exist.
 const UPSERT_TABLES = new Set(['athletes', 'usss_people']);
 
-/** Delete every meet-keyed row of a meet (used by replace + revert-on-error). */
-async function clearMeetLocal(meetId) {
-  // Children first. Uses the manifest scoping joins, expressed as DELETE ...
-  // WHERE pk IN (SELECT pk FROM <scoped select>).
+// M-4: the DD chart imports REPLACE-ALL — the venue must score with the
+// cloud's current chart. Applied only when the package actually carries rows
+// (an old package without the key must never wipe the local seed). Skipped by
+// clearMeetLocal (device-level data, not meet-keyed).
+const REPLACE_ALL_TABLES = new Set(['jump_dd_table']);
+
+// L-4: IMPORT_ORDER is a hand-maintained ordering of SNAPSHOT_TABLES — assert
+// set equality at module load so a future snapshot-table addition can never
+// silently be dropped from the import.
+{
+  const a = new Set(IMPORT_ORDER);
+  const b = new Set(protocol.SNAPSHOT_TABLES);
+  if (a.size !== IMPORT_ORDER.length || a.size !== b.size || [...a].some(t => !b.has(t))) {
+    throw new Error(`adoptionImport: IMPORT_ORDER drifted from protocol.SNAPSHOT_TABLES (order: ${IMPORT_ORDER.join(',')} vs snapshot: ${protocol.SNAPSHOT_TABLES.join(',')})`);
+  }
+}
+
+/**
+ * DELETE statements clearing every meet-keyed row of a meet (used by replace).
+ * Children first. Uses the manifest scoping joins, expressed as DELETE ...
+ * WHERE pk IN (SELECT pk FROM <scoped select>). Returned as statements so the
+ * replace-import can run clear + insert in ONE atomic batch (M-5).
+ */
+function clearMeetLocalStatements(meetId) {
+  const stmts = [];
   const order = [...IMPORT_ORDER].reverse();
   for (const table of order) {
     if (UPSERT_TABLES.has(table)) continue; // master rows survive
+    if (REPLACE_ALL_TABLES.has(table)) continue; // device-level, not meet-keyed
     const spec = protocol.TABLES[table];
     if (spec.pk.length === 1) {
       const pk = spec.pk[0];
-      await execute(
-        `DELETE FROM ${table} WHERE ${pk} IN (SELECT ${pk} FROM (${protocol.selectForMeet(table)}))`,
-        [meetId]
-      );
+      stmts.push({
+        sql: `DELETE FROM ${table} WHERE ${pk} IN (SELECT ${pk} FROM (${protocol.selectForMeet(table)}))`,
+        args: [meetId],
+      });
     } else {
       // Composite PK: run_round_status + training_day_exclusions
       if (table === 'run_round_status') {
-        await execute(
-          `DELETE FROM run_round_status WHERE event_id IN (SELECT id FROM events WHERE meet_id=?)`,
-          [meetId]
-        );
+        stmts.push({
+          sql: `DELETE FROM run_round_status WHERE event_id IN (SELECT id FROM events WHERE meet_id=?)`,
+          args: [meetId],
+        });
       } else if (table === 'training_day_exclusions') {
-        await execute(
-          `DELETE FROM training_day_exclusions WHERE training_day_id IN (SELECT id FROM training_days WHERE meet_id=?)`,
-          [meetId]
-        );
+        stmts.push({
+          sql: `DELETE FROM training_day_exclusions WHERE training_day_id IN (SELECT id FROM training_days WHERE meet_id=?)`,
+          args: [meetId],
+        });
       } else {
         throw new Error(`clearMeetLocal: no delete strategy for composite-PK table ${table}`);
       }
     }
+  }
+  return stmts;
+}
+
+/** Delete every meet-keyed row of a meet (standalone form). */
+async function clearMeetLocal(meetId) {
+  for (const s of clearMeetLocalStatements(meetId)) {
+    await execute(s.sql, s.args);
   }
 }
 
@@ -104,37 +134,60 @@ async function executeAdoptionImport(pkg, opts = {}) {
     fail(409, 'meet_exists',
       `A local copy of "${existing.name}" already exists. Re-adopting replaces it with the current cloud version.`);
   }
-  if (existing && opts.replace) {
-    await clearMeetLocal(meetId);
-  }
 
-  const counts = {};
-  try {
-    for (const table of IMPORT_ORDER) {
-      const rows = pkg.tables[table] || [];
-      const spec = protocol.TABLES[table];
-      const cols = spec.columns;
-      const verb = UPSERT_TABLES.has(table) ? 'INSERT OR REPLACE INTO' : 'INSERT INTO';
-      const sql = `${verb} ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
-      for (const row of rows) {
-        await execute(sql, cols.map(c => row[c] === undefined ? null : row[c]));
-      }
-      counts[table] = rows.length;
-    }
-  } catch (e) {
-    // Leave no half-imported meet behind: clear the meet-keyed rows again.
-    try { await clearMeetLocal(meetId); } catch (_) {}
-    throw e;
+  // M-5: the whole import — including the replace-path clear of the previous
+  // local copy — runs as ONE atomic batch. A mid-import failure rolls
+  // everything back (the old copy survives a failed replace), and a double-tap
+  // cannot interleave two imports (the loser's PK conflicts roll its batch
+  // back whole, or a replace re-import converges to identical rows).
+  const stmts = [];
+  if (existing && opts.replace) {
+    stmts.push(...clearMeetLocalStatements(meetId));
   }
+  const counts = {};
+  for (const table of IMPORT_ORDER) {
+    const rows = pkg.tables[table] || [];
+    const spec = protocol.TABLES[table];
+    const cols = spec.columns;
+    if (REPLACE_ALL_TABLES.has(table)) {
+      // M-4: replace-all — but ONLY when the package actually carries rows;
+      // an older package without the table must never wipe the local seed.
+      if (!Array.isArray(pkg.tables[table]) || rows.length === 0) {
+        counts[table] = 0;
+        continue;
+      }
+      stmts.push({ sql: `DELETE FROM ${table}`, args: [] });
+    }
+    const verb = UPSERT_TABLES.has(table) ? 'INSERT OR REPLACE INTO' : 'INSERT INTO';
+    const sql = `${verb} ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`;
+    for (const row of rows) {
+      stmts.push({ sql, args: cols.map(c => row[c] === undefined ? null : row[c]) });
+    }
+    counts[table] = rows.length;
+  }
+  const { batch } = require('../db/schema');
+  await batch(stmts);
 
   let logoWritten = false;
   if (pkg.logo && pkg.logo.filename && pkg.logo.base64) {
     try {
       fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true });
-      // Basic traversal guard: filename must be a bare meet logo name.
+      // L-4: the filename must be exactly this meet's logo name (traversal
+      // guard AND cross-meet-clobber guard), and a replace removes any stale
+      // logo with a different extension first.
       const safe = path.basename(pkg.logo.filename);
-      fs.writeFileSync(path.join(MEET_LOGOS_DIR, safe), Buffer.from(pkg.logo.base64, 'base64'));
-      logoWritten = true;
+      const prefix = `meet_${meetId}.`;
+      if (!safe.startsWith(prefix) || !/^[A-Za-z0-9]+$/.test(safe.slice(prefix.length))) {
+        console.error(`[adoption import] refusing logo filename "${safe}" (expected meet_${meetId}.<ext>)`);
+      } else {
+        for (const f of fs.readdirSync(MEET_LOGOS_DIR)) {
+          if (f.startsWith(prefix) && f !== safe) {
+            try { fs.unlinkSync(path.join(MEET_LOGOS_DIR, f)); } catch (_) {}
+          }
+        }
+        fs.writeFileSync(path.join(MEET_LOGOS_DIR, safe), Buffer.from(pkg.logo.base64, 'base64'));
+        logoWritten = true;
+      }
     } catch (e) {
       console.error('[adoption import] logo write failed:', e.message);
     }

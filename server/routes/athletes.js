@@ -173,7 +173,15 @@ router.post('/from-usss', requireAuth, async (req, res) => {
       const existing = await queryOne('SELECT * FROM athletes WHERE ussa_num = ?', [String(ussa_id)]);
       if (existing) {
         // v1.16.31 -- if soft-deleted, restore by clearing deleted_at
+        // v2.0.00 (M-16, FR-8) -- unless the row is adoption-locked (a cloud-
+        // side edit to a venue-checksummed athlete would be silently reverted
+        // by repush at check-in).
         if (existing.deleted_at) {
+          const { isAthleteAdoptionLocked } = require('../sync/adoption');
+          if (await isAthleteAdoptionLocked(existing.id)) {
+            out.push({ athlete_id: existing.id, ussa_id, created: false, locked_by_adoption: true, first_name: existing.first_name, last_name: existing.last_name });
+            continue;
+          }
           await execute('UPDATE athletes SET deleted_at=NULL WHERE id=?', [existing.id]);
           try { await logAudit('athlete_restored', 'athlete', existing.id, { deleted_at: existing.deleted_at }, { source: 'usss', ussa_num: ussa_id }); } catch (_) {}
           out.push({ athlete_id: existing.id, ussa_id, created: false, restored: true, first_name: existing.first_name, last_name: existing.last_name });

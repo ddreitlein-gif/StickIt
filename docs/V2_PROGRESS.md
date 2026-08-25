@@ -432,3 +432,35 @@ prep: build the Pi image per server/scripts/build_pi_image/README.md.
    CLAUDE.md (zip now excludes harness/*; assets include ~4MB of bundled
    fonts), push tag v1.30.03 to origin as the rollback point.
 3. Build + publish the Pi image (.img.xz) and the Imager os_list JSON.
+
+---
+
+## Independent review fixes (08-23-26)
+
+`StickIt_v2_Review_Findings_08-23-26.md` (independent adversarial review vs
+v1.30.03) worked in full: 1 Critical, 11 High, 16 Medium, 10 Low — all fixed
+except two explicitly-accepted design points (L-1 token-less self-release,
+L-2 first-set PIN window) and two disputed sub-claims inside M-11 (the live DB
+was never inside the swapped tree). Full per-finding record, disputes, and
+deviations: `docs/V2_REVIEW_FIXES_08-23-26.md`.
+
+Highlights: interrupted-check-in self-heal at boot (C-1), lost-response
+check-in reconciliation (H-1), checked_in re-adoption (H-2), repush upsert-only
+for master tables (H-3), outbox meet-scoping + cloud apply scope validation
+(H-4), worker revoked-flag reset + Abandon Adoption action (H-5), capture
+parser handles literal-value INSERTs — zero full-table fallbacks on the live
+path (H-6), freeze guard covers /api/admin (H-7), snapshot worker verifies a
+real USB mount + VACUUM INTO consistency (H-10), SSH enabled on the Pi image
+(H-11), jump_dd_table rides the adoption package (M-4, scoring accuracy),
+atomic adoption import (M-5), check-in write barrier (M-6), atomic
+pre-image+write capture (M-7), 422-prefix handling + unique-key conflict
+resolution (M-8), PIN throttling (M-9), Control-gated semver-checked updates
+(M-10), safe update script swap (M-11/M-12), client root-gate resilience +
+human-readable errors (M-13/H-9), auto-follow staleness takeover (M-14),
+Scoring Computer reboot-return (M-15), FR-8 athlete-lock gap closure (M-16).
+
+New harness suites: `review.test.js` (56 checks) + `review-ui.test.js`
+(6 Playwright checks incl. the day-2 replace dialog through the real UI); the
+step0 manifest drift test grew by 4 checks with the jump_dd_table addition.
+Full suite grew 398 → 464; all green with verify_v16 123/123 after each
+severity group.

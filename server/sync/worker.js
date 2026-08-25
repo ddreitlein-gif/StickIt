@@ -24,15 +24,18 @@ const status = {
   last_error: null,
   revoked: false,
   pushing: false,
+  stuck: null, // M-8: { seq, table, error } when the cloud 422s a change
 };
 
 let timer = null;
 let backoffMs = 0;
 let running = false;
+let pendingWake = false; // L-3: an append landing during the loop's final empty SELECT must not be lost
 
 function wake(delayMs = BATCH_WINDOW_MS) {
   if (status.revoked) return;
-  if (timer || running) return;
+  if (running) { pendingWake = true; return; }
+  if (timer) return;
   timer = setTimeout(() => { timer = null; runLoop().catch(e => console.error('[sync worker] loop error:', e.message)); }, delayMs);
   if (timer.unref) timer.unref();
 }
@@ -62,7 +65,10 @@ async function runLoop() {
       if (!st || !st.token || !st.cloudUrl) return;
       if (st.meetState !== 'adopted' && st.meetState !== 'checking_in') return;
 
-      const r = await rawExecute(`SELECT * FROM sync_outbox ORDER BY seq LIMIT ${BATCH_LIMIT}`);
+      // H-4: only ever push rows belonging to the CURRENTLY adopted meet —
+      // rows stranded by a revoked/aborted prior adoption must never replay
+      // under the next adoption's token.
+      const r = await rawExecute(`SELECT * FROM sync_outbox WHERE meet_id=? ORDER BY seq LIMIT ${BATCH_LIMIT}`, [st.meetId]);
       const rows = r.rows.map(rowToObj);
       if (!rows.length) return;
 
@@ -86,10 +92,13 @@ async function runLoop() {
 
       let resp, data;
       try {
+        // L-3: bounded — a black-holed connection must not stall the worker
+        // for minutes (it can time out a concurrent check-in flush).
         resp = await fetch(`${st.cloudUrl}/api/sync/meets/${st.meetId}/changes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${st.token}` },
           body: JSON.stringify({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, changes }),
+          signal: AbortSignal.timeout(15000),
         });
         data = await resp.json().catch(() => ({}));
       } catch (e) {
@@ -109,9 +118,31 @@ async function runLoop() {
         console.error('[sync worker] adoption revoked — upsync stopped. Local data intact.');
         return;
       }
+      if (resp.status === 401 && data.error === 'invalid_sync_token') {
+        // L-3: the meet was re-adopted under a different token — retrying
+        // forever labeled "Offline" is a lie. Terminal, like a revoke.
+        status.revoked = true;
+        status.last_error = 'This venue\'s sync credentials are no longer valid (the meet may have been adopted by another server). Local data intact — call the office.';
+        console.error('[sync worker] invalid sync token — upsync stopped. Local data intact.');
+        return;
+      }
       if (!resp.ok) {
-        status.last_error = data.message || data.error || `HTTP ${resp.status}`;
-        if (!status.offline_since) status.offline_since = new Date().toISOString();
+        // M-8: a 422 apply_failed still acknowledges a prefix — delete it so
+        // the same acknowledged rows are never re-sent, and surface exactly
+        // where the push is stuck instead of a generic failure.
+        if (resp.status === 422 && data && data.error === 'apply_failed') {
+          const ackd = Number(data.applied_through_seq) || 0;
+          if (ackd > 0) {
+            await rawExecute(`DELETE FROM sync_outbox WHERE seq <= ? AND meet_id=?`, [ackd, st.meetId]);
+          }
+          status.stuck = data.failure
+            ? { seq: data.failure.seq, table: (String(data.failure.error).match(/:(\w+)$/) || [])[1] || null, error: data.failure.error }
+            : { seq: null, table: null, error: 'apply_failed' };
+          status.last_error = `sync stuck at seq ${status.stuck.seq}: ${status.stuck.error}`;
+        } else {
+          status.last_error = data.message || data.error || `HTTP ${resp.status}`;
+          if (!status.offline_since) status.offline_since = new Date().toISOString();
+        }
         backoffMs = backoffMs ? Math.min(backoffMs * 2, BACKOFF_MAX_MS) : BACKOFF_START_MS;
         console.error(`[sync worker] cloud refused batch: ${resp.status} ${status.last_error}`);
         running = false; status.pushing = false;
@@ -121,24 +152,34 @@ async function runLoop() {
 
       const applied = Number(data.applied_through_seq) || 0;
       if (applied > 0) {
-        await rawExecute(`DELETE FROM sync_outbox WHERE seq <= ?`, [applied]);
+        await rawExecute(`DELETE FROM sync_outbox WHERE seq <= ? AND meet_id=?`, [applied, st.meetId]);
       }
       status.last_push_at = new Date().toISOString();
       status.offline_since = null;
       status.last_error = null;
+      status.stuck = null;
       backoffMs = 0;
       // Loop continues immediately — drain until the outbox is empty.
     }
   } finally {
     running = false;
     status.pushing = false;
+    if (pendingWake) {
+      pendingWake = false;
+      wake(0);
+    }
   }
 }
 
 async function getSyncStatus() {
   let queued = 0;
   try {
-    const r = await rawExecute('SELECT COUNT(*) AS c FROM sync_outbox');
+    // H-4: count only the adopted meet's rows — stale rows from a prior
+    // adoption must not block flushNow or mislead the home-screen status.
+    const st = await getState();
+    const r = st
+      ? await rawExecute('SELECT COUNT(*) AS c FROM sync_outbox WHERE meet_id=?', [st.meetId])
+      : await rawExecute('SELECT COUNT(*) AS c FROM sync_outbox');
     queued = parseInt(rowToObj(r.rows[0]).c) || 0;
   } catch (_) {}
   let state = 'up_to_date';
@@ -149,7 +190,11 @@ async function getSyncStatus() {
     const hhmm = status.offline_since.slice(11, 16);
     label = `Offline since ${hhmm} — ${queued} change${queued === 1 ? '' : 's'} queued`;
   } else if (queued > 0) { state = 'queued'; label = `${queued} change${queued === 1 ? '' : 's'} queued`; }
-  return { state, label, queued, last_push_at: status.last_push_at, offline_since: status.offline_since, revoked: status.revoked, last_error: status.last_error };
+  // M-7c: capture failures are silent data-divergence risks — surface them so
+  // the home screen can warn instead of burying them in the console.
+  let capture_failures = 0;
+  try { capture_failures = require('./outbox').getCaptureStats().capture_failures; } catch (_) {}
+  return { state, label, queued, last_push_at: status.last_push_at, offline_since: status.offline_since, revoked: status.revoked, last_error: status.last_error, capture_failures, stuck: status.stuck || null };
 }
 
 /** Push everything now and wait for the outbox to drain (check-in final flush). */
@@ -166,4 +211,18 @@ async function flushNow(timeoutMs = 30000) {
   }
 }
 
-module.exports = { wake, getSyncStatus, flushNow, _status: status };
+/**
+ * H-5: reset transient worker state for a NEW adoption. The revoked flag is
+ * permanent for one adoption only — without this reset, the design's own
+ * recovery path (force-unlock → re-release → re-adopt on the same process)
+ * would silently sync nothing until a restart.
+ */
+function reset() {
+  status.revoked = false;
+  status.offline_since = null;
+  status.last_error = null;
+  status.stuck = null;
+  backoffMs = 0;
+}
+
+module.exports = { wake, reset, getSyncStatus, flushNow, _status: status };

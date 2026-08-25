@@ -60,7 +60,9 @@ After building, copy client assets to server:
 ```bash
 cd client && npm run build
 cp client/dist/index.html server/public/index.html
-rm -f server/public/assets/index-*   # clear stale hashed bundles from prior builds
+# v2: clear ALL stale hashed assets (index bundles AND the self-hosted font
+# files added by FR-18 — an index-* rm alone strands superseded font hashes)
+rm -f server/public/assets/*
 cp client/dist/assets/* server/public/assets/
 cp client/dist/privacy.html server/public/privacy.html   # static privacy policy (from client/public/, v1.30.01)
 cp client/dist/support.html server/public/support.html   # static support page (from client/public/, v1.30.03)
@@ -84,7 +86,8 @@ zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
-# Verify size — should be ~3MB (incl. ~0.6MB of guide PDFs). If it's >5MB, an exclusion is missing.
+# Verify size — ~7MB as of v2 (~4MB self-hosted fonts [FR-18] + ~0.6MB guide
+# PDFs). If it's >9MB, an exclusion is missing. (Pre-v2 builds were ~3MB.)
 ls -lh /tmp/StickIt_X_X_XX.zip
 
 # Deliver
@@ -370,6 +373,34 @@ never deployed, excluded from release zips). Rollback point: tag `v1.30.03` on m
   against local sqld. Plus (earlier steps): FR-7 outbox audit, FR-20 generated
   lock coverage (111 routes), viewer parity, R14 latency ~0.4s, two-day cycle,
   crash tests. `verify_v16.js` 123/123 throughout.
+
+**Independent review fixes (08-23-26) — complete, suite 464/464.** All 38
+findings of `StickIt_v2_Review_Findings_08-23-26.md` worked in order
+(C-1 → H → M → L); per-finding record, disputes, and deviations in
+`docs/V2_REVIEW_FIXES_08-23-26.md`. Key behavior changes: interrupted check-in
+self-heals at boot and `/checkin` retries from `checking_in` (C-1);
+lost-response check-in reconciles via the public adoption probe (H-1);
+`checked_in` meets are re-adoptable/force-unlockable (H-2); repush never
+deletes master-table rows (H-3); outbox is meet-scoped + cleared at adoption
+and cloud `/changes` validates scope/null-pks and refuses meets deletes
+(H-4/M-3); worker resets on re-adoption + new `POST /api/venue/abandon` (H-5);
+outbox parser tolerates literal-value INSERTs — zero full-table fallbacks,
+`GET /api/venue/capture-stats` (H-6); freeze guard covers `/api/admin` +
+`/api/usss` (H-7); backup restore is adoption-aware (H-8); `apiFetch` errors
+carry `message`/`code`/`body` — day-2 replace dialog works (H-9/M-13);
+snapshots verify a real USB mount + use VACUUM INTO (H-10); Pi image has SSH
+(user `stickit` / `stickitvenue` default, `STICKIT_PI_PASSWORD` override)
+(H-11); `jump_dd_table` rides the adoption package replace-all (M-4 — manifest
+gained a 20th, snapshot-only table); adoption import is one atomic batch
+(M-5); check-in has a write barrier (M-6); delete/update capture pre-image is
+atomic with the write (M-7); worker deletes 422-acked prefixes and the cloud
+resolves unique-key conflicts (M-8); venue PINs throttled + Control token
+rotates at final check-in (M-9); `/update` is Control-gated, refuses
+handed_back, semver-compared (M-10); systemd unit pins
+`LIBSQL_URL=file:/opt/stickit/data/scoring.db` and STICKIT_SNAPSHOT_REQUIRE_MOUNT
+(M-11/H-10); auto-follow takes over stale holders + clears on finalize (M-14);
+FR-8 covers from-usss restore / admin restore / CSV import / export-bibs
+(M-16). New harness suites `review.test.js` + `review-ui.test.js`.
 
 **Step 7 (optional tablet submission buffering): DEFERRED** — touches the live
 judge-tablet submit path (constraint 1) for marginal venue benefit; plan

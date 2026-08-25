@@ -21,6 +21,28 @@ volunteer material lives in `server/public/docs/venue/`).
   'adopted'` which v1 ignores entirely; after returning to v2, clear it with
   Admin → Venue Adoption → Force Unlock.
 
+## Dual-host caveat: the adoption lock is per-database (L-10)
+
+The adoption lock lives in the **Render database only**. The legacy Railway
+deployment has its own database and knows nothing about an adoption made on
+Render: anything (or anyone) still pointed at
+`mogul-scoring-production.up.railway.app` can mutate its copy of the meet with
+no 423, and none of it reaches the venue or the Render archive. During venue
+season, treat Railway as strictly read-only legacy — or retire it.
+
+## Recovery actions added post-review (08-23-26)
+
+- **Interrupted check-in (C-1):** a crash/power cut mid-check-in self-heals at
+  the next boot (state resets to adopted; retry check-in). No SSH needed.
+- **Mistaken Check In on day 1 (H-2):** a `checked_in` meet can simply be
+  re-released and re-adopted; force-unlock also accepts `checked_in`.
+- **Dead adoption on the venue (H-5):** venue home → red revoked banner →
+  "Abandon this adoption" (Control PIN). Clears venue state + outbox; local
+  data stays for USB recovery; the device can adopt again immediately.
+- **SSH access (H-11):** the image now enables SSH — user `stickit`, default
+  password `stickitvenue` unless overridden at image build
+  (`STICKIT_PI_PASSWORD`). Record the credential on the venue run sheet.
+
 ## Force-unlock (R8) aftermath
 
 - Cloud: Admin → Venue Adoption → Force Unlock (typed meet name). The venue's

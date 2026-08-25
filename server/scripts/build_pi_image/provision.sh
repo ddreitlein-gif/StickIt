@@ -6,6 +6,11 @@
 # an offline boot starts with the last saved time; sequence numbers, not
 # clocks, order the sync), and the USB snapshot mount point (R11).
 
+# M-12: the wrapper invokes this as `/bin/bash provision.sh`, which ignores
+# the shebang's -e — without an explicit errexit a failed npm install or
+# NodeSource fetch still produced a "green" image that boots to nothing.
+set -euo pipefail
+
 FILES=/tmp/stage-files
 APP_DIR=/opt/stickit
 

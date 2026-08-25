@@ -2,15 +2,28 @@
  * server/venue/snapshot.js — USB snapshot worker (v2 Step 5, R11).
  *
  * Periodic (5-minute) snapshot of the meet database to a second USB stick on
- * the Pi, reusing the autosave.js copy pattern — closes the gap between total
- * Pi loss and the last successful upsync. Degrades gracefully (home-screen
- * warning) when the stick is absent; never blocks anything.
+ * the Pi — closes the gap between total Pi loss and the last successful
+ * upsync. Degrades gracefully (home-screen warning) when the stick is absent;
+ * never blocks anything.
+ *
+ * H-10 hardening:
+ *   - When STICKIT_SNAPSHOT_REQUIRE_MOUNT=1 (set by the Pi systemd unit), the
+ *     target directory must be a real mountpoint (its st_dev differs from its
+ *     parent's). The image bakes the mountpoint directory into the SD card
+ *     with a nofail fstab entry, so a bare existsSync check would happily
+ *     write "USB snapshots" onto the same SD card whose death R11 exists to
+ *     survive — while reporting healthy.
+ *   - The snapshot is produced with `VACUUM INTO` a temp file on the stick
+ *     (an internally consistent point-in-time copy — no torn db+WAL pair),
+ *     then renamed into place (same device, atomic).
+ *   - Pruning uses async fs calls so judge submits never stall on slow USB.
  *
  * Target dir: STICKIT_SNAPSHOT_DIR (the Pi image mounts the stick there).
  * Interval override for the harness: STICKIT_SNAPSHOT_INTERVAL_MS.
  */
 
 const fs = require('fs');
+const fsp = require('fs').promises;
 const path = require('path');
 
 const DATA_DIR = path.join(__dirname, '../../data');
@@ -29,11 +42,31 @@ function dbFilePath() {
   return url.startsWith('file:') ? url.slice(5) : null;
 }
 
-function doSnapshot() {
+/** Is dir a real mountpoint (different device than its parent)? */
+async function isMountpoint(dir) {
+  const st = await fsp.stat(dir);
+  const parent = await fsp.stat(path.dirname(dir));
+  return st.dev !== parent.dev;
+}
+
+let snapshotRunning = false;
+
+async function doSnapshot() {
   const dir = status.dir;
   if (!dir) { status.available = false; return; }
+  if (snapshotRunning) return; // slow-USB overlap guard
+  snapshotRunning = true;
   try {
-    if (!fs.existsSync(dir)) {
+    let dirOk = fs.existsSync(dir);
+    if (dirOk && process.env.STICKIT_SNAPSHOT_REQUIRE_MOUNT === '1') {
+      dirOk = await isMountpoint(dir).catch(() => false);
+      if (!dirOk) {
+        status.available = false;
+        status.last_error = 'Snapshot USB stick not mounted — snapshots would land on the SD card';
+        return;
+      }
+    }
+    if (!dirOk) {
       status.available = false;
       status.last_error = 'Snapshot USB stick not found';
       return;
@@ -41,24 +74,34 @@ function doSnapshot() {
     const src = dbFilePath();
     if (!src || !fs.existsSync(src)) return;
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.copyFileSync(src, path.join(dir, `stickit_snapshot_${stamp}.db`));
-    // Best effort: WAL sidecar too, so the snapshot is consistent.
-    if (fs.existsSync(src + '-wal')) {
-      try { fs.copyFileSync(src + '-wal', path.join(dir, `stickit_snapshot_${stamp}.db-wal`)); } catch (_) {}
+    const finalPath = path.join(dir, `stickit_snapshot_${stamp}.db`);
+    const tmpPath = path.join(dir, `.stickit_snapshot_tmp_${stamp}.db`);
+    // VACUUM INTO produces a consistent point-in-time copy through the live
+    // connection (WAL included) — no torn db/-wal pair, no file-copy race.
+    try {
+      const { rawExecute } = require('../db/schema');
+      await fsp.rm(tmpPath, { force: true });
+      await rawExecute(`VACUUM INTO ?`, [tmpPath]);
+      await fsp.rename(tmpPath, finalPath); // same device — atomic
+    } catch (e) {
+      await fsp.rm(tmpPath, { force: true }).catch(() => {});
+      throw e;
     }
     // Prune oldest beyond MAX_SNAPSHOTS (timestamps sort lexicographically).
-    const files = fs.readdirSync(dir).filter(f => /^stickit_snapshot_.*\.db$/.test(f)).sort().reverse();
+    const files = (await fsp.readdir(dir)).filter(f => /^stickit_snapshot_.*\.db$/.test(f)).sort().reverse();
     for (const f of files.slice(MAX_SNAPSHOTS)) {
-      try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
-      try { fs.unlinkSync(path.join(dir, f + '-wal')); } catch (_) {}
+      await fsp.unlink(path.join(dir, f)).catch(() => {});
+      await fsp.unlink(path.join(dir, f + '-wal')).catch(() => {});
     }
     status.available = true;
     status.last_snapshot_at = new Date().toISOString();
     status.last_error = null;
-    status.count = Math.min(files.length + 1, MAX_SNAPSHOTS);
+    status.count = Math.min(files.length, MAX_SNAPSHOTS); // files already includes the new snapshot
   } catch (e) {
     status.available = false;
     status.last_error = e.message;
+  } finally {
+    snapshotRunning = false;
   }
 }
 
@@ -67,8 +110,9 @@ let timer = null;
 function startVenueSnapshots() {
   if (timer) return;
   const interval = parseInt(process.env.STICKIT_SNAPSHOT_INTERVAL_MS) || 5 * 60 * 1000;
-  doSnapshot(); // one immediately so the status is fresh at boot
-  timer = setInterval(doSnapshot, interval);
+  const run = () => { doSnapshot().catch(e => { status.available = false; status.last_error = e.message; }); };
+  run(); // one immediately so the status is fresh at boot
+  timer = setInterval(run, interval);
   if (timer.unref) timer.unref();
 }
 
