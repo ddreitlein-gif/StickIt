@@ -425,13 +425,19 @@ rollback gate (8), crash tests (9). Plus FR-7 outbox audit gate and FR-22
 scratch-Turso gate. Item 10 (physical confirmation run) remains for David —
 prep: build the Pi image per server/scripts/build_pi_image/README.md.
 
-## Remaining before release (David)
-1. Physical confirmation run (Section 11 item 10) — UniFi + Starlink profiles,
-   power-pull test.
-2. Merge v2 → main, bump server/version.js to v2.0.00, build & package per
-   CLAUDE.md (zip now excludes harness/*; assets include ~4MB of bundled
-   fonts), push tag v1.30.03 to origin as the rollback point.
-3. Build + publish the Pi image (.img.xz) and the Imager os_list JSON.
+## Release status (updated 08-26-26)
+
+David ruled (08-26-26) to release BEFORE the physical confirmation run — the
+plan's intent, with tag `v1.30.03` on origin as the one-click Render rollback.
+Done this session: cloud ultra review passed (below), v2 merged → main, version
+bumped to v2.0.00, built + packaged + deployed (Render + Railway), rollback tag
+pushed, Pi image built via Docker for local flashing.
+
+Remaining: the physical confirmation run (Section 11 item 10) — UniFi +
+Starlink profiles, power-pull test — now a post-release validation, scripted in
+`~/Desktop/Scoring Server/StickIt 2.0 Testing Instructions.docx`. Publishing
+the Pi image as a GitHub Release asset + Imager os_list entry can follow the
+successful run (flashing locally from the built .img.xz needs no publish).
 
 ---
 
@@ -464,3 +470,30 @@ New harness suites: `review.test.js` (56 checks) + `review-ui.test.js`
 step0 manifest drift test grew by 4 checks with the jump_dd_table addition.
 Full suite grew 398 → 464; all green with verify_v16 123/123 after each
 severity group.
+
+---
+
+## Cloud ultra review (08-26-26)
+
+Anthropic's multi-agent cloud review (`/code-review ultra`) ran over the full
+v2 shippable source (54 files, 6,426 insertions vs main). The raw branch diff
+exceeds the tool's 8,000-line limit because of committed build assets and the
+harness, so the review ran from a temporary source-only branch: branch off
+main, copy v2's shippable source files (everything except `harness/`, `docs/`,
+`*.md`, `server/public/`), run the no-arg ultra from it, delete after —
+verified byte-identical to v2 on those paths, so findings applied directly.
+
+**Result: ZERO functional, data-loss, or security defects.** Two nit-severity
+findings, both fixed in commit `00a8e7b`:
+
+- `VenueRole.jsx` — the FR-10 freeze screen fired for every role including the
+  read-only `scoreboard`, blanking a venue results TV during check-in and
+  permanently after handback. Now exempt (same deliberate broadcast carve-out
+  `VenueOverlay` already had); judge/HJ/timekeeper/dashboard still freeze.
+- `AdminAdoption.jsx` — Force Unlock's name-mismatch handler compared
+  `e.message` where the H-9 error shape puts the machine code on `e.code`;
+  the friendly message was unreachable. Now checks `e.code`.
+
+`step5.test.js` updated to match: the freeze-screen Playwright assertion moved
+to the timekeeper role, plus a new assertion that the scoreboard stays live
+through handback. step5 39 → 40; full suite 464 → 465.

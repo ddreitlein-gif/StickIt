@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v1.30.03
+**Current version:** v2.0.00
 
 ## Commands
 
@@ -228,7 +228,7 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
-## v2.0.00 Feature Notes (IN PROGRESS — branch `v2`, not released)
+## v2.0.00 Feature Notes (RELEASED 08-26-26)
 
 ### Local Venue Server + One-Way Cloud Sync (v2.0.00)
 
@@ -406,10 +406,23 @@ FR-8 covers from-usss restore / admin restore / CSV import / export-bibs
 judge-tablet submit path (constraint 1) for marginal venue benefit; plan
 explicitly allows deferral. Revisit post-release.
 
-**Remaining for release (David):** physical confirmation run (Section 11 item
-10), then merge `v2` → `main`, bump `server/version.js` to v2.0.00, build &
-package (zip excludes `harness/*`; assets now include ~4MB of self-hosted
-fonts), push tag `v1.30.03`, build + publish the Pi image.
+**Cloud ultra review (08-26-26) — passed, suite 465/465.** Anthropic's
+multi-agent cloud review over the full v2 shippable source (54 files / 6,426
+lines; run from a temporary source-only branch because committed build assets +
+harness push the raw branch diff past the tool's 8k-line limit — recipe in
+`docs/V2_PROGRESS.md`). ZERO functional/data-loss/security defects; two nits
+fixed in `00a8e7b`: the FR-10 freeze screen now exempts the read-only
+`scoreboard` role (broadcast carve-out matching Overlay — a venue results TV
+stays live through check-in/handback), and AdminAdoption's force-unlock
+mismatch handler checks `e.code` (H-9 shape) instead of `e.message`. step5
+gained a scoreboard-stays-live assertion (39 → 40).
+
+**Released 08-26-26** (David's ruling: release BEFORE the physical confirmation
+run — the plan's intent; tag `v1.30.03` on origin is the one-click Render
+rollback). The physical confirmation run (Section 11 item 10) is now a
+post-release validation, scripted in `~/Desktop/Scoring Server/StickIt 2.0
+Testing Instructions.docx`. Publishing the Pi image (.img.xz) to GitHub
+Releases + the Imager os_list can follow the successful run.
 
 ---
 
