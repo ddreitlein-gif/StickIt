@@ -32,7 +32,7 @@ export default function AdminAdoption() {
       setConfirmName('')
       await load()
     } catch (e) {
-      setError(e.message === 'confirm_name_mismatch' ? 'The typed name does not match the meet name exactly.' : e.message)
+      setError(e.code === 'confirm_name_mismatch' ? 'The typed name does not match the meet name exactly.' : e.message)
     } finally { setBusy(false) }
   }
 

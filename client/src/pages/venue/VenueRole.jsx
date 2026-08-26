@@ -50,7 +50,9 @@ export default function VenueRole() {
     navigate('/?menu=1')
   }
 
-  const frozen = target && (target.meet_state === 'checking_in' || target.meet_state === 'checked_in' || target.meet_state === 'handed_back')
+  // Scoreboard is a read-only broadcast surface — keep showing results through
+  // check-in/handback (awards, overnight), same carve-out as VenueOverlay.
+  const frozen = target && role !== 'scoreboard' && (target.meet_state === 'checking_in' || target.meet_state === 'checked_in' || target.meet_state === 'handed_back')
 
   if (frozen) {
     const done = target.meet_state !== 'checking_in'

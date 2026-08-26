@@ -202,9 +202,14 @@ async function main() {
     // Role pages show the stop screen (Playwright).
     {
       const page = await tab.newPage();
-      await page.goto(venue.base + '/venue/role/scoreboard', { waitUntil: 'domcontentloaded' });
+      await page.goto(venue.base + '/venue/role/timekeeper', { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('text=you can stop', { timeout: 10000 });
-      c.ok(true, 'role page shows the "checked in — stop" screen (FR-10)');
+      c.ok(true, 'role page shows the "handed back — stop" screen (FR-10)');
+      // Scoreboard is a read-only broadcast surface — it must keep rendering
+      // results through check-in/handback (same carve-out as the Overlay).
+      await page.goto(venue.base + '/venue/role/scoreboard', { waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('iframe[title="venue-scoreboard"]', { timeout: 10000 });
+      c.ok(true, 'scoreboard role stays live through handback (broadcast carve-out)');
       await page.close();
     }
 
