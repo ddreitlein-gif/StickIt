@@ -1,6 +1,6 @@
 # StickIt — Freestyle Scoring System
 
-**v1.23.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
+**v2.0.00** — Web-based replacement for Winfree, built for US Ski & Snowboard mogul, dual mogul, and aerials events.
 
 ---
 
@@ -26,6 +26,7 @@ StickIt is licensed under the Creative Commons Attribution-NonCommercial-ShareAl
 - Per-meet Training Days with opt-out participant list and printable roster PDF
 - Auto-backup every 5 minutes (when writes have occurred)
 - Comprehensive in-app user guide at `/help` (61 topics across Officials, Judges, Admins, and Public surfaces)
+- Local venue server (v2): a Raspberry Pi at the hill runs the whole meet through internet outages, with one-way sync back to the cloud
 
 ---
 
@@ -153,6 +154,22 @@ To run in the cloud for remote access, deploy to any Node.js host. Production ru
 **Render** (primary, https://stickit-tga4.onrender.com) with a legacy **Railway** deployment
 kept in sync — both auto-deploy from every push to `main` via their GitHub integrations.
 Set environment variable `LIBSQL_URL` to a hosted Turso database URL and `LIBSQL_AUTH_TOKEN` for auth.
+
+---
+
+## Local Venue Server (v2)
+
+For hills with unreliable internet, a Raspberry Pi on the venue LAN runs StickIt in **venue
+mode** (`STICKIT_MODE=venue`). A meet is *adopted* from the cloud with a one-time release code:
+the cloud copy locks read-only, tablets score against the Pi (`http://stickit.local:3001`), and
+every change streams one-way back to the cloud whenever internet is available — an outage
+changes nothing at the hill. At day's end the meet is verified (per-table checksums on both
+sides) and either handed back overnight (two-day meets) or checked in permanently. Cloud mode
+is byte-for-byte unchanged when the flag is absent.
+
+- Operations guide: `docs/VENUE_OPS.md` · Sync design: `docs/SYNC_PROTOCOL.md`
+- Pi image build: `server/scripts/build_pi_image/README.md` · Mac fallback: `docs/VENUE_MAC_FALLBACK.md`
+- Printed volunteer run sheets: `server/public/docs/venue/`
 
 ---
 
