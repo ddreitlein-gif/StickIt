@@ -11,7 +11,9 @@
 # NodeSource fetch still produced a "green" image that boots to nothing.
 set -euo pipefail
 
-FILES=/tmp/stage-files
+# /opt not /tmp: pi-gen's on_chroot masks the rootfs /tmp with a tmpfs, so
+# files staged there by prerun.sh are invisible in-chroot. Removed at the end.
+FILES=/opt/stage-files
 APP_DIR=/opt/stickit
 
 echo "== StickIt provisioning =="
@@ -66,5 +68,7 @@ systemctl enable fake-hwclock
 mkdir -p /media/stickit-snapshot
 grep -q STICKIT-SNAP /etc/fstab || \
   echo 'LABEL=STICKIT-SNAP /media/stickit-snapshot auto defaults,nofail,noatime,x-systemd.device-timeout=5 0 0' >> /etc/fstab
+
+rm -rf "$FILES"
 
 echo "== StickIt provisioning complete =="
