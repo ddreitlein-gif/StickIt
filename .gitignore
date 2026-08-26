@@ -40,3 +40,6 @@ npm-debug.log*
 
 # Mac Finder duplicates ("foo 2.json")
 * [0-9].*
+
+# Pi image build workspace (server/scripts/build_pi_image/build.sh)
+.work/
