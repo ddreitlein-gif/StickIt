@@ -122,7 +122,12 @@ export default function AdminLayout() {
         <Outlet />
       </main>
 
-      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
+      {/* v2.0.01 — forced first-login password change (admin-issued credentials). */}
+      {authEnabled && user?.must_change_password ? (
+        <ChangePasswordModal forced />
+      ) : (
+        showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+      )}
     </div>
   )
 }

@@ -35,14 +35,18 @@ router.post('/login', async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
+    // v2.0.01 — usernames are stored trim().toLowerCase() (admin.js), so the
+    // lookup must normalize the same way. Mobile keyboards auto-capitalize the
+    // first letter; case must never decide a login.
+    const uname = String(username).trim().toLowerCase();
     const ipKey = `ip:${req.ip}`;
-    const userKey = `user:${String(username).toLowerCase()}`;
+    const userKey = `user:${uname}`;
     if (recentFailures(ipKey) >= LOGIN_FAIL_LIMIT || recentFailures(userKey) >= LOGIN_FAIL_LIMIT) {
       return res.status(429).json({ error: 'Too many attempts — try again in a few minutes' });
     }
     const user = await queryOne(
-      `SELECT id, username, password_hash, display_name, role, is_active FROM users WHERE username=? AND is_active=1`,
-      [username]
+      `SELECT id, username, password_hash, display_name, role, is_active, must_change_password FROM users WHERE username=? AND is_active=1`,
+      [uname]
     );
     if (!user || !user.password_hash) {
       recordFailure(ipKey); recordFailure(userKey);
@@ -60,7 +64,7 @@ router.post('/login', async (req, res) => {
       getJwtSecret(),
       { expiresIn: '12h' }
     );
-    res.json({ token, user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role } });
+    res.json({ token, user: { id: user.id, username: user.username, display_name: user.display_name, role: user.role, must_change_password: user.must_change_password || 0 } });
   } catch (e) {
     console.error('[auth] login error:', e);
     res.status(500).json({ error: 'Login failed' });
@@ -73,9 +77,16 @@ router.post('/logout', (req, res) => {
 });
 
 // GET /me
-router.get('/me', requireAuth, (req, res) => {
+router.get('/me', requireAuth, async (req, res) => {
   const { id, username, display_name, role } = req.user;
-  res.json({ id, username, display_name, role });
+  // v2.0.01 — queried here (not in requireAuth's SELECT) so the venue-mode
+  // fabricated venue-control user simply resolves to 0.
+  let must_change_password = 0;
+  try {
+    const row = await queryOne(`SELECT must_change_password FROM users WHERE id=?`, [id]);
+    must_change_password = (row && row.must_change_password) || 0;
+  } catch (_) {}
+  res.json({ id, username, display_name, role, must_change_password });
 });
 
 // GET /status — public
@@ -92,8 +103,8 @@ router.post('/change-password', requireAuth, async (req, res) => {
     if (!current_password || !new_password) {
       return res.status(400).json({ error: 'current_password and new_password are required' });
     }
-    if (new_password.length < 6) {
-      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
     }
     const user = await queryOne(`SELECT password_hash FROM users WHERE id=?`, [req.user.id]);
     if (!user || !user.password_hash) {
@@ -104,8 +115,9 @@ router.post('/change-password', requireAuth, async (req, res) => {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
     const hash = await bcrypt.hash(new_password, 10);
+    // v2.0.01 — a self-chosen password satisfies the forced first-login change.
     await execute(
-      `UPDATE users SET password_hash=?, updated_at=datetime('now') WHERE id=?`,
+      `UPDATE users SET password_hash=?, must_change_password=0, updated_at=datetime('now') WHERE id=?`,
       [hash, req.user.id]
     );
     await execute(

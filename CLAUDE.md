@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.0.00
+**Current version:** v2.0.01
 
 ## Commands
 
@@ -225,6 +225,66 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.0.01 Feature Notes
+
+### Case-Insensitive Login Fix + Password UX (v2.0.01, cloud auth only)
+
+Fixes the live lockout reported 08-29-26 (`stickit-login-issue-08-29-26.md`): Alex could not
+log in because iOS keyboards auto-capitalize the first letter of the username field, and the
+login lookup was case-sensitive. Root cause: `admin.js` always STORES usernames
+`trim().toLowerCase()`, but `POST /api/auth/login` looked up the raw submitted value with a
+case-sensitive SQL `=` (no COLLATE NOCASE on `users.username`), so "Alex" never matched the
+stored "alex" — and attempts to store "Alex" reverted to lowercase, closing off the workaround.
+
+**Everything in this release is cloud-only by construction.** Venue mode never renders
+`Login.jsx` and never executes `POST /api/auth/login` (`requireAuth` branches to
+`venueRequireControl`/PINs first); the one shared artifact — a new `users` column — is inert in
+venue mode, and `users` is NOT in the sync manifest, so no protocol impact. Nothing under
+`server/venue/`, `server/sync/`, or `server/middleware/auth.js` was touched.
+
+- **Case-insensitive login.** `POST /login` normalizes the submitted username
+  (`trim().toLowerCase()`) before both the throttle key and the SQL lookup — case can never
+  decide a login. Belt-and-suspenders idempotent migration lowercases any hand-edited stored
+  usernames. The Login page username input gains `autoCapitalize="none" autoCorrect="off"
+  spellCheck={false}` (same on the AdminUsers username input) so mobile keyboards stop
+  capitalizing in the first place.
+- **Show-password toggle.** New shared `client/src/components/PasswordInput.jsx` (eye/eye-off
+  button, caller-supplied styling) used on the Login password field, the AdminUsers password
+  field, and all three ChangePasswordModal fields.
+- **Editable username in admin.** `PUT /api/admin/users/:id` accepts `username` (normalized,
+  non-empty + uniqueness checks → 400/409, audit `username_changed` with old/new). Existing
+  sessions survive a rename (JWT `sub` is the user id). AdminUsers modal username field is no
+  longer disabled on edit.
+- **Forced password change on first login (David's rulings: mandatory/blocking; fires for new
+  accounts + admin resets only).** New `users.must_change_password INTEGER NOT NULL DEFAULT 0`
+  column. Set on `POST /users` with a password and on `PUT /users/:id` password resets —
+  EXCEPT an admin resetting their own password (`req.user.id === target`; also not set when
+  auth is off/req.user absent, protecting the AdminSecurity bootstrap flow). Returned on the
+  login response and `GET /me` (queried in the /me handler, not requireAuth, so the venue
+  fabricated user resolves 0). `POST /change-password` clears it. Client: `Layout.jsx` +
+  `AdminLayout.jsx` render `<ChangePasswordModal forced />` (no cancel/close, explanatory
+  copy) whenever `authEnabled && user.must_change_password` — blocking, survives refresh and
+  covers mid-session admin resets via `/me`; on success the modal refreshes auth context and
+  unmounts.
+- **Min 8 characters (raised from 6)** for all user-chosen passwords (`/change-password` +
+  modal) and, for consistency, admin-set passwords (POST/PUT /users + AdminUsers client check).
+
+**Verification.** 41-check scratch-server integration test (protection enabled via the real
+admin flow): login as `david`/`David`/`DAVID`/` david ` all succeed vs stored lowercase, wrong
+password still 401; forced-change lifecycle (7-char refused, 8-char clears flag, reset
+re-forces, self-reset doesn't); username rename (normalized, dup 409, empty 400, old name dead,
+token survives, audit rows); protected endpoints still 401; double-boot migration idempotence;
+venue-mode boot regression (`/api/venue/status` mode=venue). `verify_v16.js` 123/123.
+
+**Files created:** `client/src/components/PasswordInput.jsx`
+**Files modified:** `server/routes/auth.js`, `server/routes/admin.js`, `server/db/schema.js`,
+`client/src/pages/Login.jsx`, `client/src/components/ChangePasswordModal.jsx`,
+`client/src/pages/admin/AdminUsers.jsx`, `client/src/components/Layout.jsx`,
+`client/src/components/AdminLayout.jsx`, `server/version.js`, `client/package.json`,
+`server/package.json`, `CLAUDE.md`
 
 ---
 

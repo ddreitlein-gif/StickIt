@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { authHeaders, checkApiResponse } from '../../utils/api'
+import PasswordInput from '../../components/PasswordInput'
 
 // v1.25.00 (A-3) — canonical roles, lowest to highest: judge < official < system_admin
 const ROLES = ['judge', 'official', 'system_admin']
@@ -23,6 +24,10 @@ function UserModal({ user, onClose, onSave }) {
     }
     if (!user && !form.password) {
       setError('Password is required for new users.')
+      return
+    }
+    if (form.password && form.password.length < 8) {
+      setError('Password must be at least 8 characters.')
       return
     }
     setSaving(true)
@@ -59,8 +64,11 @@ function UserModal({ user, onClose, onSave }) {
               className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
               value={form.username}
               onChange={e => setForm({ ...form, username: e.target.value })}
-              disabled={!!user}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
+            <p className="text-xs text-slate-500 mt-1">Usernames are stored lowercase; login is not case-sensitive.</p>
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1 uppercase tracking-wider">Display Name</label>
@@ -87,14 +95,14 @@ function UserModal({ user, onClose, onSave }) {
             <label className="block text-xs text-slate-400 mb-1 uppercase tracking-wider">
               Password{user ? ' (leave blank to keep current)' : ' *'}
             </label>
-            <input
-              type="password"
+            <PasswordInput
               className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
-              placeholder={user ? 'Leave blank to keep current password' : 'Required'}
+              placeholder={user ? 'Leave blank to keep current password' : 'At least 8 characters'}
               autoComplete="new-password"
             />
+            <p className="text-xs text-slate-500 mt-1">Min 8 characters. A password set here for another user must be changed by them at their next login.</p>
           </div>
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <div className="flex gap-3 pt-2">

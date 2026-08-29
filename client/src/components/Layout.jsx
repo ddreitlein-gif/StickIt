@@ -82,7 +82,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v2.0.00')
+  const [version, setVersion] = useState('v2.0.01')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])
@@ -247,7 +247,13 @@ export default function Layout() {
       {/* Modal panels */}
       {showDDs && <JumpDDReference onClose={() => setShowDDs(false)} />}
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
-      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
+      {/* v2.0.01 — forced first-login password change (admin-issued credentials).
+          Blocking: renders regardless of showChangePw and offers no close. */}
+      {authEnabled && user?.must_change_password ? (
+        <ChangePasswordModal forced />
+      ) : (
+        showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+      )}
     </div>
   )
 }

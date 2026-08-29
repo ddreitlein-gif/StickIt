@@ -53,13 +53,15 @@ router.post('/users', async (req, res) => {
     const { username, display_name, role, password } = req.body;
     if (!username || !display_name) return res.status(400).json({ error: 'username and display_name are required' });
     if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+    if (password && password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
     const existing = await queryOne('SELECT id FROM users WHERE username=?', [username.trim().toLowerCase()]);
     if (existing) return res.status(409).json({ error: 'Username already exists' });
     const id = uuidv4();
     const hash = password ? await bcrypt.hash(password, 10) : null;
+    // v2.0.01 — an admin-issued password must be changed on first login.
     await execute(
-      'INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)',
-      [id, username.trim().toLowerCase(), hash, display_name.trim(), role || 'official']
+      'INSERT INTO users (id, username, password_hash, display_name, role, must_change_password) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, username.trim().toLowerCase(), hash, display_name.trim(), role || 'official', hash ? 1 : 0]
     );
     if (hash) {
       await execute(
@@ -76,23 +78,45 @@ router.put('/users/:id', async (req, res) => {
   try {
     const user = await queryOne('SELECT * FROM users WHERE id=?', [req.params.id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const { display_name, role, is_active, password } = req.body;
+    const { username, display_name, role, is_active, password } = req.body;
     if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+    if (password && password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    // v2.0.01 — username is editable; stored normalized like POST /users.
+    let newUsername = null;
+    if (username !== undefined && username !== null) {
+      const normalized = String(username).trim().toLowerCase();
+      if (!normalized) return res.status(400).json({ error: 'Username cannot be empty' });
+      if (normalized !== user.username) {
+        const dup = await queryOne('SELECT id FROM users WHERE username=? AND id != ?', [normalized, req.params.id]);
+        if (dup) return res.status(409).json({ error: 'Username already exists' });
+        newUsername = normalized;
+      }
+    }
     const deactivating = (is_active === 0 || is_active === false) && user.is_active;
     if (deactivating && !(await deactivationGuard(req, res, user))) return;
     await execute(
-      `UPDATE users SET display_name=COALESCE(?,display_name), role=COALESCE(?,role), is_active=COALESCE(?,is_active), updated_at=datetime('now') WHERE id=?`,
-      [display_name || null, role || null, is_active !== undefined ? is_active : null, req.params.id]
+      `UPDATE users SET username=COALESCE(?,username), display_name=COALESCE(?,display_name), role=COALESCE(?,role), is_active=COALESCE(?,is_active), updated_at=datetime('now') WHERE id=?`,
+      [newUsername, display_name || null, role || null, is_active !== undefined ? is_active : null, req.params.id]
     );
+    if (newUsername) {
+      await execute(
+        `INSERT INTO audit_log (id, action, entity, entity_id, old_value, new_value) VALUES (?,?,?,?,?,?)`,
+        [uuidv4(), 'username_changed', 'user', req.params.id, JSON.stringify({ username: user.username }), JSON.stringify({ username: newUsername })]
+      );
+    }
     if (password) {
       const hash = await bcrypt.hash(password, 10);
+      // v2.0.01 — an admin reset forces a change at next login, except when an
+      // admin picks their own password (req.user is unset while auth is off,
+      // e.g. the AdminSecurity bootstrap flow — treated as self, no force).
+      const forceChange = req.user && req.user.id !== req.params.id ? 1 : 0;
       await execute(
-        `UPDATE users SET password_hash=?, updated_at=datetime('now') WHERE id=?`,
-        [hash, req.params.id]
+        `UPDATE users SET password_hash=?, must_change_password=?, updated_at=datetime('now') WHERE id=?`,
+        [hash, forceChange, req.params.id]
       );
       await execute(
         `INSERT INTO audit_log (id, action, entity, entity_id, new_value) VALUES (?,?,?,?,?)`,
-        [uuidv4(), 'password_set', 'user', req.params.id, JSON.stringify({ username: user.username })]
+        [uuidv4(), 'password_set', 'user', req.params.id, JSON.stringify({ username: newUsername || user.username })]
       );
     }
     const updated = await queryOne('SELECT id, username, display_name, role, is_active, created_at, updated_at FROM users WHERE id=?', [req.params.id]);

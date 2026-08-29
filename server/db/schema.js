@@ -332,6 +332,15 @@ async function initSchema() {
     `ALTER TABLE meets ADD COLUMN release_code_expires_at TEXT`,
     `ALTER TABLE meets ADD COLUMN released_at TEXT`,
     `ALTER TABLE meets ADD COLUMN released_by TEXT`,
+    // v2.0.01 -- cloud auth: forced first-login password change. Set on admin
+    // user creation / password reset; cleared by POST /api/auth/change-password.
+    // users is NOT in the sync manifest (protocol.js), so no protocol impact;
+    // inert in venue mode (PIN auth never reads it).
+    `ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
+    // v2.0.01 -- belt-and-suspenders: admin.js has always written usernames
+    // lowercase; normalize any hand-edited stragglers so the (now normalized)
+    // login lookup always matches. No-op on healthy databases.
+    `UPDATE users SET username = lower(trim(username)) WHERE username <> lower(trim(username))`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import PasswordInput from '../components/PasswordInput';
 
 export default function Login() {
   const { login, authEnabled, loading, user } = useAuth();
@@ -72,6 +73,9 @@ export default function Login() {
               onChange={e => setUsername(e.target.value)}
               autoFocus
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               style={{
                 width: '100%',
@@ -92,8 +96,7 @@ export default function Login() {
             <label style={{ display: 'block', color: '#94a3b8', fontSize: 12, marginBottom: 6, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
               Password
             </label>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={e => setPassword(e.target.value)}
               autoComplete="current-password"
