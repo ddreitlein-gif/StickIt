@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.1.00
+**Current version:** v2.1.01
 
 ## Commands
 
@@ -225,6 +225,27 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.1.01 Feature Notes
+
+### Ultra-Review Nit — AdvancedCheck Hoisted (v2.1.01)
+
+Cloud ultra review of the full v2.1.00 source diff (24 files / 1,395 changed lines, run from a
+temporary source-only branch off `d5f0318` because the committed build assets push the raw diff
+past the 8k-line limit — same recipe as the v2.0.00 review in `docs/V2_PROGRESS.md`):
+**ZERO functional, data-loss, or security defects; one nit**, fixed here. The `Check` checkbox
+helper in `AdvancedSettingsModal` (`MeetDetail.jsx`) was defined inside the modal body, so every
+toggle created a new component type and React remounted all six checkbox subtrees (render churn +
+keyboard-focus loss) — the same anti-pattern the v1.25.00 C-4 fix hoisted `JumpCodeInput` for.
+Now a module-scope `AdvancedCheck` taking `form`/`setForm` as props, referenced directly at all
+six call sites (no per-render wrapper, which would have re-introduced the unstable type).
+Behavior/markup unchanged. Client-only; help topics and guide PDFs untouched.
+
+**Files modified:** `client/src/pages/MeetDetail.jsx`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

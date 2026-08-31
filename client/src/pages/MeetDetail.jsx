@@ -1065,6 +1065,26 @@ function EditMeetModal({ meet, onClose, onSave }) {
   )
 }
 
+// v2.1.01 — hoisted to module scope (ultra-review nit, same C-4 pattern as
+// JumpCodeInput): defined inside the modal, every render created a new
+// component type and React remounted all six checkbox subtrees per toggle.
+function AdvancedCheck({ field, title, sub, form, setForm }) {
+  return (
+    <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={form[field]}
+        onChange={e => setForm(f => ({ ...f, [field]: e.target.checked }))}
+      />
+      <span>
+        {title}
+        {sub && <span className="block text-xs text-slate-500">{sub}</span>}
+      </span>
+    </label>
+  )
+}
+
 // v2.1.00 — Advanced meet settings panel (Mock Comp fix release, item 10).
 // Four meet-level settings, all round-tripped through export/import and the
 // v2 sync manifest (except the adoption flag, which is cloud transport state):
@@ -1106,21 +1126,6 @@ function AdvancedSettingsModal({ meet, onClose, onSave }) {
     finally { setLoading(false) }
   }
 
-  const Check = ({ field, title, sub }) => (
-    <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
-      <input
-        type="checkbox"
-        className="mt-0.5"
-        checked={form[field]}
-        onChange={e => setForm(f => ({ ...f, [field]: e.target.checked }))}
-      />
-      <span>
-        {title}
-        {sub && <span className="block text-xs text-slate-500">{sub}</span>}
-      </span>
-    </label>
-  )
-
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
@@ -1129,22 +1134,24 @@ function AdvancedSettingsModal({ meet, onClose, onSave }) {
         <form onSubmit={submit} className="space-y-5">
           <div className="space-y-3">
             <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Dual Moguls Rules</div>
-            <Check
+            <AdvancedCheck
               field="nj_rule_enabled"
               title="Landing Past the Lower Chop (NJ) rule"
               sub="FIS FS-18. When off (default), NJ controls are hidden on all surfaces and the server refuses NJ calls. Historical NJ findings still display."
+              form={form} setForm={setForm}
             />
-            <Check
+            <AdvancedCheck
               field="air_tie_allowed"
               title="Air score tie allowed"
               sub="When off (default), the Air Judge (J3) cannot submit a tied air score — they must pick a winner. Time Tied (J4) is unaffected."
+              form={form} setForm={setForm}
             />
           </div>
           <div className="space-y-3">
             <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Who Can Start a Run</div>
-            <Check field="start_run_timekeeper" title="Timekeeper tablet" />
-            <Check field="start_run_head_judge" title="Head Judge tablet" />
-            <Check field="start_run_chief" title="Chief of Score (Scoring tab)" />
+            <AdvancedCheck field="start_run_timekeeper" title="Timekeeper tablet" form={form} setForm={setForm} />
+            <AdvancedCheck field="start_run_head_judge" title="Head Judge tablet" form={form} setForm={setForm} />
+            <AdvancedCheck field="start_run_chief" title="Chief of Score (Scoring tab)" form={form} setForm={setForm} />
             {allStartOff && (
               <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded px-3 py-2">
                 All three are off — the Scoring tab keeps its Start Run button anyway so the meet can't be locked out.
@@ -1153,10 +1160,11 @@ function AdvancedSettingsModal({ meet, onClose, onSave }) {
           </div>
           <div className="space-y-3">
             <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Venue Server</div>
-            <Check
+            <AdvancedCheck
               field="allow_adoption"
               title="Allow venue server adoption"
               sub="When off, this meet is cloud-only (remote judging) and can never be released to or adopted by a venue server. Locks once the meet is adopted."
+              form={form} setForm={setForm}
             />
           </div>
           {error && <p className="text-red-400 text-sm">{error}</p>}
