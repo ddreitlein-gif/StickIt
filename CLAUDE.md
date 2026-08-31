@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.0.01
+**Current version:** v2.0.02
 
 ## Commands
 
@@ -225,6 +225,29 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.0.02 Feature Notes
+
+### Per-Judge PIN Enforcement Removed (v2.0.02, hotfix)
+
+Live-lockout hotfix during the RMF Mock remote test comp (08-30-26): every judge got
+"Invalid PIN" on score submit. The lone enforcement site — `POST /:runId/scores` in
+`server/routes/runs.js` — still rejected cloud-mode submits when the judge row carried a
+`pin` value and the tablet didn't send a matching `?pin=` query param. The RMF Mock meet's
+judge rows had PINs because the meet was built from the Winfree season-import zip, whose
+judge rows carry `pin` values through `executeImport`/`executeMerge` (`meets.js`).
+
+**Fix:** the PIN check is deleted outright — per-judge PINs are no longer enforced
+anywhere. This matches the documented access model (tablets are public, secured only by
+unguessable short-code URLs) and FR-16 (venue mode already bypassed PINs via Crew PIN +
+seat claim). The `judges.pin` column, import round-trip, and the tablet's optional `?pin=`
+param are all left in place — the value is simply ignored. Server-only change; the client
+bundle was NOT rebuilt (the Layout.jsx useState default bump is cosmetic-only).
+
+**Files modified:** `server/routes/runs.js`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`, `CLAUDE.md`
 
 ---
 
