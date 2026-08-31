@@ -46,6 +46,12 @@ Once all judges (and timekeeper) have submitted, the big green button appears. T
 - Broadcasts `score_update` to all viewers.
 - Advances to the next athlete in run order.
 
+**The score set must be complete before a run can be published.** The **Finalize and Publish Score** fallback button stays disabled — with a "Waiting for scores: T&L 2/3 · Time pending" breakdown — until every required judge score (and time, when the event is timed) is in. On approval the server recomputes the total from the stored judge scores, so a rejected-then-resubmitted score always lands in the published number. Use DNS/DNF/DSQ for an athlete who did not complete the run.
+
+### Starting runs from this tablet
+
+The **Start Run** button (with its DNS companion) on the next-up card appears only when the meet's Advanced settings allow the Head Judge to start runs (on by default). When pressed, the tablet re-checks the server's next-up athlete first — so a card that went stale while the iPad was asleep can never start the wrong athlete — and the server refuses duplicate or concurrent starts outright.
+
 ### Send Back to Scoring
 
 Amber button. Opens the whole run back to specific-judge editing — useful when multiple things need to be corrected.
@@ -69,7 +75,9 @@ After every phase is finalized, the **Final Review** screen appears: a combined 
 
 Dual mogul HJ tablet manages match-by-match approval. After all bracket matches are complete, the bracket-review panel appears with the full bracket tree and the same two buttons.
 
-For the FS-18 landing zone (chop) rule, the dual HJ view adds:
+**Set Match Status (Blue/Red DNS · DNF · DSQ).** Each button opens a confirmation first — "Record Blue DNF for [Name]? Red advances." When judge points already exist on the match, the confirmation escalates and shows the points state (e.g. "5 judges have scored this match (Red leads 18–7)"), with the strongest red warning when the ruling contradicts the points winner. The Head Judge's ruling has final say and stays possible even with all five judges scored; every manual ruling is audit-logged with the points state at the time. Once a match is complete and the bracket has advanced, the tablet can no longer change it — post-completion changes go through the operator's **Edit Scores** path on the Scoring tab.
+
+For the FS-18 landing zone (chop) rule (only when the meet's Advanced settings enable it — off by default), the dual HJ view adds:
 
 - an **NJ (Past Chop)** panel with per-athlete Set/Clear toggles (with confirmation) — the Air Judge normally makes the call, but the HJ can set it on close calls or clear a mistaken one;
 - a **persistent amber banner** while a call is active, describing the speed override (e.g. "Speed override active: Blue 0 / Red 5" or "Speed tied at 3 / 3");

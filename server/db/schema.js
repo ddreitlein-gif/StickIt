@@ -341,6 +341,21 @@ async function initSchema() {
     // lowercase; normalize any hand-edited stragglers so the (now normalized)
     // login lookup always matches. No-op on healthy databases.
     `UPDATE users SET username = lower(trim(username)) WHERE username <> lower(trim(username))`,
+    // v2.1.00 -- Advanced meet settings (MeetDetail > Advanced panel). These
+    // affect scoring/UI behavior at the venue, so they ARE in the sync
+    // manifest (protocol.js meets.columns; SYNC_PROTOCOL_VERSION bumped to 2).
+    // nj_rule_enabled: FS-18 chop/NJ rule (v1.29.00) — default OFF for the
+    // domestic season; air_tie_allowed: J3 Air Tied submissions — default OFF;
+    // start_run_*: which surfaces render the Start Run button — default all ON.
+    `ALTER TABLE meets ADD COLUMN nj_rule_enabled INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE meets ADD COLUMN air_tie_allowed INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE meets ADD COLUMN start_run_timekeeper INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE meets ADD COLUMN start_run_head_judge INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE meets ADD COLUMN start_run_chief INTEGER NOT NULL DEFAULT 1`,
+    // v2.1.00 -- dual forensics: when each judge's point row landed, mirroring
+    // judge_scores.submitted_at (set on insert AND refreshed on resubmit).
+    // In the sync manifest (dual_judge_points.columns).
+    `ALTER TABLE dual_judge_points ADD COLUMN submitted_at TEXT`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

@@ -175,6 +175,14 @@ router.put('/:id', requireAuth, async (req, res) => {
       await execute(`UPDATE meets SET remote_judging=?, updated_at=datetime('now') WHERE id=?`,
         [req.body.remote_judging ? 1 : 0, req.params.id]);
     }
+    // v2.1.00 -- Advanced meet settings (MeetDetail > Advanced panel).
+    // Boolean flags stored as 0/1; each only written when present in the body.
+    for (const col of ['nj_rule_enabled', 'air_tie_allowed', 'start_run_timekeeper', 'start_run_head_judge', 'start_run_chief']) {
+      if (req.body[col] !== undefined) {
+        await execute(`UPDATE meets SET ${col}=?, updated_at=datetime('now') WHERE id=?`,
+          [req.body[col] ? 1 : 0, req.params.id]);
+      }
+    }
     res.json(await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -499,9 +507,17 @@ router.post('/:id/clone', requireAuth, async (req, res) => {
     }
 
     const newMeetId = uuidv4();
+    // v2.1.00 -- clone copies all four Advanced meet settings (NJ rule, air
+    // tie, start-run permissions, venue-adoption/remote-judging flag). It
+    // still resets adoption/lock/transport state (those columns stay NULL).
     await execute(
-      `INSERT INTO meets (id, name, location, date, status, short_code) VALUES (?, ?, ?, ?, 'setup', ?)`,
-      [newMeetId, name.trim(), location.trim(), date, shortCode()]
+      `INSERT INTO meets (id, name, location, date, status, short_code,
+         nj_rule_enabled, air_tie_allowed, start_run_timekeeper, start_run_head_judge, start_run_chief, remote_judging)
+       VALUES (?, ?, ?, ?, 'setup', ?, ?, ?, ?, ?, ?, ?)`,
+      [newMeetId, name.trim(), location.trim(), date, shortCode(),
+       source.nj_rule_enabled ?? 0, source.air_tie_allowed ?? 0,
+       source.start_run_timekeeper ?? 1, source.start_run_head_judge ?? 1, source.start_run_chief ?? 1,
+       source.remote_judging ?? 0]
     );
     // recordWrite() is intentionally omitted here -- the middleware accounts for
     // this POST request automatically on success.  Extra manual calls would
@@ -1016,9 +1032,15 @@ async function executeImport(data, zipPath, opts = {}) {
   // Insert meet
   const m = data.meet;
   await execute(
-    `INSERT INTO meets (id, name, location, date, status, meet_ranking, short_code, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-    [newMeetId, meetName, m.location ?? '', m.date ?? '', m.status ?? 'setup', m.meet_ranking ?? null, shortCode()]
+    `INSERT INTO meets (id, name, location, date, status, meet_ranking, short_code,
+       nj_rule_enabled, air_tie_allowed, start_run_timekeeper, start_run_head_judge, start_run_chief, remote_judging,
+       created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+    [newMeetId, meetName, m.location ?? '', m.date ?? '', m.status ?? 'setup', m.meet_ranking ?? null, shortCode(),
+     // v2.1.00 -- Advanced meet settings round-trip (legacy exports lack these keys)
+     m.nj_rule_enabled ?? 0, m.air_tie_allowed ?? 0,
+     m.start_run_timekeeper ?? 1, m.start_run_head_judge ?? 1, m.start_run_chief ?? 1,
+     m.remote_judging ?? 0]
   );
 
   // Insert events
@@ -1215,10 +1237,11 @@ async function executeImport(data, zipPath, opts = {}) {
     const mappedMatch = bracketMap[djp.match_id] ?? null;
     if (!mappedMatch) continue;
     await execute(
-      `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, submitted_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [uuidv4(), mappedMatch, djp.judge_number ?? 1,
-       djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0]
+       djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0,
+       djp.submitted_at ?? null]
     );
   }
 
@@ -1256,9 +1279,19 @@ async function executeMerge(existingMeetId, data, zipPath) {
   const m = data.meet;
   if (isNewer(m.updated_at, existingMeet.updated_at)) {
     await execute(
-      `UPDATE meets SET name=?, location=?, date=?, status=?, meet_ranking=?, updated_at=datetime('now') WHERE id=?`,
+      `UPDATE meets SET name=?, location=?, date=?, status=?, meet_ranking=?,
+         nj_rule_enabled=?, air_tie_allowed=?, start_run_timekeeper=?, start_run_head_judge=?, start_run_chief=?, remote_judging=?,
+         updated_at=datetime('now') WHERE id=?`,
       [m.name ?? existingMeet.name, m.location ?? existingMeet.location, m.date ?? existingMeet.date,
-       m.status ?? existingMeet.status, m.meet_ranking ?? existingMeet.meet_ranking, existingMeetId]
+       m.status ?? existingMeet.status, m.meet_ranking ?? existingMeet.meet_ranking,
+       // v2.1.00 -- Advanced meet settings round-trip (legacy exports lack these keys)
+       m.nj_rule_enabled ?? existingMeet.nj_rule_enabled ?? 0,
+       m.air_tie_allowed ?? existingMeet.air_tie_allowed ?? 0,
+       m.start_run_timekeeper ?? existingMeet.start_run_timekeeper ?? 1,
+       m.start_run_head_judge ?? existingMeet.start_run_head_judge ?? 1,
+       m.start_run_chief ?? existingMeet.start_run_chief ?? 1,
+       m.remote_judging ?? existingMeet.remote_judging ?? 0,
+       existingMeetId]
     );
   }
 
@@ -1684,15 +1717,15 @@ async function executeMerge(existingMeetId, data, zipPath) {
     if (existing) {
       if (isNewer(djp.updated_at, existing.updated_at)) {
         await execute(
-          `UPDATE dual_judge_points SET blue_points=?, red_points=?, time_tied=?, air_tied=?, updated_at=datetime('now') WHERE id=?`,
-          [djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0, existing.id]
+          `UPDATE dual_judge_points SET blue_points=?, red_points=?, time_tied=?, air_tied=?, submitted_at=COALESCE(?, submitted_at), updated_at=datetime('now') WHERE id=?`,
+          [djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0, djp.submitted_at ?? null, existing.id]
         );
       }
     } else {
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-        [uuidv4(), mappedMatch, djp.judge_number ?? 1, djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0]
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, submitted_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        [uuidv4(), mappedMatch, djp.judge_number ?? 1, djp.blue_points ?? 0, djp.red_points ?? 0, djp.time_tied ?? 0, djp.air_tied ?? 0, djp.submitted_at ?? null]
       );
     }
   }

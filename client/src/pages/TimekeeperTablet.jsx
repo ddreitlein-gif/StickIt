@@ -113,7 +113,11 @@ export default function TimekeeperTablet() {
     }
     poll()
     pollRef.current = setInterval(poll, 2000)
-    return () => clearInterval(pollRef.current)
+    // v2.1.00 (Issue 4) -- refresh immediately when a backgrounded tab resumes
+    // so the next-up card is never acted on stale.
+    const onVisible = () => { if (!document.hidden) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', onVisible) }
   }, [eventId, activeRun?.id, isPaper, resolving])
 
   // WebSocket
@@ -240,14 +244,23 @@ export default function TimekeeperTablet() {
     setBotTimer('')
   }
 
+  // v2.1.00 (Mock Comp Issue 4) -- re-fetch /next-up at press time and start
+  // the athlete the SERVER returns, never the cached card (backgrounded iPads
+  // freeze the card). The server also 409s on duplicates as a backstop.
   const startNextRun = async () => {
     if (!nextUp) return
     setStarting(true); setError('')
     try {
+      const fresh = await fetch(`${API}/events/${eventId}/runs/next-up`).then(r => r.ok ? r.json() : null).catch(() => null)
+      if (!fresh?.id) {
+        setNextUp(null)
+        throw new Error('No next-up athlete — the queue may have changed. Card refreshed.')
+      }
+      if (fresh.id !== nextUp.id) setNextUp(fresh)
       const res = await fetch(`${API}/events/${eventId}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification' }),
+        body: JSON.stringify({ registration_id: fresh.id, run_number: fresh.run_number || 1, round: 'qualification' }),
       })
       if (!res.ok) {
         const err = await res.json()
@@ -523,6 +536,9 @@ export default function TimekeeperTablet() {
                   {nextUp.run_order != null && (
                     <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>Order: {nextUp.run_order}</div>
                   )}
+                  {/* v2.1.00 (10c) -- Start Run / DNS render only when the meet's
+                      Advanced settings allow the Timekeeper to start runs */}
+                  {(eventInfo?.start_run_timekeeper ?? 1) !== 0 && (
                   <div className="flex gap-2 mt-3">
                     <button
                       type="button"
@@ -542,6 +558,7 @@ export default function TimekeeperTablet() {
                       DNS
                     </button>
                   </div>
+                  )}
                 </div>
               )}
 

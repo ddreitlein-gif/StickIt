@@ -1018,7 +1018,10 @@ function CloseExportModal({ meetId, onClose, onClosed }) {
 }
 
 function EditMeetModal({ meet, onClose, onSave }) {
-  const [form, setForm] = useState({ name: meet.name || '', location: meet.location || '', date: meet.date || '', remote_judging: !!meet.remote_judging })
+  // v2.1.00 (10d) — the remote-judging / venue-adoption control moved to the
+  // Advanced panel (AdvancedSettingsModal), presented as "Allow venue server
+  // adoption". This modal is now name/location/date only.
+  const [form, setForm] = useState({ name: meet.name || '', location: meet.location || '', date: meet.date || '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -1027,7 +1030,7 @@ function EditMeetModal({ meet, onClose, onSave }) {
     if (!form.name.trim() || !form.location.trim() || !form.date) { setError('All fields are required.'); return }
     setLoading(true)
     try {
-      await api.updateMeet(meet.id, { ...form, remote_judging: form.remote_judging ? 1 : 0 })
+      await api.updateMeet(meet.id, form)
       onSave()
       onClose()
     } catch (err) { setError(err.message) }
@@ -1051,23 +1054,113 @@ function EditMeetModal({ meet, onClose, onSave }) {
             <label className="label">Start Date</label>
             <input type="date" className="input" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
           </div>
-          {/* v2.0.00 (6.7) — remote-judging meets are cloud-only and can never
-              be adopted by a venue server. Changeable during setup; the server
-              refuses all edits once the meet is adopted. */}
-          <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={!!form.remote_judging}
-              onChange={e => setForm({ ...form, remote_judging: e.target.checked })}
-            />
-            <span>
-              Remote judging meet (cloud-only)
-              <span className="block text-xs text-slate-500">Judges score over the internet. This meet cannot be adopted by a venue server.</span>
-            </span>
-          </label>
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? 'Saving...' : 'Save'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// v2.1.00 — Advanced meet settings panel (Mock Comp fix release, item 10).
+// Four meet-level settings, all round-tripped through export/import and the
+// v2 sync manifest (except the adoption flag, which is cloud transport state):
+//   10a  NJ (chop) rule           — default OFF
+//   10b  Air Tied allowed          — default OFF
+//   10c  Who can start a run       — default all ON
+//   10d  Allow venue adoption      — relocated remote_judging flag, inverted
+function AdvancedSettingsModal({ meet, onClose, onSave }) {
+  const [form, setForm] = useState({
+    nj_rule_enabled:      !!meet.nj_rule_enabled,
+    air_tie_allowed:      !!meet.air_tie_allowed,
+    start_run_timekeeper: (meet.start_run_timekeeper ?? 1) !== 0,
+    start_run_head_judge: (meet.start_run_head_judge ?? 1) !== 0,
+    start_run_chief:      (meet.start_run_chief ?? 1) !== 0,
+    allow_adoption:       !meet.remote_judging,
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const allStartOff = !form.start_run_timekeeper && !form.start_run_head_judge && !form.start_run_chief
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setLoading(true); setError('')
+    try {
+      await api.updateMeet(meet.id, {
+        nj_rule_enabled:      form.nj_rule_enabled ? 1 : 0,
+        air_tie_allowed:      form.air_tie_allowed ? 1 : 0,
+        start_run_timekeeper: form.start_run_timekeeper ? 1 : 0,
+        start_run_head_judge: form.start_run_head_judge ? 1 : 0,
+        start_run_chief:      form.start_run_chief ? 1 : 0,
+        // "Allow venue server adoption" is the inverted presentation of the
+        // v2.0.00 remote_judging flag — all adoption semantics unchanged.
+        remote_judging:       form.allow_adoption ? 0 : 1,
+      })
+      onSave()
+      onClose()
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  const Check = ({ field, title, sub }) => (
+    <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={form[field]}
+        onChange={e => setForm(f => ({ ...f, [field]: e.target.checked }))}
+      />
+      <span>
+        {title}
+        {sub && <span className="block text-xs text-slate-500">{sub}</span>}
+      </span>
+    </label>
+  )
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <h2 className="font-display text-2xl text-white mb-1">Advanced Settings</h2>
+        <p className="text-xs text-slate-500 mb-5">Meet-level rules and permissions. These apply to every event in this meet.</p>
+        <form onSubmit={submit} className="space-y-5">
+          <div className="space-y-3">
+            <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Dual Moguls Rules</div>
+            <Check
+              field="nj_rule_enabled"
+              title="Landing Past the Lower Chop (NJ) rule"
+              sub="FIS FS-18. When off (default), NJ controls are hidden on all surfaces and the server refuses NJ calls. Historical NJ findings still display."
+            />
+            <Check
+              field="air_tie_allowed"
+              title="Air score tie allowed"
+              sub="When off (default), the Air Judge (J3) cannot submit a tied air score — they must pick a winner. Time Tied (J4) is unaffected."
+            />
+          </div>
+          <div className="space-y-3">
+            <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Who Can Start a Run</div>
+            <Check field="start_run_timekeeper" title="Timekeeper tablet" />
+            <Check field="start_run_head_judge" title="Head Judge tablet" />
+            <Check field="start_run_chief" title="Chief of Score (Scoring tab)" />
+            {allStartOff && (
+              <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded px-3 py-2">
+                All three are off — the Scoring tab keeps its Start Run button anyway so the meet can't be locked out.
+              </p>
+            )}
+          </div>
+          <div className="space-y-3">
+            <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Venue Server</div>
+            <Check
+              field="allow_adoption"
+              title="Allow venue server adoption"
+              sub="When off, this meet is cloud-only (remote judging) and can never be released to or adopted by a venue server. Locks once the meet is adopted."
+            />
+          </div>
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+          <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? 'Saving...' : 'Save'}</button>
           </div>
@@ -1088,6 +1181,7 @@ export default function MeetDetail() {
   const [showClone, setShowClone] = useState(false)
   const [showCloseExport, setShowCloseExport] = useState(false)
   const [showEditMeet, setShowEditMeet] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)   // v2.1.00 — Advanced settings panel
   const [writeCount, setWriteCount] = useState(null)
   // v2.0.00 (Step 1) — venue adoption state + release-code modal
   const [adoption, setAdoption] = useState(null)
@@ -1257,7 +1351,11 @@ export default function MeetDetail() {
             <span>📍 {meet.location}</span>
             <span>📅 {new Date(meet.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</span>
           </div>
-          <button onClick={() => setShowEditMeet(true)} disabled={adopted} className="text-xs text-slate-500 hover:text-mountain-400 mt-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Edit Meet Settings</button>
+          <div className="flex items-center gap-3 mt-1">
+            <button onClick={() => setShowEditMeet(true)} disabled={adopted} className="text-xs text-slate-500 hover:text-mountain-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Edit Meet Settings</button>
+            {/* v2.1.00 — Advanced meet settings (NJ rule, air tie, start-run permissions, venue adoption) */}
+            <button onClick={() => setShowAdvanced(true)} disabled={adopted} className="text-xs text-slate-500 hover:text-mountain-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Advanced</button>
+          </div>
           <div className="mt-3 flex items-center gap-3">
             <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold uppercase tracking-wide border
               ${meet.status === 'active' ? 'bg-green-900/50 text-green-400 border-green-800' :
@@ -1478,6 +1576,14 @@ export default function MeetDetail() {
         <EditMeetModal
           meet={meet}
           onClose={() => setShowEditMeet(false)}
+          onSave={refreshMeet}
+        />
+      )}
+
+      {showAdvanced && (
+        <AdvancedSettingsModal
+          meet={meet}
+          onClose={() => setShowAdvanced(false)}
           onSave={refreshMeet}
         />
       )}

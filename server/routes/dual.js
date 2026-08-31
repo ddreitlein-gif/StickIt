@@ -36,6 +36,27 @@ function mapDjpRows(rows) {
 }
 
 /**
+ * v2.1.00 -- Advanced meet settings that gate dual mogul behavior (10a/10b):
+ * nj_rule_enabled (FS-18 chop/NJ rule, default OFF) and air_tie_allowed
+ * (J3 Air Tied submissions, default OFF). Read side is untouched — historical
+ * matches carrying nj_call/air_tied still display; the flags gate WRITES only.
+ */
+async function getDualMeetSettings(eventId) {
+  try {
+    const row = await queryOne(
+      `SELECT m.nj_rule_enabled, m.air_tie_allowed FROM meets m JOIN events e ON e.meet_id = m.id WHERE e.id=?`,
+      [eventId]
+    );
+    return {
+      nj_rule_enabled: row ? (row.nj_rule_enabled ?? 0) : 0,
+      air_tie_allowed: row ? (row.air_tie_allowed ?? 0) : 0,
+    };
+  } catch (_) {
+    return { nj_rule_enabled: 0, air_tie_allowed: 0 };
+  }
+}
+
+/**
  * Ensure the event has a stored dual_random_seed.  Returns the seed
  * string (generating and persisting one if needed).  The seed is used
  * for all deterministic randomization (band shuffles, bye distribution,
@@ -1299,7 +1320,7 @@ router.put('/runoff-option', requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 router.put('/:matchId/winner', async (req, res) => {
   try {
-    const { winner_registration_id, loser_status } = req.body;
+    const { winner_registration_id, loser_status, force } = req.body;
     if (!winner_registration_id) return res.status(400).json({ error: 'winner_registration_id required' });
 
     const match = await queryOne(
@@ -1307,6 +1328,51 @@ router.put('/:matchId/winner', async (req, res) => {
       [req.params.matchId, req.params.eventId]
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    // v2.1.00 (Mock Comp D-1) -- the HJ override (DNS/DNF/DSQ ruling) stays
+    // allowed on an active/pending/hj_pending match even when all judges have
+    // scored: the Head Judge has final say (David's ruling 08-31-26). But a
+    // match that is already COMPLETE has advanced its winner into the next
+    // round — a stale tablet must not silently re-route a bracket that has
+    // moved on (downstream completed matches never auto-recompute, v1.16.17).
+    // Post-completion changes go through the Officials edit path (paper-score,
+    // which handles complete matches), or an explicit force flag from the
+    // Officials UI.
+    if (match.status === 'complete' && !force) {
+      return res.status(409).json({
+        error: 'Match is already decided and the bracket has advanced.  Use the Officials edit path (Edit Scores) to change a completed match.'
+      });
+    }
+
+    // v2.1.00 (D-1) -- audit every manual winner call WITH the points state at
+    // the time, so an override that contradicts the judged result is traceable.
+    let pointsState = null;
+    try {
+      const djp = await queryAll(`SELECT * FROM dual_judge_points WHERE match_id=? ORDER BY judge_number`, [req.params.matchId]);
+      if (djp.length > 0) {
+        const split = calcDualMogulPointSplit(mapDjpRows(djp), match.nj_call);
+        pointsState = {
+          judge_count: split.judgeCount,
+          blue_total: split.blueTotal,
+          red_total: split.redTotal,
+          points_winner: split.winner || null,
+        };
+      }
+    } catch (_) {}
+    try {
+      const requestedSide = winner_registration_id === match.registration_id_blue ? 'blue' : 'red';
+      await logAudit('dual_manual_winner', 'dual_match', req.params.matchId, null, {
+        event_id: req.params.eventId,
+        winner_registration_id,
+        winner_side: requestedSide,
+        loser_status: loser_status || null,
+        previous_status: match.status,
+        previous_winner_registration_id: match.winner_registration_id || null,
+        forced: !!force,
+        points_state: pointsState,
+        contradicts_points: !!(pointsState && pointsState.points_winner && pointsState.points_winner !== requestedSide),
+      });
+    } catch (_) {}
 
     await execute(
       `UPDATE dual_bracket SET winner_registration_id=?, loser_status=?, status='complete', updated_at=datetime('now') WHERE id=?`,
@@ -1400,6 +1466,17 @@ router.post('/:matchId/nj', async (req, res) => {
     }
 
     const { athlete, value } = req.body;
+
+    // v2.1.00 (10a) -- the FS-18 chop/NJ rule is gated by the meet-level
+    // Advanced setting (default OFF for domestic events this season). Write
+    // side only: historical matches carrying an nj_call still display, and
+    // CLEARING an existing call stays allowed so stray data can be removed.
+    if (value) {
+      const njSettings = await getDualMeetSettings(req.params.eventId);
+      if (!njSettings.nj_rule_enabled) {
+        return res.status(400).json({ error: 'The Landing Past the Lower Chop (NJ) rule is disabled for this meet.  Enable it in the meet’s Advanced settings.' });
+      }
+    }
     if (athlete !== 'blue' && athlete !== 'red') {
       return res.status(400).json({ error: "athlete must be 'blue' or 'red'" });
     }
@@ -1544,7 +1621,10 @@ router.get('/active-match', async (req, res) => {
     const pNum = pairingNums.get(match.id);
     const pairing_label = pNum != null ? formatPairingLabel(genderPrefix, pNum) : null;
 
-    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0 });
+    // v2.1.00 -- carry the Advanced meet settings so the dual tablets can
+    // hide the NJ panel / Air Tied button when the rules are disabled (10a/10b).
+    const settings = await getDualMeetSettings(req.params.eventId);
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1690,6 +1770,14 @@ router.post('/:matchId/judge-points', async (req, res) => {
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
+    // v2.1.00 (Mock Comp D-2) -- a judge tablet holding a stale match view
+    // must not write points into a match that was already decided (DNS/DNF
+    // ruling or HJ approval), mirroring the mogul-side "Run already complete"
+    // guard that POST /:runId/scores has always had.
+    if (match.status === 'complete') {
+      return res.status(400).json({ error: 'Match already decided.  Contact the Head Judge.' });
+    }
+
     const { judge_number, blue_points, red_points, time_tied, air_tied } = req.body;
 
     // Validate judge_number
@@ -1713,6 +1801,14 @@ router.post('/:matchId/judge-points', async (req, res) => {
     // v1.29.00 -- only J3 (Air Judge) may submit air_tied (JH 6304.3.5.1)
     if (isAirTied && judgeNum !== 3) {
       return res.status(400).json({ error: 'Only the Air Judge (judge 3) can submit an air tied entry' });
+    }
+    // v2.1.00 (10b) -- Air Tied submissions are gated by the meet-level
+    // Advanced setting (default NOT allowed).
+    if (isAirTied) {
+      const settings = await getDualMeetSettings(req.params.eventId);
+      if (!settings.air_tie_allowed) {
+        return res.status(400).json({ error: 'A tied air score is not allowed for this meet.  The Air Judge must pick a winner (see Advanced meet settings).' });
+      }
     }
 
     // v1.29.00 -- the Overall Judge's scale (5/4/3) depends on the speed-tie
@@ -1739,19 +1835,21 @@ router.post('/:matchId/judge-points', async (req, res) => {
       return res.status(400).json({ error: splitError });
     }
 
-    // Upsert: one row per (match_id, judge_number)
+    // Upsert: one row per (match_id, judge_number).
+    // v2.1.00 -- submitted_at set on insert AND refreshed on resubmit,
+    // mirroring judge_scores.submitted_at, so dual forensics can be sequenced.
     const existing = existingRows.find(r => r.judge_number === judgeNum) || null;
     if (existing) {
       await execute(
         `UPDATE dual_judge_points
-           SET blue_points=?, red_points=?, time_tied=?, air_tied=?, updated_at=datetime('now')
+           SET blue_points=?, red_points=?, time_tied=?, air_tied=?, submitted_at=datetime('now'), updated_at=datetime('now')
          WHERE id=?`,
         [bPts, rPts, isTimeTied ? 1 : 0, isAirTied ? 1 : 0, existing.id]
       );
     } else {
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [uuidv4(), req.params.matchId, judgeNum, bPts, rPts, isTimeTied ? 1 : 0, isAirTied ? 1 : 0]
       );
     }
@@ -1961,6 +2059,22 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
 
     const { winner_registration_id, loser_status, judges, time_tied, nj_blue, nj_red, air_tied } = req.body;
 
+    // v2.1.00 (10a/10b) -- refuse gated flags when the meet-level Advanced
+    // settings have them disabled (the modal hides the controls; this is the
+    // server-side backstop). Exception: a match that ALREADY carries the
+    // finding (recorded while the rule was enabled, or historical data) may be
+    // re-saved/adjusted so edits of completed matches don't dead-end.
+    const paperSettings = await getDualMeetSettings(req.params.eventId);
+    if ((nj_blue || nj_red) && !paperSettings.nj_rule_enabled && !match.nj_call) {
+      return res.status(400).json({ error: 'The Landing Past the Lower Chop (NJ) rule is disabled for this meet (Advanced settings).' });
+    }
+    if (air_tied && !paperSettings.air_tie_allowed) {
+      const hadAirTied = await queryOne(`SELECT id FROM dual_judge_points WHERE match_id=? AND air_tied=1`, [req.params.matchId]);
+      if (!hadAirTied) {
+        return res.status(400).json({ error: 'A tied air score is not allowed for this meet (Advanced settings).' });
+      }
+    }
+
     // v1.29.00 (FS-18) -- derive the stored nj_call from the paper checkboxes
     const njCall = nj_blue && nj_red ? 'both' : nj_blue ? 'blue' : nj_red ? 'red' : null;
 
@@ -2073,12 +2187,12 @@ router.post('/:matchId/paper-score', requireAuth, async (req, res) => {
     // Delete existing judge points (clean slate, supports edit)
     await execute('DELETE FROM dual_judge_points WHERE match_id=?', [req.params.matchId]);
 
-    // Insert all 5 judge point rows
+    // Insert all 5 judge point rows (v2.1.00: with submitted_at for forensics)
     for (const j of judges) {
       const jNum = parseInt(j.judge_number, 10);
       await execute(
-        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO dual_judge_points (id, match_id, judge_number, blue_points, red_points, time_tied, air_tied, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [uuidv4(), req.params.matchId, jNum, parseInt(j.blue_points, 10), parseInt(j.red_points, 10),
          (isTimeTied && jNum === 4) ? 1 : 0,
          (isAirTied  && jNum === 3) ? 1 : 0]

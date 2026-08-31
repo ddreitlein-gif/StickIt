@@ -80,8 +80,20 @@ router.get('/:id', async (req, res) => {
       [req.params.id]
     );
     const judges = await queryAll('SELECT * FROM judges WHERE event_id = ? ORDER BY role', [req.params.id]);
-    const meet = await queryOne('SELECT short_code FROM meets WHERE id = ?', [req.params.meetId]);
-    res.json({ ...event, meet_short_code: meet ? meet.short_code : null, registrations, judges });
+    // v2.1.00 -- meet_settings carries the Advanced meet settings that gate
+    // event-level UI (NJ rule, Air Tied, who can start a run).
+    const meet = await queryOne(
+      'SELECT short_code, nj_rule_enabled, air_tie_allowed, start_run_timekeeper, start_run_head_judge, start_run_chief FROM meets WHERE id = ?',
+      [req.params.meetId]
+    );
+    const meetSettings = meet ? {
+      nj_rule_enabled:      meet.nj_rule_enabled ?? 0,
+      air_tie_allowed:      meet.air_tie_allowed ?? 0,
+      start_run_timekeeper: meet.start_run_timekeeper ?? 1,
+      start_run_head_judge: meet.start_run_head_judge ?? 1,
+      start_run_chief:      meet.start_run_chief ?? 1,
+    } : null;
+    res.json({ ...event, meet_short_code: meet ? meet.short_code : null, meet_settings: meetSettings, registrations, judges });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

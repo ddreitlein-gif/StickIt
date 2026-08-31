@@ -557,9 +557,10 @@ router.get('/status', async (req, res) => {
       );
       const totalAthletes = eligibleRow ? parseInt(eligibleRow.cnt) : 0;
 
-      // Count completed runs
+      // Count completed athletes (v2.1.00, Issue 5: DISTINCT — duplicate run
+      // rows must not make the UI show a phase as complete)
       const completedRow = await queryOne(
-        `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
+        `SELECT COUNT(DISTINCT registration_id) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
         [eventId, phase.run_number]
       );
       const completed = completedRow ? parseInt(completedRow.cnt) : 0;
@@ -612,11 +613,21 @@ router.post('/:phaseId/finalize', async (req, res) => {
     const phase = await queryOne('SELECT * FROM event_phases WHERE id=? AND event_id=?', [phaseId, eventId]);
     if (!phase) return res.status(404).json({ error: 'Phase not found' });
 
-    // Check all eligible athletes completed
+    // Check all eligible athletes completed.
+    // v2.1.00 (Mock Comp Issue 5) -- COUNT(DISTINCT registration_id), not run
+    // rows: a duplicate row must never cover for an un-scored athlete. And any
+    // run still in scoring always blocks finalize.
+    const scoringRow = await queryOne(
+      `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='scoring' AND registration_id != '__forerunner__'`,
+      [eventId, phase.run_number]
+    );
+    if (scoringRow && parseInt(scoringRow.cnt) > 0) {
+      return res.status(400).json({ error: `Cannot finalize: ${scoringRow.cnt} run(s) still in scoring. Finish or abandon them first.` });
+    }
     const eligibleRow = await queryOne(`SELECT COUNT(*) as cnt FROM phase_run_order WHERE phase_id=?`, [phaseId]);
     const total = eligibleRow ? parseInt(eligibleRow.cnt) : 0;
     const completedRow = await queryOne(
-      `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
+      `SELECT COUNT(DISTINCT registration_id) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
       [eventId, phase.run_number]
     );
     const completed = completedRow ? parseInt(completedRow.cnt) : 0;

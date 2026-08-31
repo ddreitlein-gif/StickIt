@@ -2310,6 +2310,13 @@ function DualScoringPanel({ event, registrations }) {
   const [resending, setResending] = useState(false)
   const wsRef = useRef(null)
   const isPaper = event.score_entry_mode === 'paper'
+  // v2.1.00 -- Advanced meet settings (10a/10b/10c). njEnabled gates the NJ
+  // WRITE controls only (historical nj_call data still displays); the
+  // start-run failsafe keeps the Scoring tab button when all three are off.
+  const ms = event.meet_settings || {}
+  const njEnabled = (ms.nj_rule_enabled ?? 0) !== 0
+  const allStartOff = (ms.start_run_timekeeper ?? 1) === 0 && (ms.start_run_head_judge ?? 1) === 0 && (ms.start_run_chief ?? 1) === 0
+  const canChiefStart = (ms.start_run_chief ?? 1) !== 0 || allStartOff
 
   const load = async () => {
     try {
@@ -2581,8 +2588,9 @@ function DualScoringPanel({ event, registrations }) {
           </div>
         )}
 
-        {/* Start / Clear buttons (tablet mode) */}
-        {!isPaper && showStart && !isDone && !isActive && m.registration_id_blue && m.registration_id_red && (
+        {/* Start / Clear buttons (tablet mode) — v2.1.00 (10c): gated on the
+            Chief-of-Score start permission (with an all-off failsafe) */}
+        {!isPaper && canChiefStart && showStart && !isDone && !isActive && m.registration_id_blue && m.registration_id_red && (
           <div className="mt-3 pt-2 border-t border-slate-700">
             <button
               onClick={() => startMatch(m.id)}
@@ -2605,7 +2613,9 @@ function DualScoringPanel({ event, registrations }) {
                 <button onClick={() => openManualEntry(m)} className="text-xs px-3 py-1.5 rounded bg-mountain-600 hover:bg-mountain-700 text-white font-semibold">Manual Score Entry</button>
               </div>
             </div>
-            {/* v1.29.00 (FS-18) -- NJ (past chop) flags; normally set by the Air Judge / HJ, editable here too */}
+            {/* v1.29.00 (FS-18) -- NJ (past chop) flags; normally set by the Air Judge / HJ, editable here too.
+                v2.1.00 (10a) -- controls render only when the meet's Advanced settings enable the NJ rule. */}
+            {njEnabled && (
             <div className="mt-2 flex items-center gap-4">
               <label className="flex items-center gap-1.5 cursor-pointer text-xs text-blue-400 font-semibold">
                 <input type="checkbox" checked={m.nj_call === 'blue' || m.nj_call === 'both'} onChange={e => setMatchNJ(m, 'blue', e.target.checked)} className="rounded border-slate-600" />
@@ -2616,6 +2626,7 @@ function DualScoringPanel({ event, registrations }) {
                 NJ (chop) — Red
               </label>
             </div>
+            )}
             {!!m.nj_call && (
               <p className="mt-1 text-xs text-amber-400">
                 {m.nj_call === 'both'
@@ -2818,6 +2829,13 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
   const [error, setError] = useState('')
   const [saving, setSaving] = useState('')
 
+  // v2.1.00 (10a/10b) -- Advanced meet settings gate the NJ checkboxes and the
+  // Air Tied checkbox. A match already carrying the finding keeps its controls
+  // so historical edits don't dead-end (server permits that case too).
+  const paperMs = event.meet_settings || {}
+  const showNjControls = (paperMs.nj_rule_enabled ?? 0) !== 0 || !!match.nj_call
+  const showAirTied = (paperMs.air_tie_allowed ?? 0) !== 0 || (existingPoints ? existingPoints.some(j => j.airTied) : false)
+
   const njCall = njBlue && njRed ? 'both' : njBlue ? 'blue' : njRed ? 'red' : null
   // A single NJ overrides a time-tied entry (match is NOT speed tied)
   const speedTied = njCall === 'both' || (timeTied && !njCall)
@@ -3014,6 +3032,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
             <span className="text-sm text-amber-400 font-semibold">Time Tied</span>
             <span className="text-xs text-slate-500">(J4 records 0/0, credited 3/3)</span>
           </label>
+          {showAirTied && (
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -3025,9 +3044,13 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
             <span className="text-sm text-amber-400 font-semibold">Air Tied</span>
             <span className="text-xs text-slate-500">(J3 = 0/0, votes withheld)</span>
           </label>
+          )}
         </div>
 
-        {/* v1.29.00 (FS-18) -- NJ (past chop) checkboxes */}
+        {/* v1.29.00 (FS-18) -- NJ (past chop) checkboxes.
+            v2.1.00 (10a) -- shown only when the meet's Advanced settings
+            enable the NJ rule (or the match already carries an NJ finding). */}
+        {showNjControls && (
         <div className="flex items-center gap-6 mb-2">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -3050,6 +3073,7 @@ function DualPaperScoreModal({ event, match, existingPoints, onClose, onSuccess 
             <span className="text-sm text-red-400 font-semibold">NJ (chop) — Red</span>
           </label>
         </div>
+        )}
         {njCall && (
           <p className="text-xs text-amber-400 mb-2">
             {njCall === 'both'
@@ -3134,7 +3158,6 @@ function ScoringPanel({ event, registrations }) {
   const [saving,    setSaving]                  = useState(false)
   const [undoing,   setUndoing]                 = useState(false)
   const [reopening, setReopening]               = useState(false)
-  const [canceling, setCanceling]               = useState(false)
   const [alreadyExpanded, setAlreadyExpanded]   = useState(false)
   const [manualModal, setManualModal]           = useState(null)
   const [voiceModal,  setVoiceModal]            = useState(null) // v1.20.00 -- { mode:'paper'|'tablet', registration?, run?, runNumber }
@@ -3147,6 +3170,21 @@ function ScoringPanel({ event, registrations }) {
 
   const isPaper  = event.score_entry_mode === 'paper'
   const active   = registrations.filter(r => r.status === 'registered')
+  // v2.1.00 (10c) -- Chief-of-Score start permission, with the all-off
+  // failsafe: if every start-run surface is disabled, the Scoring tab keeps
+  // its button so the meet can never be locked out.
+  const msPanel = event.meet_settings || {}
+  const allStartOff = (msPanel.start_run_timekeeper ?? 1) === 0 && (msPanel.start_run_head_judge ?? 1) === 0 && (msPanel.start_run_chief ?? 1) === 0
+  const canChiefStart = (msPanel.start_run_chief ?? 1) !== 0 || allStartOff
+  // v2.1.00 (Issue 6) -- Abandon Run two-step confirm + stuck-run age ticker
+  const [abandonArmed, setAbandonArmed] = useState(false)
+  const [abandoning, setAbandoning] = useState(false)
+  const [nowTick, setNowTick] = useState(Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [])
+  useEffect(() => { setAbandonArmed(false) }, [activeRun?.id])
 
   const loadAll = async () => {
     const [r, a, p] = await Promise.all([
@@ -3232,11 +3270,9 @@ function ScoringPanel({ event, registrations }) {
     const rid = regId || form.registration_id
     if (!rid) { setError('Select an athlete'); return }
 
-    // Check if athlete already has a completed run for this run_number
-    const existingCompleted = runs.find(r => r.registration_id === rid && r.run_number === currentRunNumber && r.status === 'complete')
-    if (existingCompleted) {
-      if (!confirm(`This athlete already has a completed run for ${currentLabel}.  Start another run?`)) return
-    }
+    // v2.1.00 (Issue 4) -- the server now refuses a second run for the same
+    // (athlete, run_number) with a 409; the old confirm-and-proceed path is
+    // gone. Intentional re-runs go through Reopen on the existing run.
 
     setSaving(true); setError(''); setDupWarn(false)
     try {
@@ -3274,13 +3310,18 @@ function ScoringPanel({ event, registrations }) {
     finally { setReopening(false) }
   }
 
-  const cancelRun = async () => {
+  // v2.1.00 (Issue 6) -- Abandon Run: the operator escape hatch for a stuck
+  // run. Works regardless of how many scores exist; two-step confirm.
+  const abandonRun = async () => {
     if (!activeRun) return
-    if (!confirm('Cancel this run?  This will delete the run entirely.  This cannot be undone.')) return
-    setCanceling(true); setError('')
-    try { await api.deleteRun(event.id, activeRun.id); await loadAll() }
-    catch (err) { setError(err.message) }
-    finally { setCanceling(false) }
+    if (!abandonArmed) { setAbandonArmed(true); return }
+    setAbandoning(true); setError('')
+    try {
+      await api.abandonRun(event.id, activeRun.id)
+      setAbandonArmed(false)
+      await loadAll()
+    } catch (err) { setError(err.message) }
+    finally { setAbandoning(false) }
   }
 
   // Compute run order sections - filter by current run_number for phase-aware display
@@ -3334,6 +3375,25 @@ function ScoringPanel({ event, registrations }) {
                   Duplicate jump codes detected -- Jump 2 receives DD 0.00 (no credit for repeated jump).
                 </div>
               )}
+              {/* v2.1.00 (Issue 6) -- surface a stuck run immediately */}
+              {(() => {
+                if (!activeRun.created_at) return null
+                const started = Date.parse(activeRun.created_at.replace(' ', 'T') + (activeRun.created_at.endsWith('Z') ? '' : 'Z'))
+                if (isNaN(started)) return null
+                const mins = Math.floor((nowTick - started) / 60000)
+                const noScores = !(activeRun.submitted || []).length && activeRun.run_time == null
+                if (mins >= 3 && noScores) return (
+                  <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-800 rounded px-3 py-1.5">
+                    Run started {mins} minute{mins !== 1 ? 's' : ''} ago — no scores yet.  If this run is stuck, use Abandon Run.
+                  </div>
+                )
+                if (mins >= 10) return (
+                  <div className="mt-2 text-xs text-slate-500">
+                    Run started {mins} minutes ago.
+                  </div>
+                )
+                return null
+              })()}
             </div>
             {!isPaper && (
               <div className="text-right">
@@ -3354,16 +3414,31 @@ function ScoringPanel({ event, registrations }) {
               </div>
             )}
           </div>
-          {/* Undo Last Score / Cancel Run */}
-          <div className="mt-3 flex justify-end gap-2">
+          {/* Undo Last Score / Abandon Run */}
+          <div className="mt-3 flex justify-end gap-2 items-center">
+            {/* v2.1.00 (Issue 6) -- Abandon Run replaces Cancel Run: it works
+                regardless of score count (two-step confirm, audit-logged
+                server-side). The escape hatch for a stuck run. */}
+            {abandonArmed && (
+              <span className="text-xs text-red-400">
+                Delete this run and its {(activeRun.submitted || []).length} score(s)?  This cannot be undone.
+              </span>
+            )}
             <button
-              onClick={cancelRun}
-              disabled={canceling || (!activeRun.is_forerunner && activeRun.submitted && activeRun.submitted.length > 0)}
-              title={!activeRun.is_forerunner && activeRun.submitted && activeRun.submitted.length > 0 ? 'Cannot cancel: scores already submitted' : 'Cancel this run (no scores submitted)'}
-              className="btn-ghost text-xs text-red-400 border-red-800 hover:bg-red-900/20 disabled:opacity-30 disabled:cursor-not-allowed"
+              onClick={abandonRun}
+              disabled={abandoning}
+              title="Delete this run and all its judge scores (escape hatch for a stuck run)"
+              className={`btn-ghost text-xs disabled:opacity-30 disabled:cursor-not-allowed ${abandonArmed
+                ? 'text-white bg-red-700 border-red-600 hover:bg-red-600'
+                : 'text-red-400 border-red-800 hover:bg-red-900/20'}`}
             >
-              {canceling ? 'Canceling...' : 'Cancel Run'}
+              {abandoning ? 'Abandoning...' : abandonArmed ? 'Confirm Abandon' : 'Abandon Run'}
             </button>
+            {abandonArmed && (
+              <button onClick={() => setAbandonArmed(false)} className="btn-ghost text-xs text-slate-400">
+                Keep Run
+              </button>
+            )}
             <button
               onClick={undoLastScore}
               disabled={undoing || !(activeRun.submitted && activeRun.submitted.length > 0)}
@@ -3439,7 +3514,8 @@ function ScoringPanel({ event, registrations }) {
                                 {r.last_name}, {r.first_name}
                               </span>
                               <div className="flex gap-2 items-center">
-                                {idx === 0 && (
+                                {/* v2.1.00 (10c) -- Start Run / DNS follow the Chief-of-Score start permission */}
+                                {idx === 0 && canChiefStart && (
                                   <button
                                     onClick={() => startRun(r.id)}
                                     disabled={saving || (!isPaper && !!activeRun)}
@@ -3448,7 +3524,7 @@ function ScoringPanel({ event, registrations }) {
                                     {saving ? 'Starting...' : (!isPaper && activeRun) ? 'Run in progress' : 'Start Run'}
                                   </button>
                                 )}
-                                {idx === 0 && event.discipline !== 'dual_mogul' && (
+                                {idx === 0 && canChiefStart && event.discipline !== 'dual_mogul' && (
                                   <button
                                     onClick={async () => {
                                       if (!window.confirm(`Mark ${r.last_name}, ${r.first_name} as DNS?`)) return;
@@ -3597,7 +3673,8 @@ function ScoringPanel({ event, registrations }) {
                         {r.last_name}, {r.first_name}
                       </span>
                       <div className="flex gap-2 items-center">
-                        {idx === 0 && (
+                        {/* v2.1.00 (10c) -- Start Run / DNS follow the Chief-of-Score start permission */}
+                        {idx === 0 && canChiefStart && (
                           <button
                             onClick={() => startRun(r.id)}
                             disabled={saving || (!isPaper && !!activeRun)}
@@ -3606,7 +3683,7 @@ function ScoringPanel({ event, registrations }) {
                             {saving ? 'Starting...' : (!isPaper && activeRun) ? 'Run in progress' : 'Start Run'}
                           </button>
                         )}
-                        {idx === 0 && event.discipline !== 'dual_mogul' && (
+                        {idx === 0 && canChiefStart && event.discipline !== 'dual_mogul' && (
                           <button
                             onClick={async () => {
                               if (!window.confirm(`Mark ${r.last_name}, ${r.first_name} as DNS?`)) return;
@@ -3669,7 +3746,9 @@ function ScoringPanel({ event, registrations }) {
         )
       )}
 
-      {/* Manual / override start form */}
+      {/* Manual / override start form — v2.1.00 (10c): gated on the
+          Chief-of-Score start permission (all-off failsafe keeps it) */}
+      {canChiefStart && (
       <div className="card">
         <h3 className="font-display text-lg text-white mb-4">
           {hasPhases ? `Manual Start — ${currentLabel}` : hasOrder ? 'Manual Start / Override' : 'Start New Run'}
@@ -3705,6 +3784,7 @@ function ScoringPanel({ event, registrations }) {
           </button>
         </form>
       </div>
+      )}
 
       {/* Run history */}
       {runs.length > 0 && (
@@ -5293,6 +5373,27 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
   const [jumpCodes,     setJumpCodes]     = useState([])
   // v1.25.00 (C-5) — DNS/DNF/DSQ confirm before submitting
   const [statusConfirm, setStatusConfirm] = useState(null)
+  // v2.1.00 (Issue 7c) — the target round's finalized state: edits stay
+  // allowed but require an explicit confirmation and are audit-logged
+  // server-side ('edit_after_finalization').
+  const [finalizedRound, setFinalizedRound] = useState(null)   // { run_number, name } | null
+  const targetRunNumber = mode === 'edit' ? (run.run_number || 1) : runNumber
+  useEffect(() => {
+    fetch(`/api/events/${event.id}/runs/round-status`)
+      .then(r => r.ok ? r.json() : [])
+      .then(statuses => {
+        const s = (statuses || []).find(x => x.run_number === targetRunNumber && x.status === 'finalized')
+        setFinalizedRound(s ? { run_number: s.run_number, name: s.name || `Run ${s.run_number}` } : null)
+      })
+      .catch(() => {})
+  }, [])
+  const confirmFinalizedEdit = () => {
+    if (!finalizedRound) return true
+    return window.confirm(
+      `${finalizedRound.name} is FINALIZED.  Saving this score will change published rankings.  ` +
+      `This edit will be recorded in the audit log.  Continue?`
+    )
+  }
 
   // Fetch available jump codes for autocomplete; pre-populate edit fields
   useEffect(() => {
@@ -5388,6 +5489,7 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
   }
 
   const submitStatus = async (status) => {
+    if (!confirmFinalizedEdit()) { setStatusConfirm(null); return }
     setSaving(status.toLowerCase()); setError('')
     try {
       const body = { run_status: status }
@@ -5407,7 +5509,24 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
   const handleStatusClick = (status) => setStatusConfirm(status)
 
   const handleSubmit = async () => {
-    setError(''); setSaving('score')
+    setError('')
+
+    // v2.1.00 (Issue 7b) -- SOFT stop on implausible deductions (> 6.0, the
+    // full-fall maximum). Confirm, never refuse: on confirm the value is
+    // accepted as entered.
+    const bigDeds = tlJudges
+      .map((j, i) => ({ i: i + 1, ded: parseFloat(j.deduction) }))
+      .filter(x => !isNaN(x.ded) && x.ded > 6.0)
+    if (bigDeds.length > 0) {
+      const list = bigDeds.map(x => `TL-${x.i}: ${x.ded.toFixed(1)}`).join(', ')
+      if (!window.confirm(`Deduction${bigDeds.length > 1 ? 's' : ''} exceeding the full-fall maximum of 6.0 (${list}).  Are you sure?`)) return
+    }
+
+    // v2.1.00 (Issue 7c) -- warn (and audit server-side) when the round is
+    // already finalized; the edit stays allowed.
+    if (!confirmFinalizedEdit()) return
+
+    setSaving('score')
 
     // When component scoring is off, compute final from total - deduction
     const tlArr = isMogul && !componentScoring
@@ -5508,6 +5627,13 @@ function ManualScoreModal({ event, mode, run, registration, runNumber = 1, onClo
               <button onClick={onClose} className="text-slate-500 hover:text-slate-300 text-xl leading-none">×</button>
             </div>
           </div>
+
+          {/* v2.1.00 (Issue 7c) -- finalized-round notice */}
+          {finalizedRound && (
+            <div className="bg-amber-900/30 border border-amber-700 rounded-xl px-4 py-2.5 text-sm text-amber-400 font-semibold">
+              {finalizedRound.name} is finalized — saving will change published rankings (audit-logged).
+            </div>
+          )}
 
           {/* 1. Time — mogul only, at top */}
           {hasSpeed && (

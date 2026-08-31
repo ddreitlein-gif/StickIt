@@ -45,6 +45,8 @@ While a tablet-scored match is in progress, the operator can intercept with **Ma
 
 ### Bottom air landing zone — the "chop" rule (NJ)
 
+**This rule is off by default.** It is enabled per meet in the meet page's **Advanced** panel ("Landing Past the Lower Chop (NJ) rule") — the decision for the domestic season is not to use it, so unless a meet turns it on, every NJ control described below is hidden and the server refuses NJ calls. Historical matches that carry an NJ finding still display it everywhere.
+
 Per the Spring 2026 FIS rule (FS-18), each competitor must land the **bottom air within the Landing Zone** (maximum 20 meters from the takeoff, control gates at 20.5 meters). A competitor whose boots or body land past the mark receives **No Jump (NJ) on the bottom air and zero speed points**. If **both** competitors land past, they are tied for speed and both receive NJ.
 
 **Who makes the call:** the **Air Judge (J3)** — their dual tablet has an **NJ (Past Chop)** panel with independent Blue/Red toggles (each with a confirmation, on set and on clear). The **Head Judge** can also set or clear the call from the HJ tablet, and the flags are editable on the operator's Scoring tab and in the paper-score modal. The finding is locked once the HJ approves the match. The NJ call is independent of the air split — the Air Judge still submits a normal 5-point air comparison.
@@ -59,7 +61,7 @@ The Time Judge's tablet shows a persistent amber banner while an NJ call is acti
 ### Tied speed and tied air
 
 - **Time Tied** (J4 button/checkbox) — the speed comparison is tied. Since v1.29.00 the tied credit is **3 / 3** (previously displayed 0 / 0), so a tied-time match totals 25 points, not 19 — including historical matches. The Overall Judge splits 4. Winners are unaffected.
-- **Air Tied** (new J3 button/checkbox, FIS JH 6304.3.5.1) — the air comparison is tied, or neither competitor jumps. The six air votes are **withheld**: the air row pays **0 / 0** and the Overall Judge drops a point of scale. Note the deliberate handbook asymmetry — a speed tie awards the votes evenly (3 / 3) while an air tie withholds them (0 / 0).
+- **Air Tied** (J3 button/checkbox, FIS JH 6304.3.5.1) — the air comparison is tied, or neither competitor jumps. The six air votes are **withheld**: the air row pays **0 / 0** and the Overall Judge drops a point of scale. Note the deliberate handbook asymmetry — a speed tie awards the votes evenly (3 / 3) while an air tie withholds them (0 / 0). **Not allowed by default:** the meet's **Advanced** panel must enable "Air score tie allowed" or the button/checkbox is hidden and the server refuses the submission — the Air Judge must pick a winner.
 - If **both** speed and air are tied, the Overall Judge splits only **3** (their turns votes).
 
 Every distributed total (25 / 25 / 19 / 19) is odd, so a tied match remains impossible. Whenever a tie declaration or NJ transition changes the Overall Judge's scale, their submitted split is automatically cleared and their tablet prompts a rescore on the new scale.

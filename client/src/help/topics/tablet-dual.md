@@ -42,13 +42,13 @@ In dual mogul, the five judge roles are nominally:
 
 All five use the same 5-point split UI — the role labels are nominal, for FIS reporting structure. In practice each judge weighs their role's component but submits one combined split. Three roles have extra controls:
 
-- **DualAir (Judge 3)** — an **Air Tied** button (submits 0 / 0 with the air-tied flag when the air comparison is tied or neither competitor jumps; the air votes are withheld) and the **NJ (Past Chop)** panel described below.
+- **DualAir (Judge 3)** — an **Air Tied** button (submits 0 / 0 with the air-tied flag when the air comparison is tied or neither competitor jumps; the air votes are withheld) and the **NJ (Past Chop)** panel described below. **Both are gated by the meet's Advanced settings** and are hidden by default — Air Tied appears only when "Air score tie allowed" is on, and the NJ panel only when the "Landing Past the Lower Chop (NJ) rule" is on.
 - **DualTime (Judge 4)** — the **Time Tied** button. A time-tied entry records 0 / 0 but is credited **3 / 3** in every display and total (v1.29.00, FIS JH 6304.3.2 five-judge value).
 - **DualOverall (Judge 5)** — the split grid automatically switches between **5, 4, or 3 points** depending on the tie state: 5 with no ties, 4 when speed OR air is tied, 3 when both are. If a tie declaration or NJ change lands after the Overall Judge already submitted, their entry is cleared and the tablet prompts a rescore on the new scale.
 
 ### NJ (Past Chop) — Air Judge only
 
-Per FS-18, the bottom air must land within the 20 m Landing Zone. The Air Judge's tablet has an **NJ (Past Chop)** panel below the split grid with independent **Blue NJ** / **Red NJ** toggles:
+Per FS-18, the bottom air must land within the 20 m Landing Zone. **The rule is off by default** — the panel appears only when the meet's Advanced settings enable the NJ rule. When enabled, the Air Judge's tablet has an **NJ (Past Chop)** panel below the split grid with independent **Blue NJ** / **Red NJ** toggles:
 
 1. Tap the violator's toggle. A confirmation appears — "Mark [Name] as NJ, landed past chop? This sets their speed points to zero." (If the other side is already flagged, the confirm notes the result is a speed tie at 3 / 3.)
 2. Confirm. The call posts to the server immediately — it does not wait for, and is independent of, your air split.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.0.03
+**Current version:** v2.1.00
 
 ## Commands
 
@@ -225,6 +225,163 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.1.00 Feature Notes
+
+### RMF Mock Comp Fix Release (v2.1.00)
+
+Implements every fix from `StickIt_Mock_Comp_Findings_08-31-26.md` (forensics) per
+`StickIt_Mock_Comp_Fix_Prompt_08-31-26.md`, in the prescribed order, plus the new Advanced
+meet-settings panel. The mock comp will be redone against this build (data cleanup 7d/D-3 is a
+separate operational step, deliberately NOT performed here).
+
+**Issue 3 (CRITICAL) — HJ approve published a wrong total after a rejection.** The approve
+endpoint (`POST /:runId/approve`, `runs.js`) no longer infers completeness from a non-null
+`total_score` (which holds a stale PARTIAL after any rejection). Both paths now call
+`tryFinalize` and require a non-null result: tryFinalize is the completeness gate (explicit
+counts — `tlCount >= num_tl_judges`, per-jump air counts respecting `num_jumps`, time when
+`has_speed`, aerials equivalents) AND the recompute (fresh totals from the CURRENT
+`judge_scores` rows are stored before publish), curing the stale-partial-after-resubmit bug.
+Incomplete → 400 with the missing-scores breakdown (per-jump-aware; aerials gets a generic
+message; forerunners exempt so they can still be dismissed). **Partial totals stay in
+`runs.total_score` by design** — consumer audit documented at the reject site: every publishing
+consumer (results/phases/export/pdf/print/transmit/viewer/computeOverallRank/round-review)
+filters `status='complete'`, and complete is only reachable through recomputing paths.
+Client: the HJ tablet's **Finalize and Publish Score** button is disabled until the score set is
+complete, showing a "Waiting for scores: T&L 2/3 · Time pending" breakdown (new
+`scoreSetStatus` memo mirroring the server counts, incl. aerials legacy/v2).
+
+**Issue 5 — finalize counted run rows, not athletes.** `POST /round-status/:runNumber/finalize`
+(runs.js), `POST /:phaseId/finalize` (phases.js), and both computed-status endpoints
+(`GET /round-status`, `GET /phases/status`) now use `COUNT(DISTINCT registration_id)`; a
+duplicate row can no longer cover for an un-scored athlete. Both finalize endpoints additionally
+refuse while ANY non-forerunner run for that run_number is `status='scoring'`.
+
+**Issues 4+6 — run lifecycle guards, Abandon Run, stale-card refresh.**
+- `POST /events/:eventId/runs` refuses with **409** when a non-forerunner run already exists for
+  `(registration_id, run_number)` ("Bib 9 already has a Run 1 entry (complete). Refresh…"), and
+  refuses starting while another run is `status='scoring'` (matching the forerunner rule).
+  Scoped to non-dual disciplines (dual stores multiple rows per athlete); **paper mode is exempt
+  from the concurrency guard** (operators legitimately start consecutive runs). Enforced in code,
+  NOT a partial UNIQUE index: the discipline lives on `events` (SQLite partial indexes can't
+  reference another table) and the production DB already holds a historical duplicate that would
+  break index creation. `POST /runs/status-only` gets the same duplicate guard.
+- New **`POST /:runId/abandon`** (requireAuth, audit `run_abandoned` with score count): deletes
+  the run row AND its judge scores regardless of score count — the escape hatch DELETE /:runId
+  never was. Refuses complete runs (use Reopen/Edit). Officials UI only; no tablet button.
+  Client: the Scoring tab's Cancel Run button is replaced by **Abandon Run** with a two-step
+  arm/confirm, and the Currently Scoring card shows **"Run started N minutes ago — no scores
+  yet"** after 3 minutes so a stuck run is visible immediately.
+- HJ + Timekeeper tablets **re-fetch `/next-up` at Start Run press time** and start the athlete
+  the server returns (stale card auto-corrects), and refresh on `visibilitychange` so a
+  backgrounded iPad resuming never acts on a frozen card. Intentional re-runs remain
+  reopen-and-rescore; the Officials-UI confirm-and-start-another path was removed.
+
+**Issue 7a — float artifacts.** Net raw scores are rounded to 1 dp server-side on score submit
+(`POST /:runId/scores`) and in both manual-entry paths — values like `1.4000000000000004` are
+never stored.
+
+**Issue 7b — implausible deductions (SOFT stop).** A deduction > 6.0 (full-fall max) triggers a
+confirmation on the judge tablet (`submitScore`) and in `ManualScoreModal` — accepted as entered
+on confirm, never refused or capped.
+
+**Issue 7c — edits after finalization (WARNING + audit, not a block).** Manual entry/edit stays
+open after a round is finalized. `ManualScoreModal` shows an amber finalized-round notice and
+requires an explicit confirm on submit; the server writes an `edit_after_finalization` audit row
+(new `auditEditAfterFinalization` helper, wired into /manual scored + DNS paths, /manual-score
+edit + status paths, and the aerials-v2 handler). No reopen required.
+
+**D-1 — dual HJ DNS/DNF winner action.** Per David's ruling the HJ override stays possible even
+with all five judges scored — the fix is confirmation and protection, not refusal. Dual HJ
+tablet: the Blue/Red buttons (now a 6-button grid incl. the previously missing **DSQ**) open a
+confirm ("Record Blue DNF for [Name]? Red advances."), escalated when judge points exist ("5
+judges have scored this match (Red leads 18–7)…") with the strongest red styling/wording when
+the ruling CONTRADICTS the points winner. Server (`PUT /:matchId/winner`, dual.js): every manual
+winner call is audit-logged (`dual_manual_winner`) with the points state at the time
+(judge_count/totals/points_winner/contradicts_points); a match already `complete` (and therefore
+advanced — advanceWinner runs at completion) returns **409** unless `force: true` (Officials-UI
+escape; the paper-score edit path already handles completed matches, so no client sends force
+today).
+
+**D-2 — judge points into a completed match.** `POST /:matchId/judge-points` refuses when
+`match.status='complete'` ("Match already decided. Contact the Head Judge."), mirroring the
+mogul "Run already complete" guard.
+
+**Dual observability.** New `dual_judge_points.submitted_at` column (additive migration; in the
+sync manifest), set on insert AND refreshed on resubmit (mirroring `judge_scores.submitted_at`),
+also stamped by the paper-score insert path and round-tripped through meet import/merge.
+
+**Advanced meet settings panel (item 10).** New **Advanced** button next to Edit Meet Settings
+on the meet page opens `AdvancedSettingsModal` (`MeetDetail.jsx`). Four settings, all accepted by
+`PUT /api/meets/:id`, all copied on clone, all round-tripped through export/import
+(`executeImport` meets INSERT + `executeMerge` meets UPDATE with `?? default` legacy tolerance):
+- **10a `meets.nj_rule_enabled` (default 0 = OFF).** Gates the v1.29.00 FS-18 chop/NJ rule
+  meet-wide. When off: the J3 NJ panel (JudgeTablet), the HJ Set/Clear NJ toggles
+  (HeadJudgeTablet), the Scoring-tab NJ checkboxes, and the paper-modal NJ checkboxes are all
+  hidden, and the server refuses `POST /:matchId/nj` (clearing an existing call stays allowed).
+  Read side untouched: historical `nj_call` data still displays (banners/badges are
+  data-driven). The paper-score backstop permits NJ flags on a match that already carries an
+  `nj_call` so historical edits don't dead-end. Flags ride `GET /dual/active-match` for tablets.
+- **10b `meets.air_tie_allowed` (default 0 = NOT allowed).** When off, the J3 **Air Tied** button
+  and the paper-modal checkbox are hidden and the server refuses `air_tied` submissions (both
+  judge-points and paper-score; a match with an existing air-tied row may be re-saved). Time
+  Tied (J4) unaffected.
+- **10c `meets.start_run_timekeeper` / `start_run_head_judge` / `start_run_chief` (default all
+  1 = ON).** UI gating only (tablets stay on public endpoints per the access model): each flag
+  controls whether Start Run + its DNS companion render on that surface (TK tablet via
+  `/runs/info`, which now joins the meet flags; HJ tablet via the event GET's new
+  `meet_settings` block, incl. the dual next-pairing Start Run; Officials Scoring tab incl. the
+  manual-start form and dual Start Match). **Failsafe:** if all three are off, the Scoring tab
+  keeps its button (and the panel warns) so a meet can never be locked out.
+- **10d Venue adoption (relocated).** The Remote Judging checkbox moved out of Edit Meet
+  Settings into the Advanced panel as **"Allow venue server adoption"** (default ON = checked ⇔
+  `remote_judging=0` — inverted label, same column, all v2.0.00 semantics preserved: refused by
+  release-for-adoption when disallowed, locked once adopted via the adoption-lock middleware /
+  disabled Advanced button). `remote_judging` also now round-trips import/merge/clone.
+
+**Sync protocol v2.** The five new `meets` columns + `dual_judge_points.submitted_at` were added
+to the manifest in `server/sync/protocol.js` (they change venue scoring/UI behavior, so they must
+ride the adoption package, upsync, and checksums — NOT `NON_SYNC_COLUMNS`), and
+**`SYNC_PROTOCOL_VERSION` bumped 1 → 2**: column additions change row canonicalization and table
+checksums, so a mixed-version pair would fail check-in mysteriously — the version gate makes an
+outdated venue refuse adoption cleanly instead. No Pi image is published yet, so no fielded
+device is stranded.
+
+**Other server touches.** `GET /api/meets/:meetId/events/:id` (events.js) now attaches a
+`meet_settings` object; `GET /runs/info` carries `start_run_timekeeper`/`start_run_head_judge`.
+New api.js helper `abandonRun`.
+
+**Verification.** 59-check scratch-server integration test walking every fix: Issue 3
+(reject→no-resubmit→approve 400 with breakdown; reject→resubmit→approve publishes the fresh
+recomputation), Issue 5 (finalize blocked while scoring; a hand-injected duplicate complete row
+leaves 1/3 distinct athletes → 400; passes at 3/3), Issues 4+6 (409 duplicate incl. status-only
+and complete-run wording, 409 concurrency naming the on-course bib, paper-mode exemption +
+still-guarded duplicates, abandon deletes scores + audit row + refuses complete runs), 7a
+(1.4000000000000004 → 1.4), 7c (`edit_after_finalization` audit row), D-1 (override allowed on
+hj_pending with `dual_manual_winner` audit carrying points state + contradiction flag; complete
+match → 409; `force` works), D-2 (400 into complete match), NJ/Air-Tied gating end-to-end
+(refused by default, allowed after enabling, flags on active-match), `submitted_at` populated +
+import round-trip, Advanced settings PUT/clone/export→import round-trip, `/runs/info` +
+`meet_settings` flags, double-boot migration idempotence, venue-mode boot with
+`protocol_version: 2`. Harness: step0 87/87 (incl. the manifest drift test against the migrated
+schema), step2 58/58 (adoption package + cloud↔venue checksum parity), step4 52/52 (upsync; one
+timing-flaky latency-gate run under load passed clean on rerun). `verify_v16.js` 123/123. Help
+topics updated (meets-edit Advanced-panel table, events-dual NJ/air-tie gating, tablet-dual,
+tablet-hj dual confirm + DSQ + finalize gating + start-run behavior, tablet-time, scoring-manual
+guard rails + Abandon Run) and guide PDFs regenerated.
+
+**Files created:** none (all additive edits)
+**Files modified:** `server/routes/runs.js`, `server/routes/phases.js`, `server/routes/dual.js`,
+`server/routes/meets.js`, `server/routes/events.js`, `server/db/schema.js`,
+`server/sync/protocol.js`, `client/src/pages/HeadJudgeTablet.jsx`,
+`client/src/pages/TimekeeperTablet.jsx`, `client/src/pages/JudgeTablet.jsx`,
+`client/src/pages/EventDetail.jsx`, `client/src/pages/MeetDetail.jsx`, `client/src/utils/api.js`,
+`client/src/help/topics/{meets-edit,events-dual,tablet-dual,tablet-hj,tablet-time,scoring-manual}.md`,
+`server/public/docs/guides/*.pdf` (regenerated), `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

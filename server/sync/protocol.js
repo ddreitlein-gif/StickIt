@@ -24,7 +24,14 @@
 
 const crypto = require('crypto');
 
-const SYNC_PROTOCOL_VERSION = 1;
+// v2.1.00: bumped 1 → 2. The manifest gained meets.{nj_rule_enabled,
+// air_tie_allowed, start_run_timekeeper, start_run_head_judge, start_run_chief}
+// (Advanced meet settings — they change venue scoring/UI behavior, so they must
+// ride the adoption package and checksum) and dual_judge_points.submitted_at.
+// Column additions change row canonicalization and table checksums, so a
+// mixed-version pair would fail check-in mysteriously — the version gate makes
+// an outdated venue refuse adoption cleanly and prompt for an update instead.
+const SYNC_PROTOCOL_VERSION = 2;
 
 /**
  * Per-table manifest.
@@ -57,7 +64,7 @@ const SYNC_PROTOCOL_VERSION = 1;
 const TABLES = {
   meets: {
     pk: ['id'],
-    columns: ['id', 'name', 'location', 'date', 'status', 'created_at', 'updated_at', 'meet_ranking', 'short_code'],
+    columns: ['id', 'name', 'location', 'date', 'status', 'created_at', 'updated_at', 'meet_ranking', 'short_code', 'nj_rule_enabled', 'air_tie_allowed', 'start_run_timekeeper', 'start_run_head_judge', 'start_run_chief'],
     sync: true, checksum: true, snapshot: true, scope: 'self',
   },
   events: {
@@ -110,7 +117,7 @@ const TABLES = {
   },
   dual_judge_points: {
     pk: ['id'],
-    columns: ['id', 'match_id', 'judge_number', 'blue_points', 'red_points', 'created_at', 'updated_at', 'time_tied', 'air_tied'],
+    columns: ['id', 'match_id', 'judge_number', 'blue_points', 'red_points', 'created_at', 'updated_at', 'time_tied', 'air_tied', 'submitted_at'],
     sync: true, checksum: true, snapshot: true, scope: 'match',
   },
   heats: {

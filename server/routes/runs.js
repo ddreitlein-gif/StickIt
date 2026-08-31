@@ -126,10 +126,21 @@ router.get('/', async (req, res) => {
 });
 
 // GET event info (pace_time, course_length, gender, discipline) -- used by Timekeeper / Judge tablets
+// v2.1.00 -- carries the meet-level start-run permission flags (Advanced meet
+// settings, 10c) so the tablets know whether to render their Start Run button.
 router.get('/info', async (req, res) => {
   try {
-    const event = await queryOne('SELECT pace_time, course_length, gender, discipline, component_scoring, score_entry_mode, num_jumps, division FROM events WHERE id=?', [req.params.eventId]);
-    res.json(event ? { pace_time: event.pace_time, course_length: event.course_length, gender: event.gender, discipline: event.discipline, component_scoring: event.component_scoring, score_entry_mode: event.score_entry_mode, num_jumps: event.num_jumps, division: event.division } : null);
+    const event = await queryOne('SELECT pace_time, course_length, gender, discipline, component_scoring, score_entry_mode, num_jumps, division, meet_id FROM events WHERE id=?', [req.params.eventId]);
+    if (!event) return res.json(null);
+    let startRunTimekeeper = 1, startRunHeadJudge = 1;
+    try {
+      const meet = await queryOne('SELECT start_run_timekeeper, start_run_head_judge FROM meets WHERE id=?', [event.meet_id]);
+      if (meet) {
+        startRunTimekeeper = meet.start_run_timekeeper ?? 1;
+        startRunHeadJudge  = meet.start_run_head_judge ?? 1;
+      }
+    } catch (_) {}
+    res.json({ pace_time: event.pace_time, course_length: event.course_length, gender: event.gender, discipline: event.discipline, component_scoring: event.component_scoring, score_entry_mode: event.score_entry_mode, num_jumps: event.num_jumps, division: event.division, start_run_timekeeper: startRunTimekeeper, start_run_head_judge: startRunHeadJudge });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -524,7 +535,24 @@ async function handleAerialsV2Manual(req, res, event, { mode, run, registration_
     req.app.broadcast(event.id, 'run_updated', { id: runId, manually_entered: 1 });
   }
   try { await logAudit(mode === 'create' ? 'manual_run_scored' : 'manual_score_edited', 'run', runId, null, { total: result.total, aerials_model: 'v2' }); } catch (_) {}
+  await auditEditAfterFinalization(event.id, mode === 'create' ? run_number : run.run_number, runId, { total: result.total, path: 'aerials_v2_manual' });
   return res.status(mode === 'create' ? 201 : 200).json({ ok: true, run: saved });
+}
+
+// v2.1.00 (Mock Comp Issue 7c) -- score entry/edit stays OPEN after a round is
+// finalized (it was the rescue path for Molinaro at the RMF Mock), but every
+// such write is audit-logged so post-finalization ranking changes are traceable.
+// The client interposes a warning dialog; this is the server-side record.
+async function auditEditAfterFinalization(eventId, runNumber, runId, details = {}) {
+  try {
+    const rrs = await queryOne(
+      `SELECT status FROM run_round_status WHERE event_id=? AND run_number=?`,
+      [eventId, runNumber]
+    );
+    if (rrs && rrs.status === 'finalized') {
+      await logAudit('edit_after_finalization', 'run', runId, null, { run_number: runNumber, ...details });
+    }
+  } catch (_) {}
 }
 
 // v1.26.02 -- shared by POST /manual (requireAuth) and POST /status-only
@@ -570,6 +598,23 @@ router.post('/status-only', async (req, res) => {
       [registration_id, req.params.eventId]);
     if (!regCheck) return res.status(400).json({ error: 'registration_id does not belong to this event' });
 
+    // v2.1.00 (Issue 4) -- same stale-tablet duplicate guard as POST /runs:
+    // the tablet DNS button must not create a second row for an athlete who
+    // already has a run for this run_number.
+    if (event.discipline !== 'dual_mogul') {
+      const existingRun = await queryOne(
+        `SELECT r.status, reg.bib_number FROM runs r JOIN registrations reg ON reg.id = r.registration_id
+         WHERE r.event_id=? AND r.registration_id=? AND r.run_number=?`,
+        [req.params.eventId, registration_id, run_number]
+      );
+      if (existingRun) {
+        const stateWord = existingRun.status === 'complete' ? 'complete' : 'in progress';
+        return res.status(409).json({
+          error: `Bib ${existingRun.bib_number ?? '?'} already has a Run ${run_number} entry (${stateWord}).  Refresh and check the next-up athlete.`
+        });
+      }
+    }
+
     // Auto-activate event on first run (same as normal run start)
     try {
       if (event.status === 'setup') {
@@ -587,7 +632,7 @@ router.post('/manual', requireAuth, async (req, res) => {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const {
+    let {
       registration_id, run_number = 1, round = 'qualification',
       jump1_code, jump2_code,
       tl_scores = [], tl_components = [],
@@ -596,6 +641,12 @@ router.post('/manual', requireAuth, async (req, res) => {
       run_time, run_status,
       voice_transcript = null, // v1.20.00 -- populated when entered via voice; null for keyboard entry
     } = req.body;
+    // v2.1.00 (Issue 7a) -- round judge-resolution values to 1 dp so JS float
+    // artifacts (e.g. total − deduction) are never stored.
+    const round1 = a => a.map(v => (typeof v === 'number' && Number.isFinite(v)) ? Math.round(v * 10) / 10 : v);
+    tl_scores = round1(tl_scores); air_jump1_scores = round1(air_jump1_scores);
+    air_jump2_scores = round1(air_jump2_scores); form_scores = round1(form_scores);
+    landing_scores = round1(landing_scores);
 
     if (!registration_id) return res.status(400).json({ error: 'registration_id required' });
     const regCheck = await queryOne('SELECT id FROM registrations WHERE id=? AND event_id=?',
@@ -615,6 +666,7 @@ router.post('/manual', requireAuth, async (req, res) => {
 
     // DNS / DNF / DSQ path -- record status, no scores needed (shared helper, v1.26.02)
     if (run_status && ['DNS', 'DNF', 'DSQ'].includes(run_status)) {
+      await auditEditAfterFinalization(req.params.eventId, run_number, null, { run_status, registration_id, path: 'manual_status' });
       return await createStatusRun(req, res, { registration_id, run_number, round, run_status, voice_transcript });
     }
 
@@ -734,6 +786,7 @@ router.post('/manual', requireAuth, async (req, res) => {
       req.app.broadcast(req.params.eventId, 'run_updated', { id, manually_entered: 1 });
     }
     try { await logAudit('manual_run_scored', 'run', id, null, { total: result.total, registration_id }); } catch (_) {}
+    await auditEditAfterFinalization(req.params.eventId, run_number, id, { total: result.total, path: 'manual_entry' });
     return res.status(201).json({ ok: true, run: created });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -748,7 +801,7 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
     const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const {
+    let {
       jump1_code, jump2_code,
       tl_scores = [], tl_components = [],
       air_jump1_scores = [], air_jump2_scores = [],
@@ -756,6 +809,11 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
       run_time, run_status,
       voice_transcript = null, // v1.20.00 -- populated when entered via voice; null for keyboard edits
     } = req.body;
+    // v2.1.00 (Issue 7a) -- 1 dp rounding, same as POST /manual.
+    const round1Edit = a => a.map(v => (typeof v === 'number' && Number.isFinite(v)) ? Math.round(v * 10) / 10 : v);
+    tl_scores = round1Edit(tl_scores); air_jump1_scores = round1Edit(air_jump1_scores);
+    air_jump2_scores = round1Edit(air_jump2_scores); form_scores = round1Edit(form_scores);
+    landing_scores = round1Edit(landing_scores);
 
     const disc        = event.discipline === 'aerials' ? 'aerials' : 'mogul';
     const eventGender = event.gender || 'M';
@@ -774,6 +832,7 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
         req.app.broadcast(req.params.eventId, 'run_updated', updated);
       }
       try { await logAudit('manual_score_status', 'run', run.id, null, { run_status }); } catch (_) {}
+      await auditEditAfterFinalization(req.params.eventId, run.run_number, run.id, { run_status, path: 'manual_score_status' });
       return res.json({ ok: true, run: updated });
     }
 
@@ -897,6 +956,7 @@ router.post('/:runId/manual-score', requireAuth, async (req, res) => {
       req.app.broadcast(req.params.eventId, 'run_updated', updated);
     }
     try { await logAudit('manual_score_edited', 'run', run.id, null, { total: result.total }); } catch (_) {}
+    await auditEditAfterFinalization(req.params.eventId, run.run_number, run.id, { total: result.total, path: 'manual_score_edit' });
     res.json({ ok: true, run: updated });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -955,6 +1015,50 @@ router.post('/', async (req, res) => {
       [registration_id, req.params.eventId]
     );
     if (!regCheck) return res.status(400).json({ error: 'registration_id does not belong to this event' });
+
+    // v2.1.00 (Mock Comp Issues 4+6) -- run lifecycle guards. The server must
+    // not trust that the client's view of state is current (backgrounded iPad
+    // Safari freezes the next-up card): a stale Start Run press created a
+    // duplicate run for an already-scored athlete at the RMF Mock. Scoped to
+    // non-dual disciplines: dual mogul legitimately stores multiple run rows
+    // per athlete per bracket (which is also why this is enforced in code, not
+    // via a partial UNIQUE index — the discipline lives on the events table
+    // and SQLite partial indexes can't reference it; and the mock DB already
+    // holds a historical duplicate that would break index creation).
+    if (event.discipline !== 'dual_mogul') {
+      // Guard 1: refuse a second run for the same (athlete, run_number).
+      const existingRun = await queryOne(
+        `SELECT r.status, reg.bib_number FROM runs r JOIN registrations reg ON reg.id = r.registration_id
+         WHERE r.event_id=? AND r.registration_id=? AND r.run_number=?`,
+        [req.params.eventId, registration_id, run_number]
+      );
+      if (existingRun) {
+        const stateWord = existingRun.status === 'complete' ? 'complete' : 'in progress';
+        return res.status(409).json({
+          error: `Bib ${existingRun.bib_number ?? '?'} already has a Run ${run_number} entry (${stateWord}).  Refresh and start the next athlete.`
+        });
+      }
+      // Guard 2: block starting while another run is still scoring (matching
+      // the forerunner endpoint's long-standing rule). Paper mode is exempt —
+      // the operator legitimately starts consecutive runs while paper scores
+      // trickle in. The Officials-UI escape hatch for a stuck run is Abandon
+      // Run (POST /:runId/abandon).
+      if (event.score_entry_mode !== 'paper') {
+        const activeScoring = await queryOne(
+          `SELECT r.id, r.registration_id, reg.bib_number FROM runs r
+           LEFT JOIN registrations reg ON reg.id = r.registration_id
+           WHERE r.event_id=? AND r.status='scoring' LIMIT 1`,
+          [req.params.eventId]
+        );
+        if (activeScoring) {
+          const who = activeScoring.registration_id === '__forerunner__'
+            ? 'the forerunner' : `bib ${activeScoring.bib_number ?? '?'}`;
+          return res.status(409).json({
+            error: `A run is already in progress (${who}).  Finish it, or use Abandon Run on the Scoring tab if it is stuck.`
+          });
+        }
+      }
+    }
 
     // v1.9.00: Block starting run N+1 until prior phase/run is finalized
     if (run_number > 1 && event.discipline !== 'dual_mogul') {
@@ -1202,9 +1306,15 @@ router.post('/:runId/scores', async (req, res) => {
     if (!run) return res.status(404).json({ error: 'Run not found' });
     if (run.status === 'complete') return res.status(400).json({ error: 'Run already complete' });
 
-    const { judge_id, score_type, raw_score, pin, carving, abext, upper_body, deduction } = req.body;
+    let { judge_id, score_type, raw_score, pin, carving, abext, upper_body, deduction } = req.body;
     if (!judge_id || !score_type || raw_score === undefined) {
       return res.status(400).json({ error: 'judge_id, score_type, and raw_score required' });
+    }
+    // v2.1.00 (Mock Comp Issue 7a) -- judge inputs are 0.1-resolution, but the
+    // tablet computes net = components − deduction in JS floats, so values like
+    // 1.4000000000000004 were stored verbatim. Round to 1 dp server-side.
+    if (typeof raw_score === 'number' && Number.isFinite(raw_score)) {
+      raw_score = Math.round(raw_score * 10) / 10;
     }
     const judge = await queryOne('SELECT * FROM judges WHERE id=? AND event_id=?', [judge_id, req.params.eventId]);
     if (!judge) return res.status(403).json({ error: 'Judge not registered for this event' });
@@ -1533,47 +1643,50 @@ router.post('/:runId/approve', async (req, res) => {
     if (!run) return res.status(404).json({ error: 'Run not found' });
     if (run.status === 'complete') return res.status(400).json({ error: 'Run is already complete' });
 
-    // If scores are fully in and hj_pending is already set, just publish.
-    // If called manually (hj_pending=0, status=scoring), run tryFinalize first to
-    // compute whatever scores exist, then force-complete regardless of completeness.
-    if (!run.hj_pending) {
-      // Manual finalize path -- compute scores from whatever has been submitted so far
-      const finalResult = await tryFinalize(run, req.params.eventId);
-
-      // Guard: do not force-complete if scores could not be computed
-      const refreshed = await queryOne('SELECT * FROM runs WHERE id=?', [req.params.runId]);
-      if (refreshed.total_score == null) {
-        // Gather status info for error message
-        const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
-        const scores = await queryAll(
-          `SELECT js.score_type, j.role FROM judge_scores js JOIN judges j ON j.id=js.judge_id WHERE js.run_id=?`,
-          [run.id]
-        );
-        const tlCount = scores.filter(s => s.score_type === 'turns' && /^TL/.test(s.role)).length;
-        const airCount = Math.min(
-          scores.filter(s => s.score_type === 'air_jump1').length,
-          scores.filter(s => s.score_type === 'air_jump2').length
-        );
-        const hasTime = refreshed.run_time != null;
-        const needTL = event.num_tl_judges || 3;
-        const needAir = event.num_air_judges || 2;
-        return res.status(400).json({
-          error: `Cannot finalize: missing scores.  T&L: ${tlCount}/${needTL}, Air: ${airCount}/${needAir}, Time: ${hasTime ? 'received' : 'pending'}.  Use DNS/DNF/DSQ if the athlete did not complete the run.`
-        });
-      }
-
-      // Force status to complete
-      await execute(
-        `UPDATE runs SET status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=? AND event_id=?`,
-        [req.params.runId, req.params.eventId]
+    // v2.1.00 (Mock Comp Issue 3) -- NEVER infer completeness from a non-null
+    // total_score: after any HJ rejection the run row holds a PARTIAL running
+    // total (see the reject endpoint below), and a judge's plain resubmission
+    // does not refresh it, so the stored number can be both non-null and
+    // stale. That combination published a wrong total live (Bibby, RMF Mock
+    // 08-30-26: TL2's resubmission and both air scores missing from 47.78).
+    //
+    // The gate is now tryFinalize itself, on BOTH paths (hj_pending or not):
+    // it returns null unless the explicit completeness counts pass (tlCount >=
+    // num_tl_judges, per-jump air counts respecting num_jumps/num_air_judges,
+    // time when has_speed — and the aerials equivalents), and when they do
+    // pass it recomputes and stores fresh totals from the CURRENT judge_scores
+    // rows. Approving therefore always publishes a fresh computation.
+    const finalResult = await tryFinalize(run, req.params.eventId);
+    if (finalResult == null && run.registration_id !== '__forerunner__') {
+      // Incomplete -- build the missing-scores breakdown for the error.
+      const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
+      const refreshed = await queryOne('SELECT run_time FROM runs WHERE id=?', [req.params.runId]);
+      const scores = await queryAll(
+        `SELECT js.score_type, j.role FROM judge_scores js JOIN judges j ON j.id=js.judge_id WHERE js.run_id=?`,
+        [run.id]
       );
-    } else {
-      // Normal approval path -- all scores computed, just publish
-      await execute(
-        `UPDATE runs SET status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=? AND event_id=?`,
-        [req.params.runId, req.params.eventId]
-      );
+      const tlCount = scores.filter(s => s.score_type === 'turns' && /^TL/.test(s.role)).length;
+      const a1Count = scores.filter(s => s.score_type === 'air_jump1').length;
+      const a2Count = scores.filter(s => s.score_type === 'air_jump2').length;
+      const numJumps = event.num_jumps || 2;
+      const airCount = numJumps >= 2 ? Math.min(a1Count, a2Count) : a1Count;
+      const hasTime = refreshed.run_time != null;
+      const needTL = event.num_tl_judges || 3;
+      const needAir = event.num_air_judges || 2;
+      const timePart = event.has_speed ? `, Time: ${hasTime ? 'received' : 'pending'}` : '';
+      const detail = event.discipline === 'aerials'
+        ? 'Not all judges have submitted complete scores.'
+        : `T&L: ${tlCount}/${needTL}, Air: ${airCount}/${needAir}${timePart}.`;
+      return res.status(400).json({
+        error: `Cannot finalize: missing scores.  ${detail}  Use DNS/DNF/DSQ if the athlete did not complete the run.`
+      });
     }
+
+    // Counts passed and fresh totals are stored -- publish.
+    await execute(
+      `UPDATE runs SET status='complete', hj_pending=0, updated_at=datetime('now') WHERE id=? AND event_id=?`,
+      [req.params.runId, req.params.eventId]
+    );
 
     const updated = await queryOne('SELECT * FROM runs WHERE id=?', [req.params.runId]);
 
@@ -1636,6 +1749,41 @@ router.delete('/:runId', requireAuth, async (req, res) => {
     if (req.app.broadcast) req.app.broadcast(req.params.eventId, 'run_updated', { id: run.id, deleted: true });
     try { await logAudit('run_deleted', 'run', run.id, null, { registration_id: run.registration_id }); } catch (_) {}
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /:runId/abandon -- v2.1.00 (Mock Comp Issue 6): operator escape hatch
+// for a stuck run. Deletes the run row AND its judge scores regardless of how
+// many scores exist — unlike DELETE /:runId, which refuses once any score is
+// submitted. Officials UI only (requireAuth + two-step confirm client-side);
+// deliberately NOT exposed on any tablet.
+router.post('/:runId/abandon', requireAuth, async (req, res) => {
+  try {
+    const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status === 'complete') {
+      return res.status(400).json({ error: 'Run is already complete.  Use Reopen or Edit Score instead.' });
+    }
+
+    const scoreCount = await queryOne('SELECT COUNT(*) as cnt FROM judge_scores WHERE run_id=?', [run.id]);
+    await execute('DELETE FROM judge_scores WHERE run_id=?', [run.id]);
+    await execute('DELETE FROM runs WHERE id=?', [run.id]);
+
+    if (req.app.broadcast) {
+      req.app.broadcast(req.params.eventId, 'run_updated', { id: run.id, deleted: true, abandoned: true });
+      // Clear any tablet/overlay state still showing this run.
+      req.app.broadcast(req.params.eventId, 'score_update', { runId: run.id, abandoned: true, total: null });
+    }
+    try {
+      await logAudit('run_abandoned', 'run', run.id, null, {
+        registration_id: run.registration_id,
+        run_number: run.run_number,
+        deleted_scores: scoreCount ? parseInt(scoreCount.cnt) : 0,
+        run_time: run.run_time,
+        created_at: run.created_at,
+      });
+    } catch (_) {}
+    res.json({ ok: true, deleted_scores: scoreCount ? parseInt(scoreCount.cnt) : 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1803,7 +1951,17 @@ router.post('/:runId/scores/:judgeScoreId/reject', async (req, res) => {
       }
     }
 
-    // Reset run to pending / open for rescoring; store partial totals if available
+    // Reset run to pending / open for rescoring; store partial totals if available.
+    //
+    // v2.1.00 (Mock Comp Issue 3) -- audited and kept: these partial running
+    // totals stay in runs.total_score deliberately so tablets/scoreboard can
+    // show a live number while the run is open. Every consumer that PUBLISHES
+    // totals filters on status='complete' (results.js, phases.js, export.js,
+    // pdf.js, print.js, transmit.js, viewer.js, computeOverallRank,
+    // round-review), and a run can only reach status='complete' through paths
+    // that recompute from the stored judge rows (tryFinalize, the approve
+    // endpoint above, manual entry) or that null the totals (DNS/DNF/DSQ).
+    // So a stale partial can never be read as a final score.
     await execute(
       `UPDATE runs SET
         status='scoring',
@@ -1925,8 +2083,9 @@ router.get('/round-status', async (req, res) => {
     const totalAthletes = totalRow ? parseInt(totalRow.cnt) : 0;
 
     // Get all completed runs grouped by run_number
+    // v2.1.00 (Issue 5) -- DISTINCT athletes, not rows (duplicate-run safety)
     const runStats = await queryAll(
-      `SELECT run_number, COUNT(*) as completed
+      `SELECT run_number, COUNT(DISTINCT registration_id) as completed
        FROM runs WHERE event_id=? AND status='complete'
        GROUP BY run_number ORDER BY run_number`,
       [eventId]
@@ -2006,13 +2165,24 @@ router.post('/round-status/:runNumber/finalize', async (req, res) => {
     const eventId = req.params.eventId;
     const runNumber = parseInt(req.params.runNumber);
 
-    // Verify all athletes are complete for this run
+    // Verify all athletes are complete for this run.
+    // v2.1.00 (Mock Comp Issue 5) -- count DISTINCT athletes, not run rows: a
+    // duplicate run row for one athlete must never cover for an un-scored
+    // athlete (that let Run 1 finalize with Molinaro still on course, RMF Mock
+    // 08-30-26). And an athlete mid-run ALWAYS blocks finalize.
+    const scoringRow = await queryOne(
+      `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='scoring' AND registration_id != '__forerunner__'`,
+      [eventId, runNumber]
+    );
+    if (scoringRow && parseInt(scoringRow.cnt) > 0) {
+      return res.status(400).json({ error: `Cannot finalize: ${scoringRow.cnt} run(s) still in scoring. Finish or abandon them first.` });
+    }
     const totalRow = await queryOne(
       `SELECT COUNT(*) as cnt FROM registrations WHERE event_id=? AND status='registered'`,
       [eventId]
     );
     const completedRow = await queryOne(
-      `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
+      `SELECT COUNT(DISTINCT registration_id) as cnt FROM runs WHERE event_id=? AND run_number=? AND status='complete'`,
       [eventId, runNumber]
     );
     const total = totalRow ? parseInt(totalRow.cnt) : 0;

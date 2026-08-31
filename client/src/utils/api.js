@@ -147,6 +147,9 @@ export const api = {
   approveRun: (eventId, runId) => apiFetch(`/events/${eventId}/runs/${runId}/approve`, { method: 'POST' }),
   undoLastScore: (eventId, runId) => apiFetch(`/events/${eventId}/runs/${runId}/scores/last`, { method: 'DELETE' }),
   reopenRun: (eventId, runId) => apiFetch(`/events/${eventId}/runs/${runId}/reopen`, { method: 'POST' }),
+  // v2.1.00 -- Officials-only escape hatch for a stuck run: deletes the run
+  // and its judge scores regardless of score count (Mock Comp Issue 6).
+  abandonRun: (eventId, runId) => apiFetch(`/events/${eventId}/runs/${runId}/abandon`, { method: 'POST' }),
   getRunScores: (eventId, runId) => apiFetch(`/events/${eventId}/runs/${runId}/scores`),
   manualEntry: (eventId, data) => apiFetch(`/events/${eventId}/runs/manual`, { method: 'POST', body: data }),
   manualScore: (eventId, runId, data) => apiFetch(`/events/${eventId}/runs/${runId}/manual-score`, { method: 'POST', body: data }),

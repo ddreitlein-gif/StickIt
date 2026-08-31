@@ -34,6 +34,15 @@ Each input has +/- buttons for fine tune. The running calculated total updates l
 
 A **Submit** button persists the run. A **Cancel** button discards. A **Status Override** lets you submit DNS / DNF / DSQ instead of a numeric score — each asks for confirmation first, so a stray tap can't zero out an athlete.
 
+Two guard rails on submit:
+
+- **Implausible deductions** — a deduction above the full-fall maximum of 6.0 (almost always a score typed into the deduction field) triggers a confirmation. On confirm the value is accepted as entered — it is never refused or capped. The same soft stop exists on the judge tablets.
+- **Finalized rounds** — if the run's round is already finalized, an amber notice appears in the modal and Submit asks for explicit confirmation ("…saving will change published rankings"). The edit stays allowed — it is the rescue path for a missed athlete — and every post-finalization edit is recorded in the audit log (`edit_after_finalization`).
+
+### Abandoning a stuck run
+
+If a run gets stuck in scoring (started during an outage, judges never submitted, the wrong athlete was started), the **Currently Scoring** panel on the Scoring tab has an **Abandon Run** button. It deletes the run and all of its judge scores regardless of how many were submitted — a two-step confirm, audit-logged, and available only from the Officials UI (never on a tablet). The panel also warns when a run has been sitting for several minutes with no scores, so a stuck run is visible immediately. Note that while a run is in scoring, no new run can be started (tablet mode) and the round cannot be finalized — Abandon Run is the escape hatch.
+
 ### Aerials manual entry
 
 Aerials events (panel size set, per-judge-per-jump scoring) get their own manual entry modal: a grid of one column per scoring judge × one row group per jump, with Air / Form / Landing inputs mirroring the Head Judge tablet's layout. Jump-code pickers, range validation, and confirmed DNS/DNF/DSQ overrides are all built in. Editing an existing run pre-populates every judge's values. The total is computed by the exact same engine path as tablet scoring.

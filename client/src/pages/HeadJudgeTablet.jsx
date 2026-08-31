@@ -173,7 +173,7 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
 }
 
 // ── Dual Mogul Head Judge View ────────────────────────────────────────────────
-function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
+function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
   const [activeMatch,  setActiveMatch]  = useState(null)
   const [judgePoints,  setJudgePoints]  = useState([])
   const [pointResult,  setPointResult]  = useState(null)
@@ -421,9 +421,43 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
     }
   }
 
+  // v2.1.00 (Mock Comp D-1) -- Blue/Red DNS/DNF/DSQ ruling with confirmation
+  // (matching the mogul v1.16.16 pattern) and an escalated warning when judge
+  // points already exist. The HJ override is legitimate even with all five
+  // judges scored (David's ruling) — the guard is a confirm, not a refusal.
+  const [dualStatusConfirm, setDualStatusConfirm] = useState(null)   // { side, status }
+  const sideName = (side) => side === 'blue'
+    ? `${activeMatch?.blue_first || ''} ${activeMatch?.blue_last || ''}`.trim() || 'Blue'
+    : `${activeMatch?.red_first || ''} ${activeMatch?.red_last || ''}`.trim() || 'Red'
+
+  const recordDualStatus = async (side, status) => {
+    if (!activeMatch) return
+    setSettingStatus(true); setError(''); setStatusMsg('')
+    try {
+      const winnerId = side === 'blue' ? activeMatch.registration_id_red : activeMatch.registration_id_blue
+      const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner_registration_id: winnerId, loser_status: status }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j.error || `Server error ${res.status}`)
+      }
+      await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
+      setStatusMsg(`${side === 'blue' ? 'Blue' : 'Red'} ${status} recorded.  ${side === 'blue' ? 'Red' : 'Blue'} advances.`)
+      await loadMatch()
+    } catch (e) { setError(e.message) }
+    finally { setSettingStatus(false); setDualStatusConfirm(null) }
+  }
+
   const matchComplete = activeMatch?.status === 'complete'
   const hjPending = activeMatch?.status === 'hj_pending'
   const hasWinner = pointResult && pointResult.winner
+  // v2.1.00 (10a) -- NJ set/clear controls only when the meet's Advanced
+  // setting enables the FS-18 chop rule. Data-driven displays (banner, badges)
+  // stay untouched so historical NJ calls still render.
+  const njRuleEnabled = (activeMatch?.nj_rule_enabled ?? 0) !== 0
   // v1.29.00 -- effective (NJ-overridden / tie-credited) per-judge values
   const effByJudge = {}
   for (const s of (pointResult?.effectiveBreakdown || [])) effByJudge[s.judgeNumber] = s
@@ -543,13 +577,16 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                 )}
               </div>
             </div>
-            <button
-              onClick={startNextRun}
-              disabled={startingNext}
-              className="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
-            >
-              {startingNext ? 'Starting...' : 'Start Run'}
-            </button>
+            {/* v2.1.00 (10c) -- render only when the HJ may start runs */}
+            {(eventCfg?.meet_settings?.start_run_head_judge ?? 1) !== 0 && (
+              <button
+                onClick={startNextRun}
+                disabled={startingNext}
+                className="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
+              >
+                {startingNext ? 'Starting...' : 'Start Run'}
+              </button>
+            )}
           </div>
         )}
 
@@ -608,7 +645,7 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                 </div>
               </div>
             )}
-            {!matchComplete && (
+            {!matchComplete && njRuleEnabled && (
               <div className="bg-slate-900 rounded-2xl px-5 py-3 border border-slate-700 mb-4">
                 <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-2">NJ (Past Chop) — Landing Zone</div>
                 <div className="grid grid-cols-2 gap-3">
@@ -836,98 +873,74 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc }) {
                   </button>
                 )}
 
-                {/* DNS / DNF for match */}
+                {/* DNS / DNF / DSQ for match — v2.1.00 (D-1): confirm first,
+                    with an escalated warning when judge points already exist */}
                 {!matchComplete && (
                   <div className="bg-slate-900 rounded-2xl p-4 border border-slate-700">
                     <div className="text-xs text-slate-400 uppercase tracking-wide mb-3 font-semibold">Set Match Status</div>
                     <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={async () => {
-                          setSettingStatus(true); setError(''); setStatusMsg('')
-                          try {
-                            const winnerId = activeMatch.registration_id_red
-                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNS' }),
-                            })
-                            if (!res.ok) throw new Error('Failed')
-                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Blue DNS recorded.  Red advances.')
-                            await loadMatch()
-                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
-                        }}
-                        disabled={settingStatus}
-                        className="py-3 rounded-xl font-bold text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/60 border border-blue-800 disabled:opacity-50 transition-colors text-sm"
-                      >
-                        Blue DNS
-                      </button>
-                      <button
-                        onClick={async () => {
-                          setSettingStatus(true); setError(''); setStatusMsg('')
-                          try {
-                            const winnerId = activeMatch.registration_id_blue
-                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNS' }),
-                            })
-                            if (!res.ok) throw new Error('Failed')
-                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Red DNS recorded.  Blue advances.')
-                            await loadMatch()
-                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
-                        }}
-                        disabled={settingStatus}
-                        className="py-3 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors text-sm"
-                      >
-                        Red DNS
-                      </button>
-                      <button
-                        onClick={async () => {
-                          setSettingStatus(true); setError(''); setStatusMsg('')
-                          try {
-                            const winnerId = activeMatch.registration_id_red
-                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNF' }),
-                            })
-                            if (!res.ok) throw new Error('Failed')
-                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Blue DNF recorded.  Red advances.')
-                            await loadMatch()
-                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
-                        }}
-                        disabled={settingStatus}
-                        className="py-3 rounded-xl font-bold text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/60 border border-blue-800 disabled:opacity-50 transition-colors text-sm"
-                      >
-                        Blue DNF
-                      </button>
-                      <button
-                        onClick={async () => {
-                          setSettingStatus(true); setError(''); setStatusMsg('')
-                          try {
-                            const winnerId = activeMatch.registration_id_blue
-                            const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/winner`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ winner_registration_id: winnerId, loser_status: 'DNF' }),
-                            })
-                            if (!res.ok) throw new Error('Failed')
-                            await fetch(`${API}/events/${eventId}/dual/active-match`, { method: 'DELETE' })
-                            setStatusMsg('Red DNF recorded.  Blue advances.')
-                            await loadMatch()
-                          } catch (e) { setError(e.message) } finally { setSettingStatus(false) }
-                        }}
-                        disabled={settingStatus}
-                        className="py-3 rounded-xl font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border border-red-800 disabled:opacity-50 transition-colors text-sm"
-                      >
-                        Red DNF
-                      </button>
+                      {['DNS', 'DNF', 'DSQ'].flatMap(st => (
+                        ['blue', 'red'].map(side => (
+                          <button
+                            key={`${side}-${st}`}
+                            onClick={() => { setDualStatusConfirm({ side, status: st }); setError(''); setStatusMsg('') }}
+                            disabled={settingStatus}
+                            className={`py-3 rounded-xl font-bold border disabled:opacity-50 transition-colors text-sm ${side === 'blue'
+                              ? 'text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/60 border-blue-800'
+                              : 'text-red-400 bg-red-900/30 hover:bg-red-900/50 active:bg-red-900/60 border-red-800'}`}
+                          >
+                            {side === 'blue' ? 'Blue' : 'Red'} {st}
+                          </button>
+                        ))
+                      ))}
                     </div>
+                    {dualStatusConfirm && (() => {
+                      const { side, status } = dualStatusConfirm
+                      const other = side === 'blue' ? 'Red' : 'Blue'
+                      const sideLabel = side === 'blue' ? 'Blue' : 'Red'
+                      const scoredCount = judgePoints.length
+                      const contradicts = pointResult?.winner && pointResult.winner === side
+                      const leadText = pointResult && scoredCount > 0
+                        ? (pointResult.blueTotal === pointResult.redTotal
+                          ? `tied ${pointResult.blueTotal}–${pointResult.redTotal}`
+                          : `${pointResult.blueTotal > pointResult.redTotal ? 'Blue' : 'Red'} leads ${Math.max(pointResult.blueTotal, pointResult.redTotal)}–${Math.min(pointResult.blueTotal, pointResult.redTotal)}`)
+                        : null
+                      return (
+                        <div className={`mt-3 rounded-xl border px-4 py-3 space-y-3 ${contradicts ? 'border-red-600 bg-red-900/30' : 'border-amber-700 bg-amber-900/20'}`}>
+                          <div className={`text-sm font-semibold ${contradicts ? 'text-red-300' : 'text-amber-300'}`}>
+                            Record {sideLabel} {status} for {sideName(side)}?  {other} advances.
+                          </div>
+                          {scoredCount > 0 && (
+                            <div className={`text-sm font-bold ${contradicts ? 'text-red-300' : 'text-amber-400'}`}>
+                              {scoredCount} judge{scoredCount !== 1 ? 's have' : ' has'} scored this match{leadText ? ` (${leadText})` : ''}.
+                              {contradicts
+                                ? `  Recording ${sideLabel} ${status} OVERRIDES the judged result — ${sideName(side)} currently wins on points.  Confirm?`
+                                : `  Recording ${sideLabel} ${status} replaces the judged outcome for this match.`}
+                            </div>
+                          )}
+                          <div className="flex gap-3">
+                            <button
+                              onClick={() => recordDualStatus(side, status)}
+                              disabled={settingStatus}
+                              className={`flex-1 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-colors text-sm ${contradicts
+                                ? 'bg-red-600 hover:bg-red-500 active:bg-red-700'
+                                : 'bg-amber-600 hover:bg-amber-500 active:bg-amber-700'}`}
+                            >
+                              {settingStatus ? 'Recording...' : `Confirm ${sideLabel} ${status}`}
+                            </button>
+                            <button
+                              onClick={() => setDualStatusConfirm(null)}
+                              disabled={settingStatus}
+                              className="flex-1 bg-slate-700 hover:bg-slate-600 active:bg-slate-500 disabled:opacity-50 text-slate-200 font-bold py-2.5 rounded-xl transition-colors text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })()}
                     <p className="text-xs text-slate-600 mt-2 text-center">
-                      Advances the opponent without requiring judge scores.
+                      Advances the opponent without requiring judge scores.  The Head Judge's ruling has final say.
                     </p>
                   </div>
                 )}
@@ -1049,14 +1062,27 @@ export default function HeadJudgeTablet() {
     } catch { setNextUp(null) }
   }
 
+  // v2.1.00 (Mock Comp Issue 4) -- re-fetch /next-up at press time and start
+  // the athlete the SERVER returns, never the cached card: a backgrounded iPad
+  // freezes timers, so the card can be minutes stale. The server also 409s on
+  // duplicates as a backstop.
   const startNextRun = async () => {
     if (!nextUp) return
     setStartingNext(true); setError(''); setStatusMsg('')
     try {
+      const fresh = await fetch(`${API}/events/${eventId}/runs/next-up`).then(r => r.ok ? r.json() : null).catch(() => null)
+      if (!fresh?.id) {
+        setNextUp(null)
+        throw new Error('No next-up athlete — the queue may have changed. Card refreshed.')
+      }
+      if (fresh.id !== nextUp.id) {
+        setNextUp(fresh)
+        setStatusMsg(`Next-up card was stale — refreshed to bib ${fresh.bib_number}. Starting ${fresh.last_name}, ${fresh.first_name}.`)
+      }
       const res = await fetch(`${API}/events/${eventId}/runs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ registration_id: nextUp.id, run_number: nextUp.run_number || 1, round: 'qualification' }),
+        body: JSON.stringify({ registration_id: fresh.id, run_number: fresh.run_number || 1, round: 'qualification' }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -1111,7 +1137,11 @@ export default function HeadJudgeTablet() {
     checkReviewStatus()
     fetchNextUp()
     pollRef.current = setInterval(() => { loadActive(); checkReviewStatus(); fetchNextUp() }, 3000)
-    return () => clearInterval(pollRef.current)
+    // v2.1.00 (Issue 4) -- iOS Safari suspends timers in backgrounded tabs, so
+    // the next-up card freezes. Refresh immediately when the tab resumes.
+    const onVisible = () => { if (!document.hidden) { loadActive(); fetchNextUp(); checkReviewStatus() } }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(pollRef.current); document.removeEventListener('visibilitychange', onVisible) }
   }, [eventId, resolving])
 
   useEffect(() => {
@@ -1348,11 +1378,59 @@ export default function HeadJudgeTablet() {
     return { turnsVal, airVal, speedVal, hasSpeed, total }
   }, [activeRun, submitted, eventCfg])
 
+  // v2.1.00 (Mock Comp Issue 3) -- explicit completeness of the score set,
+  // mirroring the server's approve gate. Drives the Finalize button: it is
+  // DISABLED (with the missing-scores breakdown shown) until every required
+  // score is in, so an incomplete/stale-partial run can never be published
+  // from this tablet. Aerials v2 completeness is judged server-side; here we
+  // check panel coverage of the ae_* rows.
+  const scoreSetStatus = useMemo(() => {
+    if (!activeRun || !eventCfg) return { complete: false, missing: [] }
+    const missing = []
+    if (eventCfg.discipline === 'aerials' && eventCfg.aerials_panel_size != null) {
+      const panel = parseInt(eventCfg.aerials_panel_size) || 5
+      const nJumps = eventCfg.num_jumps || 2
+      const needTypes = nJumps >= 2
+        ? ['ae_air_j1', 'ae_form_j1', 'ae_land_j1', 'ae_air_j2', 'ae_form_j2', 'ae_land_j2']
+        : ['ae_air_j1', 'ae_form_j1', 'ae_land_j1']
+      const byJudge = {}
+      for (const s of submitted) {
+        if (!/^ae_/.test(s.score_type)) continue
+        ;(byJudge[s.judge_id] = byJudge[s.judge_id] || new Set()).add(s.score_type)
+      }
+      const completeJudges = Object.values(byJudge).filter(set => needTypes.every(t => set.has(t))).length
+      if (completeJudges < panel) missing.push(`Judges complete: ${completeJudges}/${panel}`)
+    } else if (eventCfg.discipline === 'aerials') {
+      const needForm = eventCfg.num_tl_judges || 1
+      const needLand = eventCfg.num_air_judges || 1
+      const needAir  = eventCfg.num_air_judges || 1
+      const formCount = submitted.filter(s => s.score_type === 'form').length
+      const landCount = submitted.filter(s => s.score_type === 'landing').length
+      const a1 = submitted.filter(s => s.score_type === 'air_jump1').length
+      const a2 = submitted.filter(s => s.score_type === 'air_jump2').length
+      if (formCount < needForm) missing.push(`Form ${formCount}/${needForm}`)
+      if (a1 < needAir || a2 < needAir) missing.push(`Air ${Math.min(a1, a2)}/${needAir}`)
+      if (landCount < needLand) missing.push(`Landing ${landCount}/${needLand}`)
+    } else {
+      const needTL  = eventCfg.num_tl_judges || 3
+      const needAir = eventCfg.num_air_judges || 2
+      const nJumps  = eventCfg.num_jumps || 2
+      const tlCount = submitted.filter(s => s.score_type === 'turns' && /^TL/.test(s.role)).length
+      const a1 = submitted.filter(s => s.score_type === 'air_jump1').length
+      const a2 = submitted.filter(s => s.score_type === 'air_jump2').length
+      const airCount = nJumps >= 2 ? Math.min(a1, a2) : a1
+      if (tlCount < needTL) missing.push(`T&L ${tlCount}/${needTL}`)
+      if (airCount < needAir) missing.push(`Air ${airCount}/${needAir}`)
+      if (eventCfg.has_speed && activeRun.run_time == null) missing.push('Time pending')
+    }
+    return { complete: missing.length === 0, missing }
+  }, [activeRun, submitted, eventCfg])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   // Dual mogul: use completely different view
   if (eventCfg && eventCfg.discipline === 'dual_mogul') {
-    return <DualHeadJudgeView meetId={meetId} eventId={eventId} hc={hc} toggleHc={toggleHc} />
+    return <DualHeadJudgeView meetId={meetId} eventId={eventId} hc={hc} toggleHc={toggleHc} eventCfg={eventCfg} />
   }
 
   // v1.16.13: Event completed — show final results + finalize button
@@ -1641,6 +1719,9 @@ export default function HeadJudgeTablet() {
                 <div className="text-xs text-slate-500 uppercase tracking-wide">Next Up{nextUp.phase_label ? ` — ${nextUp.phase_label}` : ''}</div>
                 <div className="text-xl font-bold text-white">{nextUp.last_name}, {nextUp.first_name}</div>
                 <div className="text-sm text-slate-400">Bib #{nextUp.bib_number} {nextUp.run_order != null && <span className="ml-2">Order: {nextUp.run_order}</span>}</div>
+                {/* v2.1.00 (10c) -- Start Run / DNS render only when the meet's
+                    Advanced settings allow the Head Judge to start runs */}
+                {(eventCfg?.meet_settings?.start_run_head_judge ?? 1) !== 0 && (
                 <div className="flex gap-2">
                   <button
                     onClick={startNextRun}
@@ -1669,6 +1750,7 @@ export default function HeadJudgeTablet() {
                     DNS
                   </button>
                 </div>
+                )}
               </div>
             )}
           </div>
@@ -2251,18 +2333,27 @@ export default function HeadJudgeTablet() {
                 </>
               )}
 
-              {/* Finalize button */}
+              {/* Finalize button — v2.1.00 (Issue 3): disabled until the score
+                  set is complete; the server recomputes from stored rows on
+                  approve, so this can never publish a stale partial. */}
               {!awaitingApproval && activeRun.status !== 'complete' && (
                 <div className="space-y-2">
+                  {!scoreSetStatus.complete && (
+                    <div className="bg-amber-900/30 border border-amber-800 rounded-xl px-4 py-3 text-sm text-amber-400 font-semibold">
+                      Waiting for scores: {scoreSetStatus.missing.join(' · ')}
+                    </div>
+                  )}
                   <button
                     onClick={finalizeScore}
-                    disabled={finalizing}
-                    className="w-full bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-2xl transition-colors"
+                    disabled={finalizing || !scoreSetStatus.complete}
+                    className="w-full bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors"
                   >
                     {finalizing ? 'Finalizing...' : 'Finalize and Publish Score'}
                   </button>
                   <p className="text-xs text-amber-600 text-center px-2">
-                    Use Finalize only if all judges have submitted -- this will publish whatever scores are currently recorded.
+                    {scoreSetStatus.complete
+                      ? 'All scores are in — Finalize recomputes and publishes from the submitted scores.'
+                      : 'Finalize unlocks when every judge score (and time) is in.  Use DNS/DNF/DSQ for an athlete who did not complete the run.'}
                   </p>
                 </div>
               )}

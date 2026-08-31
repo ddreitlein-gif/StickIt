@@ -357,7 +357,9 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                     Time Tied
                   </button>
                 )}
-                {judgeNum === 3 && (
+                {/* v2.1.00 (10b) -- Air Tied only when the meet's Advanced
+                    setting allows it (default: not allowed) */}
+                {judgeNum === 3 && (activeMatch?.air_tie_allowed ?? 0) !== 0 && (
                   <button
                     type="button"
                     onClick={() => submitSplit(0, 0, false, true)}
@@ -396,7 +398,10 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 Two independent toggles reflecting SERVER state; each confirmed
                 change posts at once, independent of the air split, and stays
                 editable until HJ approval. */}
-            {judgeNum === 3 && (
+            {/* v2.1.00 (10a) -- NJ controls only when the meet's Advanced
+                setting enables the FS-18 chop rule (default: disabled).
+                Data-driven displays (banner, badges) are untouched. */}
+            {judgeNum === 3 && (activeMatch?.nj_rule_enabled ?? 0) !== 0 && (
               <div className="tablet-card" style={{ padding: 18 }}>
                 <div className="text-sm font-semibold uppercase tracking-wide mb-1" style={{ color: '#fff' }}>
                   NJ (Past Chop)
@@ -839,6 +844,14 @@ export default function JudgeTablet() {
   const submitScore = async () => {
     if (!activeRun || !judgeId) return
     setError('')
+
+    // v2.1.00 (Mock Comp Issue 7b) -- SOFT stop on implausible deductions: the
+    // presets top out at 6.0 (stop/fall), so anything beyond is almost always
+    // a score typed into the deduction field. Confirm, never refuse.
+    if (isTurns && (deduction || 0) > 6.0) {
+      const ok = window.confirm(`Deduction of ${(deduction || 0).toFixed(1)} exceeds the full-fall maximum of 6.0.  Are you sure?`)
+      if (!ok) return
+    }
 
     const submissions = []
     if (isTurns) {
