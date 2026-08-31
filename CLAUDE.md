@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.0.02
+**Current version:** v2.0.03
 
 ## Commands
 
@@ -225,6 +225,42 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.0.03 Feature Notes
+
+### Set Run Order Button on Phase Cards (v2.0.03, hotfix)
+
+Second RMF Mock live blocker (08-30-26): Run 1 finalized but no way to set Run 2's order.
+Root cause: the run order of a later phase is only choosable inside the "+ Add Next Phase"
+dialog — but the mock meet's import zip pre-created BOTH phases ("Run 1" + a "Run 2"
+best_of_2 phase with an EMPTY `phase_run_order`), so the Add button never appears and there
+was literally no button anywhere to (re)build the order. Any imported meet with pre-built
+future phases hits this.
+
+**New endpoint `POST /api/events/:eventId/phases/:phaseId/rebuild-order`** (requireAuth +
+lockCheck via the router guards) body `{ run_order_method }`. Guards: 404 unknown; 400 for
+run 1 / sequence 1 ("managed on the Registration tab"), finalized/hj_review phases, and any
+phase whose run_number already has runs rows (started). Recomputes eligibility + prior
+ranking exactly like phase creation via the new shared helper `computeEligibleForPhase()`
+(the eligibility block was extracted verbatim from POST /phases — creation path
+regression-tested), rebuilds via `buildRunOrder`, replaces the phase's `phase_run_order`
+rows, updates `run_order_method` if changed, broadcasts `phase_created {rebuilt:true}`.
+
+**Client (Phases tab, `HeatsPanel`):** not-started later phases get a blue **Set Run Order**
+button → inline method chooser (16 down / last-to-first / random / same) + **Apply Order**.
+An amber "No run order set for {label}" banner shows when a not-started later phase has 0
+athletes in `phase_run_order`. New `api.rebuildPhaseOrder`.
+
+**Verification:** scratch server + the actual `RMF_Mock_Comp_08-30-26.zip`: rebuild on the
+empty Run 2 → count 10, `/runs/upcoming?run_number=2` populated; rebuild on Run 1 → 400;
+refactored "+ Add Next Phase" best_of_2 creation still retro-creates Run 1 (total 10) +
+builds Run 2 order (total 10). `verify_v16.js` passes.
+
+**Files modified:** `server/routes/phases.js`, `client/src/pages/EventDetail.jsx`,
+`client/src/utils/api.js`, `server/version.js`, `client/src/components/Layout.jsx`,
+`client/package.json`, `server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

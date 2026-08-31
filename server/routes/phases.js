@@ -123,6 +123,95 @@ function buildRunOrder(athletes, method, priorRanked) {
   return ordered;
 }
 
+// Determine the eligible athletes + prior ranking used to build a phase's run
+// order. Shared by phase creation and rebuild-order (v2.0.03). `allPhases`
+// must contain only phases that come BEFORE the phase being (re)built.
+async function computeEligibleForPhase(eventId, phaseType, { passThroughCount = 0, finalSize = 0, q2Limit = null }, allPhases) {
+  const allRegs = await queryAll(
+    `SELECT id, run_order FROM registrations WHERE event_id=? AND status='registered'`,
+    [eventId]
+  );
+
+  let eligible = [];
+  let priorRanked = null;
+
+  if (phaseType === 'best_of_2') {
+    // All athletes are eligible
+    eligible = allRegs;
+    // Get prior ranking from run 1
+    priorRanked = await rankedRunResults(eventId, 1);
+  } else if (phaseType === 'qualifier_2') {
+    // Remove pass-through athletes (top N from Q1)
+    const q1Ranked = await rankedRunResults(eventId, 1);
+    const ptCount = passThroughCount || 0;
+    const passThroughIds = new Set(takeUpToRank(q1Ranked, ptCount).map(r => r.registration_id));
+    if (q2Limit && q2Limit > 0) {
+      // v1.26.00 (FS-4/FS-7): only ranks ptCount+1 .. q2Limit after Q1 take
+      // a Q2 run; athletes below the limit are finished and rank on their
+      // Q1 score in the qualification tier. Ties at the limit expand per
+      // ICR 4207.3.4 (takeUpToRank), consistent with every other cut.
+      const bandIds = new Set(takeUpToRank(q1Ranked, q2Limit).map(r => r.registration_id));
+      eligible = allRegs.filter(r => bandIds.has(r.id) && !passThroughIds.has(r.id));
+    } else {
+      eligible = allRegs.filter(r => !passThroughIds.has(r.id));
+    }
+    priorRanked = q1Ranked;
+  } else if (phaseType === 'final_1') {
+    const fSize = finalSize || 16;
+    const q2Phase = allPhases.find(p => p.phase_type === 'qualifier_2');
+
+    if (q2Phase) {
+      // Pass-through from Q1 + top from Q2
+      const ptCount = q2Phase.pass_through_count || 0;
+      const q1Ranked = await rankedRunResults(eventId, 1);
+      const passThrough = takeUpToRank(q1Ranked, ptCount);
+
+      const q2Ranked = await rankedRunResults(eventId, q2Phase.run_number);
+      const remainingSlots = fSize - ptCount;
+      const q2Qualifiers = takeUpToRank(q2Ranked, Math.max(0, remainingSlots));
+
+      const eligibleIds = new Set([
+        ...passThrough.map(r => r.registration_id),
+        ...q2Qualifiers.map(r => r.registration_id),
+      ]);
+      eligible = allRegs.filter(r => eligibleIds.has(r.id));
+
+      // For run order, use best qualifier scores for ranking
+      const bestQual = await bestScoreResults(eventId, [1, q2Phase.run_number]);
+      priorRanked = bestQual.filter(r => eligibleIds.has(r.registration_id));
+    } else {
+      // No Q2 - just top from Q1
+      const q1Ranked = await rankedRunResults(eventId, 1);
+      const topQ1 = takeUpToRank(q1Ranked, fSize);
+      const eligibleIds = new Set(topQ1.map(r => r.registration_id));
+      eligible = allRegs.filter(r => eligibleIds.has(r.id));
+      priorRanked = topQ1;
+    }
+  } else if (phaseType === 'final_2') {
+    const f1Phase = allPhases.find(p => p.phase_type === 'final_1');
+    const fSize = finalSize || 8;
+    const f1Ranked = await rankedRunResults(eventId, f1Phase.run_number);
+    const topF1 = takeUpToRank(f1Ranked, fSize);
+    const eligibleIds = new Set(topF1.map(r => r.registration_id));
+    eligible = allRegs.filter(r => eligibleIds.has(r.id));
+    priorRanked = topF1;
+  }
+
+  // Attach prior order for 'same' method
+  if (allPhases.length > 0) {
+    const prevPhase = allPhases[allPhases.length - 1];
+    const prevOrders = await queryAll(
+      `SELECT registration_id, run_order FROM phase_run_order WHERE phase_id=?`,
+      [prevPhase.id]
+    );
+    const prevMap = {};
+    prevOrders.forEach(o => { prevMap[o.registration_id] = o.run_order; });
+    eligible = eligible.map(e => ({ ...e, _prior_order: prevMap[e.id] || e.run_order || 999 }));
+  }
+
+  return { eligible, priorRanked };
+}
+
 // ── GET all phases for event ─────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -284,89 +373,12 @@ router.post('/', async (req, res) => {
        phase_type === 'qualifier_2' ? q2Limit : null, nextSequence]
     );
 
-    // Determine eligible athletes and assign run order
-    const allRegs = await queryAll(
-      `SELECT id, run_order FROM registrations WHERE event_id=? AND status='registered'`,
-      [eventId]
-    );
-
-    let eligible = [];
-    let priorRanked = null;
-
-    if (phase_type === 'best_of_2') {
-      // All athletes are eligible
-      eligible = allRegs;
-      // Get prior ranking from run 1
-      priorRanked = await rankedRunResults(eventId, 1);
-    } else if (phase_type === 'qualifier_2') {
-      // Remove pass-through athletes (top N from Q1)
-      const q1Ranked = await rankedRunResults(eventId, 1);
-      const ptCount = pass_through_count || 0;
-      const passThroughIds = new Set(takeUpToRank(q1Ranked, ptCount).map(r => r.registration_id));
-      if (q2Limit && q2Limit > 0) {
-        // v1.26.00 (FS-4/FS-7): only ranks ptCount+1 .. q2Limit after Q1 take
-        // a Q2 run; athletes below the limit are finished and rank on their
-        // Q1 score in the qualification tier. Ties at the limit expand per
-        // ICR 4207.3.4 (takeUpToRank), consistent with every other cut.
-        const bandIds = new Set(takeUpToRank(q1Ranked, q2Limit).map(r => r.registration_id));
-        eligible = allRegs.filter(r => bandIds.has(r.id) && !passThroughIds.has(r.id));
-      } else {
-        eligible = allRegs.filter(r => !passThroughIds.has(r.id));
-      }
-      priorRanked = q1Ranked;
-    } else if (phase_type === 'final_1') {
-      const fSize = final_size || 16;
-      const q2Phase = allPhases.find(p => p.phase_type === 'qualifier_2');
-
-      if (q2Phase) {
-        // Pass-through from Q1 + top from Q2
-        const ptCount = q2Phase.pass_through_count || 0;
-        const q1Ranked = await rankedRunResults(eventId, 1);
-        const passThrough = takeUpToRank(q1Ranked, ptCount);
-        const passThroughIds = new Set(passThrough.map(r => r.registration_id));
-
-        const q2Ranked = await rankedRunResults(eventId, q2Phase.run_number);
-        const remainingSlots = fSize - ptCount;
-        const q2Qualifiers = takeUpToRank(q2Ranked, Math.max(0, remainingSlots));
-
-        const eligibleIds = new Set([
-          ...passThrough.map(r => r.registration_id),
-          ...q2Qualifiers.map(r => r.registration_id),
-        ]);
-        eligible = allRegs.filter(r => eligibleIds.has(r.id));
-
-        // For run order, use best qualifier scores for ranking
-        const bestQual = await bestScoreResults(eventId, [1, q2Phase.run_number]);
-        priorRanked = bestQual.filter(r => eligibleIds.has(r.registration_id));
-      } else {
-        // No Q2 - just top from Q1
-        const q1Ranked = await rankedRunResults(eventId, 1);
-        const topQ1 = takeUpToRank(q1Ranked, fSize);
-        const eligibleIds = new Set(topQ1.map(r => r.registration_id));
-        eligible = allRegs.filter(r => eligibleIds.has(r.id));
-        priorRanked = topQ1;
-      }
-    } else if (phase_type === 'final_2') {
-      const f1Phase = allPhases.find(p => p.phase_type === 'final_1');
-      const fSize = final_size || 8;
-      const f1Ranked = await rankedRunResults(eventId, f1Phase.run_number);
-      const topF1 = takeUpToRank(f1Ranked, fSize);
-      const eligibleIds = new Set(topF1.map(r => r.registration_id));
-      eligible = allRegs.filter(r => eligibleIds.has(r.id));
-      priorRanked = topF1;
-    }
-
-    // Attach prior order for 'same' method
-    if (allPhases.length > 0) {
-      const prevPhase = allPhases[allPhases.length - 1];
-      const prevOrders = await queryAll(
-        `SELECT registration_id, run_order FROM phase_run_order WHERE phase_id=?`,
-        [prevPhase.id]
-      );
-      const prevMap = {};
-      prevOrders.forEach(o => { prevMap[o.registration_id] = o.run_order; });
-      eligible = eligible.map(e => ({ ...e, _prior_order: prevMap[e.id] || e.run_order || 999 }));
-    }
+    // Determine eligible athletes and assign run order (shared helper, v2.0.03)
+    const { eligible, priorRanked } = await computeEligibleForPhase(eventId, phase_type, {
+      passThroughCount: pass_through_count || 0,
+      finalSize: final_size || 0,
+      q2Limit,
+    }, allPhases);
 
     const ordered = buildRunOrder(eligible, defaultMethod, priorRanked);
 
@@ -464,6 +476,64 @@ router.delete('/:phaseId', async (req, res) => {
     }
 
     res.json({ success: true, deleted: phase.label });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST rebuild a not-yet-started phase's run order (v2.0.03) ───────────────
+// Lets the operator set/change the run order of a phase that already exists
+// but hasn't started — e.g. a phase that arrived via meet import with an
+// empty phase_run_order, or an order-method change before the phase starts.
+router.post('/:phaseId/rebuild-order', async (req, res) => {
+  try {
+    const { eventId, phaseId } = req.params;
+    const { run_order_method } = req.body || {};
+
+    const phase = await queryOne('SELECT * FROM event_phases WHERE id=? AND event_id=?', [phaseId, eventId]);
+    if (!phase) return res.status(404).json({ error: 'Phase not found' });
+    if (phase.run_number === 1 || phase.sequence_order === 1) {
+      return res.status(400).json({ error: 'Run 1 order is managed on the Registration tab' });
+    }
+    if (phase.status === 'finalized' || phase.status === 'hj_review') {
+      return res.status(400).json({ error: `${phase.label} is already ${phase.status === 'finalized' ? 'finalized' : 'with the Head Judge'}` });
+    }
+    const started = await queryOne(
+      `SELECT COUNT(*) as cnt FROM runs WHERE event_id=? AND run_number=?`,
+      [eventId, phase.run_number]
+    );
+    if (started && parseInt(started.cnt) > 0) {
+      return res.status(400).json({ error: `${phase.label} has already started — the run order can no longer be changed` });
+    }
+
+    const priorPhases = await queryAll(
+      `SELECT * FROM event_phases WHERE event_id=? AND sequence_order < ? ORDER BY sequence_order`,
+      [eventId, phase.sequence_order]
+    );
+    const method = run_order_method || phase.run_order_method || 'same';
+    const { eligible, priorRanked } = await computeEligibleForPhase(eventId, phase.phase_type, {
+      passThroughCount: phase.pass_through_count || 0,
+      finalSize: phase.final_size || 0,
+      q2Limit: phase.q2_field_limit ?? null,
+    }, priorPhases);
+
+    const ordered = buildRunOrder(eligible, method, priorRanked);
+
+    await execute(`DELETE FROM phase_run_order WHERE phase_id=?`, [phaseId]);
+    for (let i = 0; i < ordered.length; i++) {
+      const regId = ordered[i].id || ordered[i].registration_id;
+      await execute(
+        `INSERT OR REPLACE INTO phase_run_order (id, phase_id, registration_id, run_order) VALUES (?, ?, ?, ?)`,
+        [uuidv4(), phaseId, regId, i + 1]
+      );
+    }
+    if (method !== phase.run_order_method) {
+      await execute(`UPDATE event_phases SET run_order_method=?, updated_at=datetime('now') WHERE id=?`, [method, phaseId]);
+    }
+
+    if (req.app.broadcast) {
+      req.app.broadcast(eventId, 'phase_created', { phase_id: phaseId, rebuilt: true });
+    }
+
+    res.json({ success: true, count: ordered.length, run_order_method: method });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

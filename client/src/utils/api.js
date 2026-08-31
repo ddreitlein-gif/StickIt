@@ -209,6 +209,7 @@ export const api = {
   approvePhase: (eventId, phaseId) => apiFetch(`/events/${eventId}/phases/${phaseId}/approve`, { method: 'POST' }),
   returnPhase: (eventId, phaseId, message) => apiFetch(`/events/${eventId}/phases/${phaseId}/return`, { method: 'POST', body: { message } }),
   reopenPhase: (eventId, phaseId) => apiFetch(`/events/${eventId}/phases/${phaseId}/reopen`, { method: 'POST' }),
+  rebuildPhaseOrder: (eventId, phaseId, method) => apiFetch(`/events/${eventId}/phases/${phaseId}/rebuild-order`, { method: 'POST', body: { run_order_method: method } }),
   getPhaseEligible: (eventId, phaseId) => apiFetch(`/events/${eventId}/phases/${phaseId}/eligible`),
   getPhaseResults: (eventId) => apiFetch(`/events/${eventId}/phases/results`),
 

@@ -738,6 +738,10 @@ function HeatsPanel({ event, registrations, onRefresh }) {
   const [q2Limit,       setQ2Limit]       = useState('')
   const [finalSize,     setFinalSize]     = useState(16)
 
+  // Set Run Order (rebuild a not-started phase's order) state — v2.0.03
+  const [orderPhaseId,  setOrderPhaseId]  = useState(null)
+  const [orderMethod,   setOrderMethod]   = useState('16_down')
+
   const loadData = async () => {
     try {
       const [p, ps, rs] = await Promise.all([
@@ -822,6 +826,17 @@ function HeatsPanel({ event, registrations, onRefresh }) {
         alert(resp.undersized_notice)
       }
     } catch (e) { setError(e.message) }
+    setAction('')
+  }
+
+  const doRebuildOrder = async (phaseId, label) => {
+    setAction('ordering')
+    try {
+      const resp = await api.rebuildPhaseOrder(event.id, phaseId, orderMethod)
+      setOrderPhaseId(null)
+      await loadData()
+      alert(`${label} run order set — ${resp.count} athletes.`)
+    } catch (e) { alert(e.message) }
     setAction('')
   }
 
@@ -971,7 +986,13 @@ function HeatsPanel({ event, registrations, onRefresh }) {
               </div>
             )}
 
-            <div className="flex gap-3 flex-wrap">
+            {ps.status === 'not_started' && ps.sequence_order > 1 && ps.total === 0 && (
+              <div className="bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2 text-sm text-amber-400 mb-3">
+                No run order set for {ps.label} — use the Set Run Order button below.
+              </div>
+            )}
+
+            <div className="flex gap-3 flex-wrap items-center">
               {ps.status === 'complete' && (
                 <>
                   <button onClick={() => doFinalize(ps.id, ps.label)} disabled={!!action}
@@ -989,6 +1010,32 @@ function HeatsPanel({ event, registrations, onRefresh }) {
                   className="px-4 py-2 text-sm font-medium rounded bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50">
                   {action === 'reopening' ? 'Reopening...' : `Reopen ${ps.label}`}
                 </button>
+              )}
+              {ps.status === 'not_started' && ps.sequence_order > 1 && (
+                orderPhaseId === ps.id ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select className="input text-sm py-2 w-auto" value={orderMethod}
+                      onChange={e => setOrderMethod(e.target.value)}>
+                      <option value="16_down">16 down (16th first, then 15th...1st, then 17th+)</option>
+                      <option value="last_to_first">Last to first (worst goes first)</option>
+                      <option value="random">Random</option>
+                      <option value="same">Same as prior phase</option>
+                    </select>
+                    <button onClick={() => doRebuildOrder(ps.id, ps.label)} disabled={!!action}
+                      className="px-4 py-2 text-sm font-medium rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50">
+                      {action === 'ordering' ? 'Setting...' : 'Apply Order'}
+                    </button>
+                    <button onClick={() => setOrderPhaseId(null)} className="btn-ghost text-sm">Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={() => {
+                    setOrderPhaseId(ps.id)
+                    setOrderMethod(ps.run_order_method && ps.run_order_method !== 'same' ? ps.run_order_method : '16_down')
+                  }} disabled={!!action}
+                    className="px-4 py-2 text-sm font-medium rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-50">
+                    Set Run Order
+                  </button>
+                )
               )}
               {ps.sequence_order > 1 && (ps.status === 'not_started' || ps.status === 'finalized') && (
                 <button onClick={() => doDeletePhase(ps.id, ps.label)} disabled={!!action}
