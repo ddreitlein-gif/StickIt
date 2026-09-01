@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.2.00
+**Current version:** v2.2.01
 
 ## Commands
 
@@ -225,6 +225,49 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.2.01 Feature Notes
+
+### HJ Tablet Polish — Dual Judge Names, Reject Codes Button, J1/J2 Review Column (v2.2.01)
+
+Three display-only Head Judge tablet improvements from David's 09-01-26 live-use screenshots.
+No scoring math, no endpoint behavior changes, no tablet workflow changes; one additive server
+response field.
+
+**1. Dual moguls — judge names on the Judge Scores panel.** Each "Judge N (Turns/Air/Time/
+Overall)" row in `DualHeadJudgeView` now shows the assigned judge's name underneath in small
+dim italic text. Purely client-side: `eventCfg.judges` (already returned by the event GET and
+passed into the dual view) is mapped role→number via a new `DUAL_ROLE_TO_NUM` constant
+(mirrors JudgeTablet.jsx) into a `judgeNameByNumber` useMemo. Rows without an assigned/named
+judge render exactly as before.
+
+**2. Single moguls — "Reject Codes" button + "Reject Score" labels.** The hard-to-see yellow
+underlined "Clear Codes" link in the Air Judges jump-code strip is now a real
+`tablet-btn-danger` button labeled **Reject Codes**, right-aligned via a `justify-between` row
+so it sits in the same visual column as the per-score Reject buttons below it. Handler,
+confirm dialog, endpoint (`PUT /runs/:id { clear_jump_codes: true }`), and the
+not-yet-complete guard are byte-identical — placement/label only. The 4 Air judge "Reject"
+buttons are relabeled **Reject Score** (David's ruling: Air buttons only — T&L "Reject" and
+"Reject Time" unchanged).
+
+**3. Run review table — combined J1/J2 jump-code column.** The between-phases HJ review table
+("Head Judge — Run N Review") gains one column headed **J1/J2** between the TL columns and
+Air1, showing the run's jump codes as e.g. `T/S` (David's ruling: one combined column). A
+1-jump event shows just the single code; statused rows show `--`. Server:
+`GET /runs/round-review/:runNumber` (runs.js) now includes `jump1_code`/`jump2_code` in each
+row — additive, already selected by the existing `r.*` query, and the HJ tablet is the
+endpoint's only consumer. The final event review table (fed by `/phases/results`) is
+deliberately untouched.
+
+**Verification.** 10-check scratch-server test: scored run returns `jump1_code:'T'` /
+`jump2_code:'S'` with all pre-existing fields intact; DNS row returns null codes.
+`verify_v16.js` 123/123 (no engine paths touched).
+
+**Files modified:** `client/src/pages/HeadJudgeTablet.jsx`, `server/routes/runs.js`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

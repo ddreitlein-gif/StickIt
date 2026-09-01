@@ -2362,6 +2362,8 @@ router.get('/round-review/:runNumber', async (req, res) => {
         last_name: run.last_name,
         tl_scores: tlScores,
         air_scores: airScores,
+        jump1_code: run.jump1_code,
+        jump2_code: run.jump2_code,
         speed_score: run.speed_score,
         run_time: run.run_time,
         total_score: run.total_score,

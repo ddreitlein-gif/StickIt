@@ -51,6 +51,11 @@ const DUAL_ROLE_LABELS = {
   DualAir: 'Air', DualTime: 'Time', DualOverall: 'Overall',
 }
 
+// Maps dual judge roles to judge numbers 1-5 (mirrors DUAL_ROLE_TO_NUM in JudgeTablet.jsx)
+const DUAL_ROLE_TO_NUM = {
+  DualTurns1: 1, DualTurns2: 2, DualAir: 3, DualTime: 4, DualOverall: 5,
+}
+
 // ── v1.16.17 -- Bracket Review Panel for Dual Mogul HJ Final Approval ────────
 function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendingBack }) {
   const matches = (bracket || []).filter(m => !m.is_bye)
@@ -174,6 +179,15 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
 
 // ── Dual Mogul Head Judge View ────────────────────────────────────────────────
 function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
+  // Judge names keyed by judge number (1-5), from the event's assigned judges
+  const judgeNameByNumber = useMemo(() => {
+    const map = {}
+    for (const j of eventCfg?.judges || []) {
+      const num = DUAL_ROLE_TO_NUM[j.role]
+      if (num && j.name) map[num] = j.name
+    }
+    return map
+  }, [eventCfg?.judges])
   const [activeMatch,  setActiveMatch]  = useState(null)
   const [judgePoints,  setJudgePoints]  = useState([])
   const [pointResult,  setPointResult]  = useState(null)
@@ -716,7 +730,12 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
                       {!isConfirming && (
                         <div className="flex items-center justify-between py-2">
                           <div className="flex items-center gap-4">
-                            <span className="text-xs text-slate-500 w-28">Judge {p.judge_number}{p.judge_number <= 2 ? ' (Turns)' : p.judge_number === 3 ? ' (Air)' : p.judge_number === 4 ? ' (Time)' : ' (Overall)'}</span>
+                            <div className="w-28">
+                              <div className="text-xs text-slate-500">Judge {p.judge_number}{p.judge_number <= 2 ? ' (Turns)' : p.judge_number === 3 ? ' (Air)' : p.judge_number === 4 ? ' (Time)' : ' (Overall)'}</div>
+                              {judgeNameByNumber[p.judge_number] && (
+                                <div className="text-[10px] text-slate-600 italic truncate">{judgeNameByNumber[p.judge_number]}</div>
+                              )}
+                            </div>
                             {(() => {
                               // v1.29.00 -- raw entry with the effective
                               // (overridden) value beside it when they differ
@@ -1595,6 +1614,7 @@ export default function HeadJudgeTablet() {
                     {Array.from({ length: eventCfg?.num_tl_judges || 3 }, (_, i) => (
                       <th key={`tl${i}`} className="px-3 py-2 text-center">TL{i + 1}</th>
                     ))}
+                    <th className="px-3 py-2 text-center">J1/J2</th>
                     {Array.from({ length: eventCfg?.num_air_judges || 2 }, (_, i) => (
                       <th key={`air${i}`} className="px-3 py-2 text-center">Air{i + 1}</th>
                     ))}
@@ -1613,6 +1633,7 @@ export default function HeadJudgeTablet() {
                         const tlScore = row.tl_scores.find(s => s.role === `TL${i + 1}`)
                         return <td key={`tl${i}`} className="px-3 py-2 text-center font-mono text-slate-300">{tlScore ? Number(tlScore.raw_score).toFixed(1) : '--'}</td>
                       })}
+                      <td className="px-3 py-2 text-center font-mono text-slate-300">{[row.jump1_code, row.jump2_code].filter(Boolean).join('/') || '--'}</td>
                       {Array.from({ length: eventCfg?.num_air_judges || 2 }, (_, i) => {
                         const airScores = row.air_scores.filter(s => s.role === `Air${i + 1}`)
                         const airTotal = airScores.reduce((sum, s) => sum + (s.raw_score || 0), 0)
@@ -2009,13 +2030,15 @@ export default function HeadJudgeTablet() {
 
                 {/* Jump codes */}
                 {(activeRun.jump1_code || activeRun.jump2_code) && (
-                  <div className="flex flex-wrap gap-4 mb-4 text-sm items-center" style={{ color: 'var(--tablet-dim)' }}>
-                    {activeRun.jump1_code && (
-                      <span>J1: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump1_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump1_dd})</span></span>
-                    )}
-                    {activeRun.jump2_code && (
-                      <span>J2: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump2_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump2_dd})</span></span>
-                    )}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex flex-wrap gap-4 text-sm items-center" style={{ color: 'var(--tablet-dim)' }}>
+                      {activeRun.jump1_code && (
+                        <span>J1: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump1_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump1_dd})</span></span>
+                      )}
+                      {activeRun.jump2_code && (
+                        <span>J2: <strong className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump2_code}</strong> <span style={{ color: 'var(--tablet-muted)' }}>(DD {activeRun.jump2_dd})</span></span>
+                      )}
+                    </div>
                     {activeRun.status !== 'complete' && (
                       <button
                         onClick={async () => {
@@ -2032,9 +2055,10 @@ export default function HeadJudgeTablet() {
                             await loadActive()
                           } catch (e) { setError(e.message) }
                         }}
-                        className="text-xs text-amber-400 hover:text-amber-300 underline"
+                        className="tablet-btn-danger"
+                        style={{ height: 32, fontSize: 13, padding: '0 12px' }}
                       >
-                        Clear Codes
+                        Reject Codes
                       </button>
                     )}
                   </div>
@@ -2072,7 +2096,7 @@ export default function HeadJudgeTablet() {
                                   className="tablet-btn-danger"
                                   style={{ height: 32, fontSize: 13, padding: '0 12px' }}
                                 >
-                                  Reject
+                                  Reject Score
                                 </button>
                               )}
                             </div>
