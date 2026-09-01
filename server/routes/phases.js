@@ -764,14 +764,18 @@ router.get('/:phaseId/eligible', async (req, res) => {
 });
 
 // ── GET phase-based results ──────────────────────────────────────────────────
-router.get('/results', async (req, res) => {
-  try {
-    const eventId = req.params.eventId;
+// v2.2.00 — the assembly below is the single authoritative source for phased
+// results.  It is shared verbatim between the internal GET /results route
+// (public Scoreboard + HJ final review) and the Viewer API's
+// GET /api/viewer/events/:eventId/results/phases (iOS app), so the two
+// surfaces can never diverge — same reuse pattern as rankDualPlacements for
+// the v1.30.00 /placements endpoint.
+async function buildPhasesResults(eventId) {
     const phases = await queryAll(
       `SELECT * FROM event_phases WHERE event_id=? ORDER BY sequence_order`, [eventId]
     );
 
-    if (phases.length === 0) return res.json({ format: 'none', results: [] });
+    if (phases.length === 0) return { format: 'none', phases: [], results: [] };
 
     const format = getFormat(phases);
 
@@ -816,11 +820,11 @@ router.get('/results', async (req, res) => {
       });
       ordered.forEach(r => { if (!r.runs) r.runs = runsByReg[r.registration_id] || {}; });
 
-      res.json({
+      return {
         format: 'best_of_2',
-        phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type })),
+        phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type, status: p.status })),
         results: ordered,
-      });
+      };
     } else if (format === 'qualifier_finals') {
       // Phase-based tiered ranking
       const f2 = phases.find(p => p.phase_type === 'final_2');
@@ -873,11 +877,11 @@ router.get('/results', async (req, res) => {
       }
       tiers.forEach(r => { r.runs = runsByReg[r.registration_id] || {}; });
 
-      res.json({
+      return {
         format: 'qualifier_finals',
         phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type, status: p.status })),
         results: tiers,
-      });
+      };
     } else {
       // Single run - standard results, statused athletes at the bottom in order
       const results = await rankedRunResults(eventId, 1);
@@ -887,17 +891,40 @@ router.get('/results', async (req, res) => {
          WHERE r.event_id=? AND r.status='complete' AND r.run_status IS NOT NULL`, [eventId]
       );
       const discipline = await getDiscipline(eventId);
-      res.json({
-        format: 'single',
-        phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type })),
-        results: assembleTieredResults({
-          tiers: [{ key: null, label: null, scoredRuns: results }],
-          flaggedRuns,
-          discipline,
-        }),
+      const ordered = assembleTieredResults({
+        tiers: [{ key: null, label: null, scoredRuns: results }],
+        flaggedRuns,
+        discipline,
       });
+      // Attach the per-run map (same shape as the other formats) so consumers
+      // that read per-run detail see it here too. Cloned subset, not the row
+      // itself — r.runs[rn] = r would be circular.
+      ordered.forEach(r => {
+        if (!r.runs) {
+          const rn = r.run_number != null ? r.run_number : 1;
+          r.runs = { [rn]: {
+            id: r.id, registration_id: r.registration_id, run_number: rn,
+            total_score: r.total_score, turns_score: r.turns_score,
+            air_score: r.air_score, speed_score: r.speed_score,
+            run_time: r.run_time, run_status: r.run_status,
+            jump1_code: r.jump1_code, jump2_code: r.jump2_code,
+          } };
+        }
+      });
+      return {
+        format: 'single',
+        phases: phases.map(p => ({ id: p.id, label: p.label, run_number: p.run_number, phase_type: p.phase_type, status: p.status })),
+        results: ordered,
+      };
     }
+}
+
+router.get('/results', async (req, res) => {
+  try {
+    res.json(await buildPhasesResults(req.params.eventId));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;
+// v2.2.00 — shared with the Viewer API (/api/viewer .../results/phases).
+module.exports.buildPhasesResults = buildPhasesResults;

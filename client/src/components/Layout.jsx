@@ -82,7 +82,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v2.1.01')
+  const [version, setVersion] = useState('v2.2.00')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])

@@ -3,8 +3,11 @@
 const router = require('express').Router({ mergeParams: true });
 const cors = require('cors');
 const { queryAll, queryOne } = require('../db/schema');
-const { calcDualMogulPointSplit, effectiveJudgePoints } = require('../scoring/engine');
+const { calcDualMogulPointSplit, effectiveJudgePoints, pickBestRun, assembleTieredResults } = require('../scoring/engine');
 const { rankDualPlacements } = require('../dual/placement_ranking');
+// v2.2.00 — shared phased-results assembly (same code path as the web
+// Scoreboard's /phases/results) for the new /results/phases endpoint.
+const { buildPhasesResults } = require('./phases');
 
 // v1.29.00 -- map dual_judge_points rows to the engine's judgeScores shape
 function viewerMapDjpRows(rows) {
@@ -41,6 +44,29 @@ async function getActiveRound(eventId) {
   );
   const n = rrs ? rrs.run_number : 1;
   return { runNumber: n, phaseId: null, phaseLabel: `Run ${n}` };
+}
+
+// v2.2.00 — resolve an optional ?run_number= override for /results and
+// /results/scores. Absent → active-round resolution (unchanged v2.1.x
+// behavior). Present → must be an integer round this event actually knows
+// about (a phase, a round-status row, or existing runs); anything else is a
+// 400 so the app can trust that a served round is the round it asked for.
+async function resolveRequestedRound(eventId, raw) {
+  if (raw === undefined) {
+    const { runNumber } = await getActiveRound(eventId);
+    return { runNumber };
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return { error: 'Unknown run_number' };
+  const known = await queryOne(
+    `SELECT 1 AS ok FROM event_phases WHERE event_id = ? AND run_number = ?
+     UNION SELECT 1 FROM run_round_status WHERE event_id = ? AND run_number = ?
+     UNION SELECT 1 FROM runs WHERE event_id = ? AND run_number = ?
+     LIMIT 1`,
+    [eventId, n, eventId, n, eventId, n]
+  );
+  if (!known) return { error: 'Unknown run_number' };
+  return { runNumber: n };
 }
 
 // ── Route 1: Event List ──────────────────────────────────────────────────────
@@ -147,7 +173,20 @@ router.get('/events/:eventId/status', async (req, res) => {
     ) : null;
     const round = phase || roundFallback;
 
-    // Upcoming athletes — next 10 in run order who have not yet started
+    // Upcoming athletes in run order who have not yet started.
+    // v2.2.00 — optional ?upcoming_limit= raises the cap: integer 1..100
+    // (values above 100 clamp; 'all' maps to 100). Absent → 10, so existing
+    // callers get a byte-identical response.
+    let upcomingLimit = 10;
+    const rawLim = req.query.upcoming_limit;
+    if (rawLim !== undefined) {
+      if (String(rawLim).toLowerCase() === 'all') {
+        upcomingLimit = 100;
+      } else {
+        const n = Number(rawLim);
+        if (Number.isInteger(n) && n >= 1) upcomingLimit = Math.min(n, 100);
+      }
+    }
     let upcoming = [];
     if (round) {
       if (phase) {
@@ -165,8 +204,8 @@ router.get('/events/:eventId/status', async (req, res) => {
                  AND r.status IN ('scoring', 'complete')
              )
            ORDER BY pro.run_order
-           LIMIT 10`,
-          [phase.id, eventId, phase.run_number]
+           LIMIT ?`,
+          [phase.id, eventId, phase.run_number, upcomingLimit]
         );
       } else {
         upcoming = await queryAll(
@@ -183,8 +222,8 @@ router.get('/events/:eventId/status', async (req, res) => {
                  AND r.status IN ('scoring', 'complete')
              )
            ORDER BY reg.run_order
-           LIMIT 10`,
-          [eventId, round.run_number]
+           LIMIT ?`,
+          [eventId, round.run_number, upcomingLimit]
         );
       }
     }
@@ -211,16 +250,77 @@ router.get('/events/:eventId/status', async (req, res) => {
   }
 });
 
+// ── Route 8: Phased Results (v2.2.00) ────────────────────────────────────────
+// Registered before /events/:eventId/results to avoid Express swallowing the
+// suffix. GET /api/viewer/events/:eventId/results/phases
+// Combined standings for phased events (Best of 2, Qualifier/Finals): tier
+// structure, shared ranks, flagged-athlete placement, and a per-run map with
+// the counting run marked — assembled by the SAME code the web Scoreboard
+// uses (phases.js buildPhasesResults), then mapped to a viewer-stable shape.
+router.get('/events/:eventId/results/phases', async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const event = await queryOne('SELECT id, discipline FROM events WHERE id = ?', [eventId]);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (event.discipline === 'dual_mogul') {
+      return res.status(400).json({ error: 'Phase results are not available for dual_mogul events' });
+    }
+
+    const data = await buildPhasesResults(eventId);
+    const results = (data.results || []).map(r => {
+      const flagged = r.effective_status || null;
+      // The run whose score ranks this row: for scored rows the assembly's
+      // representative row IS that run (best run for best_of_2/qualifier
+      // tiers, the tier run for finals/single). Flagged rows have none.
+      const countingRun = flagged ? null : (r.run_number != null ? Number(r.run_number) : null);
+      const runsMap = {};
+      for (const [rn, run] of Object.entries(r.runs || {})) {
+        runsMap[rn] = {
+          total_score: run.total_score != null ? run.total_score : null,
+          turns_score: run.turns_score != null ? run.turns_score : null,
+          air_score:   run.air_score   != null ? run.air_score   : null,
+          time_score:  run.speed_score != null ? run.speed_score : null,
+          run_time: (run.run_time != null && run.run_time >= 0) ? run.run_time : null,
+          run_status: run.run_status || null,
+          jump1_code: run.jump1_code || null,
+          jump2_code: run.jump2_code || null,
+          counts: countingRun != null && Number(rn) === countingRun
+        };
+      }
+      return {
+        rank: r.rank != null ? r.rank : null,
+        registration_id: r.registration_id,
+        bib_number: (r.bib_number === '' || r.bib_number == null) ? null : Number(r.bib_number),
+        first_name: r.first_name,
+        last_name: r.last_name,
+        best_score: flagged ? null
+          : (r.best_score != null ? r.best_score
+             : (r.total_score != null ? r.total_score : null)),
+        tier: r.tier != null ? r.tier : null,
+        tier_label: r.tier_label != null ? r.tier_label : null,
+        effective_status: flagged,
+        runs: runsMap
+      };
+    });
+
+    res.json({ format: data.format, phases: data.phases || [], results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Route 6: Per-Judge Score Breakdowns ──────────────────────────────────────
 // Registered before /events/:eventId/results to avoid Express swallowing /scores.
-// GET /api/viewer/events/:eventId/results/scores
+// GET /api/viewer/events/:eventId/results/scores?run_number=<optional, v2.2.00>
 router.get('/events/:eventId/results/scores', async (req, res) => {
   try {
     const { eventId } = req.params;
     const event = await queryOne('SELECT id FROM events WHERE id = ?', [eventId]);
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
-    const { runNumber } = await getActiveRound(eventId);
+    const round = await resolveRequestedRound(eventId, req.query.run_number);
+    if (round.error) return res.status(400).json({ error: round.error });
+    const runNumber = round.runNumber;
 
     const scores = await queryAll(
       `SELECT js.run_id, js.score_type, js.raw_score,
@@ -325,57 +425,77 @@ router.get('/events/:eventId/results', async (req, res) => {
       return res.json({ discipline: 'dual_mogul', bracket: enriched });
     }
 
-    const { runNumber } = await getActiveRound(eventId);
+    const round = await resolveRequestedRound(eventId, req.query.run_number);
+    if (round.error) return res.status(400).json({ error: round.error });
+    const runNumber = round.runNumber;
 
-    const runs = await queryAll(
-      `SELECT r.registration_id, r.total_score, r.turns_score,
-              r.air_score, r.speed_score, r.run_status, r.run_time,
-              r.jump1_code, r.jump1_dd, r.jump2_code, r.jump2_dd,
-              reg.bib_number, a.first_name, a.last_name
+    // v2.2.00 — rule-correct ranking (viewer parity release). Scored runs go
+    // through the engine (FIS ICR 4207.3 / USSS 4110.4.3 tie-breaks, shared
+    // ranks with Olympic-style skips); DNS/DNF/DSQ/RNS athletes are ordered
+    // per USSS 4012.3 by assembleTieredResults instead of sinking to the
+    // bottom on a null total. Same construction the web Scoreboard uses for
+    // one round in phases.js. r.* is selected so the tie-break comparators
+    // see turns/air_score_no_dd/speed.
+    const scoredRuns = await queryAll(
+      `SELECT r.*, reg.bib_number, a.first_name, a.last_name
        FROM runs r
        JOIN registrations reg ON reg.id = r.registration_id
        JOIN athletes a ON a.id = reg.athlete_id
        WHERE r.event_id = ? AND r.run_number = ? AND r.status = 'complete'
-       ORDER BY r.total_score DESC`,
+         AND r.run_status IS NULL`,
+      [eventId, runNumber]
+    );
+    const flaggedRuns = await queryAll(
+      `SELECT r.*, reg.bib_number, a.first_name, a.last_name
+       FROM runs r
+       JOIN registrations reg ON reg.id = r.registration_id
+       JOIN athletes a ON a.id = reg.athlete_id
+       WHERE r.event_id = ? AND r.run_number = ? AND r.status = 'complete'
+         AND r.run_status IS NOT NULL`,
       [eventId, runNumber]
     );
 
-    // Best run per athlete (highest total_score)
-    const best = {};
-    for (const r of runs) {
-      if (!best[r.registration_id] ||
-          (r.total_score || 0) > (best[r.registration_id].total_score || 0)) {
-        best[r.registration_id] = r;
-      }
-    }
+    // Best run per athlete via the FIS-stronger comparator (duplicate rows
+    // for one athlete within a round are historical-data tolerance).
+    const best = Object.values(pickBestRun(scoredRuns, event.discipline));
 
-    const ranked = Object.values(best)
-      .sort((a, b) => (b.total_score || 0) - (a.total_score || 0))
-      .map((r, i) => ({
-        rank: i + 1,
-        // v1.30.00 -- lets the app join this row to runs[]/scores[] from
-        // /results/scores instead of fragile order-based matching.
-        registration_id: r.registration_id,
-        bib_number: r.bib_number,
-        first_name: r.first_name,
-        last_name: r.last_name,
-        turns_score: r.turns_score,
-        air_score: r.air_score,
-        time_score: r.speed_score,
-        total_score: r.total_score,
-        // Actual finish time in seconds. null = No Time (NT) or no timed
-        // component (e.g. Devo); time_score above is the derived speed score.
-        run_time: (r.run_time != null && r.run_time >= 0) ? r.run_time : null,
-        // Jumps as scored: code + the exact DD applied (0 DD means the jump was
-        // dropped by the repeat-jump rule).
-        jump1_code: r.jump1_code || null,
-        jump1_dd: r.jump1_dd != null ? r.jump1_dd : null,
-        jump2_code: r.jump2_code || null,
-        jump2_dd: r.jump2_dd != null ? r.jump2_dd : null,
-        run_status: r.run_status || null
-      }));
+    const ordered = assembleTieredResults({
+      tiers: [{ key: null, label: null, scoredRuns: best }],
+      flaggedRuns,
+      discipline: event.discipline
+    });
 
-    res.json({ discipline: event.discipline, results: ranked });
+    const ranked = ordered.map(r => ({
+      rank: r.rank != null ? r.rank : null,
+      // v1.30.00 -- lets the app join this row to runs[]/scores[] from
+      // /results/scores instead of fragile order-based matching.
+      registration_id: r.registration_id,
+      bib_number: r.bib_number,
+      first_name: r.first_name,
+      last_name: r.last_name,
+      turns_score: r.turns_score,
+      air_score: r.air_score,
+      time_score: r.speed_score,
+      total_score: r.total_score,
+      // Actual finish time in seconds. null = No Time (NT) or no timed
+      // component (e.g. Devo); time_score above is the derived speed score.
+      run_time: (r.run_time != null && r.run_time >= 0) ? r.run_time : null,
+      // Jumps as scored: code + the exact DD applied (0 DD means the jump was
+      // dropped by the repeat-jump rule).
+      jump1_code: r.jump1_code || null,
+      jump1_dd: r.jump1_dd != null ? r.jump1_dd : null,
+      jump2_code: r.jump2_code || null,
+      jump2_dd: r.jump2_dd != null ? r.jump2_dd : null,
+      run_status: r.run_status || null,
+      // v2.2.00 — resolved status when the athlete's ranking in this round
+      // comes from a flagged run (multi-run precedence DSQ > DNF > RNS > DNS).
+      effective_status: r.effective_status || null
+    }));
+
+    // run_number echoes the round actually served. It doubles as the iOS
+    // app's feature-detection signal for tappable round pills: pre-v2.2.00
+    // servers ignore ?run_number= and omit this field.
+    res.json({ discipline: event.discipline, run_number: runNumber, results: ranked });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

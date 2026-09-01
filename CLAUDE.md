@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.1.01
+**Current version:** v2.2.00
 
 ## Commands
 
@@ -225,6 +225,95 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.2.00 Feature Notes
+
+### Viewer API Parity — Per-Round Results, Rule-Correct Ranking, Full Upcoming Queue (v2.2.00)
+
+Implements items 1, 2, and 5 of `Scoring Server/StickIt_Viewer_API_Parity_Plan_08-31-26.md`
+(rulings recorded in the plan: auto-select Overall in the app, upcoming cap 100, version
+v2.2.00). Server-only source changes on the public Viewer API + one shared-helper refactor —
+no schema changes, no sync-manifest/protocol impact, no engine changes, venue mode unaffected.
+Companion iOS work shipped in the StickIt Live Score repo (tappable round pills, Overall view,
+full upcoming sheet).
+
+**Shared assembly helper.** The `GET /phases/results` handler body in `server/routes/phases.js`
+was extracted verbatim into exported `buildPhasesResults(eventId)`; the route is now a thin
+wrapper (regression-tested against the old output). The `phases` array now carries `status` on
+all three formats (was qualifier_finals only) and the no-phase response gained `phases: []` —
+both additive. Reuse pattern: rankDualPlacements/v1.30.00.
+
+**New viewer endpoint `GET /api/viewer/events/:eventId/results/phases`** (registered before
+`/results` — Express ordering). Maps `buildPhasesResults` output to a viewer-stable shape:
+`{ format, phases[], results[] }` where rows carry `rank` (shared on ties), `registration_id`,
+normalized `bib_number`, `best_score` (null for flagged rows), `tier`/`tier_label`,
+`effective_status`, and a per-run map keyed by run number string with
+`{ total/turns/air/time_score, run_time, run_status, jump codes, counts }`. `counts: true`
+marks the run whose score ranks the row (derived from the assembly's representative row — the
+web's starred run). dual_mogul → 400; no phases → `format: 'none'`.
+
+**`/results` + `/results/scores` accept `?run_number=`** via new `resolveRequestedRound()`:
+absent → active-round resolution unchanged; present → must be an integer round known to the
+event (event_phases ∪ run_round_status ∪ runs) else 400 `Unknown run_number`. `/results` now
+echoes `run_number` — deliberately doubling as the iOS app's feature-detection signal (old
+servers ignore the param and omit the echo, so the app keeps its pills inert).
+
+**`/results` ranking is now rule-correct.** The naive `ORDER BY total_score DESC` +
+`rank: i+1` block was replaced with the same construction phases.js uses for one round:
+scored runs (`run_status IS NULL`) → `pickBestRun` (FIS-stronger dedup) →
+`assembleTieredResults` single tier (FIS tie-breaks, shared ranks with Olympic-style skips,
+flagged athletes ordered scored → DNF → RNS → DNS with DSQ at event bottom per USSS 4012.3,
+numeric competition ranks throughout). Rows gain `effective_status` (null for scored rows).
+**Deliberate output change:** ranks now differ from v2.1.x whenever a tie or statused athlete
+exists — a correction; old app builds simply render the corrected order.
+
+**`/status` upcoming queue configurable.** `?upcoming_limit=` — integer 1..100 (clamped),
+`all` → 100, absent → 10 (byte-identical for existing callers). Applied to both the
+phase_run_order branch and the legacy registrations.run_order branch via `LIMIT ?`.
+
+**Docs.** README Viewer API Reference (new endpoint section, params, echo/effective_status
+notes, shared-rank semantics, error table) + `ref-viewer-api.md` help topic updated; guide
+PDFs regenerated (150-page complete guide, zero unresolved links).
+
+**Verification.** 43-check scratch-server integration test: rn=2 shared rank + skip
+(1,2,2,4), flagged ordering DNF→DNS→DSQ with numeric ranks 5/6/7, per-round vs combined
+behavior of a Run-2 DNF with a scored Run 1 (flagged in the round view, ranks on the Run 1
+score in the best_of_2 combined view per ruling A1.6), run_number echo + 400 guards (99/abc),
+`/results/phases` best_of_2 counts flags + field-by-field row/rank parity with the internal
+`/phases/results` (refactor regression), qualifier_finals tier order + rank continuation,
+dual 400 / none format / 404, `/results/scores?run_number=` scoping + echo, upcoming_limit
+default/all/12/500-clamp/junk fallback on the legacy branch + phase branch, unphased shape
+regression, dual and aerials `/results` regressions. `verify_v16.js` 123/123 (engine
+untouched). Grew 43 → 47 checks after the ultra review to cover the single-format case below.
+
+**Cloud ultra review (09-01-26) — passed, one real finding fixed.** `/code-review ultra
+--fix` ran on the source-only diff (docs, version bumps, and build assets stashed for the
+review, then restored — same source-only recipe as prior releases). Two of three findings
+were false positives traced to the stash (the "incomplete" version bump and "missing" README
+docs were simply in the stashed files). The ONE real finding: the single-format branch of
+`buildPhasesResults` (an event with only a "Run 1" phase) never attached the per-run `runs`
+map the best_of_2/qualifier_finals branches attach, so the new viewer `/results/phases`
+served `runs: {}` on single-phase events — placement and best_score with zero component/
+time/jump detail. Fixed by attaching `r.runs = { [run_number]: {…} }` with the same column
+subset the other branches use (a cloned object, not the row itself, which would be a
+circular JSON structure). Additive on the internal `/phases/results` endpoint; the web
+Scoreboard and HJ tablet never read `runs` on single-format events, so they are unaffected.
+
+**iOS companion (StickIt Live Score repo).** `ViewerAPI` gains `runNumber:` params,
+`phaseResults()`, and `upcoming_limit=100`; new `Models/PhaseResults.swift`; `EventStore`
+gains round/Overall selection state with live-pinned latest-score diffing and feature
+detection off the `run_number` echo (404 on `/results/phases` disables the Overall pill);
+`RoundSelector` pills became buttons with LIVE + OVERALL pills; `MogulScoreboardView` gains
+historical-round and Overall modes (new `PhaseResultsList` view with tier headers + starred
+counting runs); `UpcomingAthletesStrip` caps at 10 chips + "+N more" full-queue sheet with
+favorites pinned. Overall auto-selects once every round is finished (once per event).
+
+**Files modified:** `server/routes/phases.js`, `server/routes/viewer.js`, `README.md`,
+`client/src/help/topics/ref-viewer-api.md`, `server/public/docs/guides/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

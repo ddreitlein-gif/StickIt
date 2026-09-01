@@ -240,19 +240,20 @@ Returns the live state of an event: who is on course, who is up next, and what r
 ```
 
 - `athlete_on_course` is `null` when no run is active.
-- `upcoming_athletes` lists the next 10 athletes in run order who have not yet competed in the current round.
+- `upcoming_athletes` lists athletes in run order who have not yet competed in the current round — the next 10 by default. `?upcoming_limit=<n>` (v2.2.00) raises the cap up to a maximum of 100 (`all` is accepted and maps to 100).
 - `current_round` / `current_run_number` are `null` for events in `setup` state.
 
 ---
 
 ### GET `/events/:eventId/results`
 
-Returns scored results for the current active round. For dual mogul events, returns the full bracket instead.
+Returns scored results for one round — the current active round by default, or the round named by `?run_number=<n>` (v2.2.00). For dual mogul events, returns the full bracket instead (the `run_number` param is ignored for duals).
 
 **Mogul / aerials response:**
 ```json
 {
   "discipline": "mogul",
+  "run_number": 2,
   "results": [
     {
       "rank": 1,
@@ -269,14 +270,17 @@ Returns scored results for the current active round. For dual mogul events, retu
       "jump1_dd": 0.78,
       "jump2_code": "7oG",
       "jump2_dd": 1.02,
-      "run_status": null
+      "run_status": null,
+      "effective_status": null
     }
   ]
 }
 ```
 
 - `run_status` is `null` for a normal scored run; `"DNS"`, `"DNF"`, `"DSQ"`, or `"RNS"` otherwise.
-- Results are ranked by `total_score` descending. DNS/DNF/DSQ athletes sort last.
+- Ranking (v2.2.00) is rule-correct and matches the web scoreboard: scored athletes are ordered by the FIS tie-break (ICR 4207.3 for moguls, USSS 4110.4.3 for aerials), athletes tied at the unbreakable level **share a rank** and the next rank skips (Olympic-style), and statused athletes order scored → DNF → RNS → DNS with DSQ at the event bottom (USSS 4012.3), each consuming a numeric place. Render rows in array order; do not re-sort by `rank`.
+- `run_number` (v2.2.00) echoes the round actually served. `?run_number=<n>` requests a specific round; an unknown round returns `400 { "error": "Unknown run_number" }`. Servers older than v2.2.00 ignore the param and omit the echo — treat the echo's presence as feature detection.
+- `effective_status` (v2.2.00) is the resolved status when the athlete's placement in this round comes from a flagged run (multi-run precedence DSQ > DNF > RNS > DNS); `null` for scored rows.
 - `run_time` (v1.28.00) is the actual finish time in **seconds** for the athlete's best run. `null` = No Time (NT) or an event with no timed component (e.g. Devo). `time_score` remains the derived speed score.
 - `jump1_code` / `jump2_code` (v1.28.00) are the jumps as scored; `jump1_dd` / `jump2_dd` are the exact Degree of Difficulty applied. A DD of `0` means that jump was dropped by the repeat-jump rule. Second-jump fields are `null` for single-jump events.
 - `registration_id` (v1.30.00) joins the row to the `runs[]` / `scores[]` arrays from `/results/scores` — use it instead of order-based matching.
@@ -310,6 +314,47 @@ Returns scored results for the current active round. For dual mogul events, retu
 - `nj_call` (v1.29.00): FS-18 landing zone (chop) No Jump call — `null`, `"blue"`, `"red"`, or `"both"`. Badge the flagged athlete(s).
 - `blue_score` / `red_score` (v1.29.00) are **effective** totals with the NJ speed override and tie credits applied (a tied-time match totals 25: the speed row pays 3/3), matching the web scoreboard.
 - `winner_side` (v1.30.00) is the authoritative winner — `"blue"`, `"red"`, or `null` while undecided — derived from the stored winner id. Use it instead of comparing scores, which is wrong for NJ-decided and tie-break matches. `registration_id_blue` / `registration_id_red` (v1.30.00) let you map bracket rows to placements by registration id.
+
+---
+
+### GET `/events/:eventId/results/phases`
+
+Combined standings for phased mogul/aerials events (v2.2.00): Best of 2 and Qualifier/Finals, with tier structure, per-run detail, and the counting run marked. Assembled by the same server code as the web scoreboard's phase view, so clients never re-implement the best-run or tier rules. Dual mogul events return `400 { "error": "Phase results are not available for dual_mogul events" }`; events with no phases return `{ "format": "none", "phases": [], "results": [] }`.
+
+**Example response (Best of 2):**
+```json
+{
+  "format": "best_of_2",
+  "phases": [
+    { "id": "uuid", "label": "Run 1", "run_number": 1, "phase_type": "run", "status": "complete" },
+    { "id": "uuid", "label": "Run 2", "run_number": 2, "phase_type": "best_of_2", "status": "complete" }
+  ],
+  "results": [
+    {
+      "rank": 1,
+      "registration_id": "uuid",
+      "bib_number": 90,
+      "first_name": "John",
+      "last_name": "Lewin",
+      "best_score": 49.74,
+      "tier": null,
+      "tier_label": null,
+      "effective_status": null,
+      "runs": {
+        "1": { "total_score": 47.10, "turns_score": 39.0, "air_score": 8.10, "time_score": 0.0,
+               "run_time": null, "run_status": null, "jump1_code": "S", "jump2_code": null, "counts": false },
+        "2": { "total_score": 49.74, "turns_score": 40.5, "air_score": 9.24, "time_score": 0.0,
+               "run_time": null, "run_status": null, "jump1_code": "3", "jump2_code": null, "counts": true }
+      }
+    }
+  ]
+}
+```
+
+- `format`: `"none"`, `"single"`, `"best_of_2"`, or `"qualifier_finals"`.
+- `results` arrive fully ordered — render in array order. Ranks share on ties (Olympic-style skips); flagged athletes carry numeric ranks with `effective_status` set and `best_score` null.
+- `runs` is keyed by run number as a string. `counts: true` marks the run whose score ranks the row (the run the web scoreboard stars). Flagged rows have no counting run.
+- `tier` / `tier_label` are `null` for `single` and `best_of_2` scored rows. Qualifier/finals events use tiers such as `final_2` / `final_1` / `qualifier` ordered highest first; event-bottom DSQ rows carry tier `flagged`, label `DSQ`. Group consecutive rows by `tier` to render section headers.
 
 ---
 
@@ -381,7 +426,7 @@ Per-judge blue/red point splits for one dual mogul match (v1.26.00) — the data
 
 ### GET `/events/:eventId/results/scores`
 
-Returns per-judge, per-score-type raw scores for all completed runs in the current active round. Use this to build an expanded score detail view.
+Returns per-judge, per-score-type raw scores for all completed runs in one round — the current active round by default, or the round named by `?run_number=<n>` (v2.2.00; unknown round → `400 { "error": "Unknown run_number" }`). Use this to build an expanded score detail view.
 
 **Example response:**
 ```json
@@ -443,7 +488,7 @@ Returns the list of rounds (phases) for an event with their status.
 
 ### Error responses
 
-All endpoints return `404` with `{ "error": "Event not found" }` for an unknown ID or short code, and `500` with `{ "error": "<message>" }` on a database failure. `/placements` returns `400` for non-dual-mogul events.
+All endpoints return `404` with `{ "error": "Event not found" }` for an unknown ID or short code, and `500` with `{ "error": "<message>" }` on a database failure. `/placements` returns `400` for non-dual-mogul events; `/results/phases` returns `400` for dual mogul events; `/results` and `/results/scores` return `400` with `{ "error": "Unknown run_number" }` for a `run_number` the event does not have.
 
 ---
 
