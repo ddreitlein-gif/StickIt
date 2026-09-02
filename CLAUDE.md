@@ -75,7 +75,7 @@ Then create the zip directly from the `StickIt/` parent (never use a staging fol
 ```bash
 cd /Users/daviddreitlein/Desktop/StickIt
 zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
-  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*" "harness/*"
+  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*" "harness/*" "* [0-9].*"
 
 # Why each exclusion:
 #   */node_modules/*  → installed deps (~100MB)
@@ -83,11 +83,14 @@ zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
 #   */data/*          → runtime DB + uploaded logos + backups (production has its own)
 #   client/dist/*     → Vite build intermediate (final assets already in server/public/assets)
 #   harness/*         → v2 simulation test harness (R16) — dev-Mac only, never deployed
+#   "* [0-9].*"       → macOS/iCloud duplicate copies ("index-abc 3.css", "foo 2.woff2") that
+#                       appear untracked in server/public/assets + client/dist (gitignored via
+#                       the same pattern, but zip would sweep them in — v2.3.00 hit 9.2MB)
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
-# Verify size — ~7MB as of v2 (~4MB self-hosted fonts [FR-18] + ~0.6MB guide
-# PDFs). If it's >9MB, an exclusion is missing. (Pre-v2 builds were ~3MB.)
+# Verify size — ~5.5MB as of v2.3.00 (~4MB self-hosted fonts [FR-18] + ~0.6MB guide
+# PDFs). If it's >7MB, an exclusion is missing (first suspect: the "* [0-9].*" dupes). (Pre-v2 builds were ~3MB.)
 ls -lh /tmp/StickIt_X_X_XX.zip
 
 # Deliver
