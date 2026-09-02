@@ -1,6 +1,6 @@
 {
   "name": "stickit-server",
-  "version": "2.2.01",
+  "version": "2.3.00",
   "private": true,
   "license": "CC-BY-NC-SA-4.0",
   "scripts": {

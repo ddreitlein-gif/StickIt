@@ -1187,8 +1187,8 @@ async function executeImport(data, zipPath, opts = {}) {
         turns_score, air_score, air_score_no_dd, speed_score, total_score, run_time,
         status, run_status, hj_pending,
         tl_carving, tl_abext, tl_upper_body, tl_deduction,
-        manually_entered, aerials_model, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        manually_entered, aerials_model, air_codes_reconciled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [runMap[r.id], eventMap[r.event_id] ?? null, mappedReg,
        r.run_number ?? 1, r.round ?? 'qualification',
        r.bracket_round ?? null, r.bracket_position ?? null, r.course ?? null,
@@ -1196,7 +1196,7 @@ async function executeImport(data, zipPath, opts = {}) {
        r.turns_score ?? null, r.air_score ?? null, r.air_score_no_dd ?? null, r.speed_score ?? null, r.total_score ?? null,
        r.run_time ?? null, r.status ?? 'pending', r.run_status ?? null, r.hj_pending ?? 0,
        r.tl_carving ?? null, r.tl_abext ?? null, r.tl_upper_body ?? null, r.tl_deduction ?? null,
-       r.manually_entered ?? 0, r.aerials_model ?? null]
+       r.manually_entered ?? 0, r.aerials_model ?? null, r.air_codes_reconciled ?? 0]
     );
   }
 
@@ -1207,11 +1207,11 @@ async function executeImport(data, zipPath, opts = {}) {
     if (!mappedRun || !mappedJudge) continue;
     await execute(
       `INSERT INTO judge_scores (id, run_id, judge_id, score_type, raw_score,
-        tl_carving, tl_abext, tl_upper_body, tl_deduction, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        tl_carving, tl_abext, tl_upper_body, tl_deduction, jump_code, submitted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       [uuidv4(), mappedRun, mappedJudge,
        js.score_type ?? 'tl', js.raw_score ?? 0,
-       js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null]
+       js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null, js.jump_code ?? null]
     );
   }
 
@@ -1606,12 +1606,12 @@ async function executeMerge(existingMeetId, data, zipPath) {
            run_status=COALESCE(?,run_status), hj_pending=COALESCE(?,hj_pending),
            tl_carving=COALESCE(?,tl_carving), tl_abext=COALESCE(?,tl_abext),
            tl_upper_body=COALESCE(?,tl_upper_body), tl_deduction=COALESCE(?,tl_deduction),
-           manually_entered=COALESCE(?,manually_entered), updated_at=datetime('now') WHERE id=?`,
+           manually_entered=COALESCE(?,manually_entered), air_codes_reconciled=COALESCE(?,air_codes_reconciled), updated_at=datetime('now') WHERE id=?`,
           [r.jump1_code ?? null, r.jump1_dd ?? null, r.jump2_code ?? null, r.jump2_dd ?? null,
            r.turns_score ?? null, r.air_score ?? null, r.speed_score ?? null, r.total_score ?? null,
            r.run_time ?? null, r.status ?? null, r.run_status ?? null, r.hj_pending ?? null,
            r.tl_carving ?? null, r.tl_abext ?? null, r.tl_upper_body ?? null, r.tl_deduction ?? null,
-           r.manually_entered ?? null, existing.id]
+           r.manually_entered ?? null, r.air_codes_reconciled ?? null, existing.id]
         );
         summary.runs_updated++;
       }
@@ -1625,8 +1625,8 @@ async function executeMerge(existingMeetId, data, zipPath) {
           turns_score, air_score, air_score_no_dd, speed_score, total_score, run_time,
           status, run_status, hj_pending,
           tl_carving, tl_abext, tl_upper_body, tl_deduction,
-          manually_entered, aerials_model, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+          manually_entered, aerials_model, air_codes_reconciled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, mappedEvent, mappedReg,
          r.run_number ?? 1, r.round ?? 'qualification',
          r.bracket_round ?? null, r.bracket_position ?? null, r.course ?? null,
@@ -1634,7 +1634,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
          r.turns_score ?? null, r.air_score ?? null, r.air_score_no_dd ?? null, r.speed_score ?? null, r.total_score ?? null,
          r.run_time ?? null, r.status ?? 'pending', r.run_status ?? null, r.hj_pending ?? 0,
          r.tl_carving ?? null, r.tl_abext ?? null, r.tl_upper_body ?? null, r.tl_deduction ?? null,
-         r.manually_entered ?? 0, r.aerials_model ?? null]
+         r.manually_entered ?? 0, r.aerials_model ?? null, r.air_codes_reconciled ?? 0]
       );
       summary.runs_added++;
     }
@@ -1652,16 +1652,16 @@ async function executeMerge(existingMeetId, data, zipPath) {
     if (existing) {
       if (isNewer(js.submitted_at, existing.submitted_at)) {
         await execute(
-          `UPDATE judge_scores SET raw_score=?, tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?, submitted_at=datetime('now') WHERE id=?`,
-          [js.raw_score ?? 0, js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null, existing.id]
+          `UPDATE judge_scores SET raw_score=?, tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?, jump_code=COALESCE(?,jump_code), submitted_at=datetime('now') WHERE id=?`,
+          [js.raw_score ?? 0, js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null, js.jump_code ?? null, existing.id]
         );
       }
     } else {
       await execute(
-        `INSERT INTO judge_scores (id, run_id, judge_id, score_type, raw_score, tl_carving, tl_abext, tl_upper_body, tl_deduction, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        `INSERT INTO judge_scores (id, run_id, judge_id, score_type, raw_score, tl_carving, tl_abext, tl_upper_body, tl_deduction, jump_code, submitted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [uuidv4(), mappedRun, mappedJudge, js.score_type ?? 'tl', js.raw_score ?? 0,
-         js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null]
+         js.tl_carving ?? null, js.tl_abext ?? null, js.tl_upper_body ?? null, js.tl_deduction ?? null, js.jump_code ?? null]
       );
     }
   }

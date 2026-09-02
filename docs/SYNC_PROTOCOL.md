@@ -1,6 +1,6 @@
 # StickIt v2 Sync Protocol — Specification
 
-**Protocol version:** 1 (`SYNC_PROTOCOL_VERSION` in `server/sync/protocol.js`)
+**Protocol version:** 3 (`SYNC_PROTOCOL_VERSION` in `server/sync/protocol.js`; 2 → 3 in v2.3.00 for `judge_scores.jump_code` + `runs.air_codes_reconciled`, 1 → 2 in v2.1.00 for the Advanced meet settings + `dual_judge_points.submitted_at`)
 **Governing plan:** `StickIt_v2.0_Local_Venue_Server_Design_Plan_08-21-26.md` (Revision 4)
 
 This document is the written contract between the **cloud** (Render + Turso,

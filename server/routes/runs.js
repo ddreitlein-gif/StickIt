@@ -282,12 +282,13 @@ router.get('/active', async (req, res) => {
     if (run) {
       const submitted = await queryAll(
         `SELECT js.id, js.judge_id, js.score_type, js.raw_score,
-                js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction,
+                js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction, js.jump_code,
                 j.role, j.name
          FROM judge_scores js JOIN judges j ON j.id = js.judge_id WHERE js.run_id = ?`,
         [run.id]
       );
-      return res.json({ ...run, bib_number: '', first_name: 'Forerunner', last_name: '', club: '', run_order: null, submitted, run_position: null, total_runners: null, phase_label: null, is_forerunner: true });
+      const airState = await getAirCodeState(run, submitted, req.params.eventId);
+      return res.json({ ...run, ...airState, bib_number: '', first_name: 'Forerunner', last_name: '', club: '', run_order: null, submitted, run_position: null, total_runners: null, phase_label: null, is_forerunner: true });
     }
 
     run = await queryOne(
@@ -312,7 +313,7 @@ router.get('/active', async (req, res) => {
 
     const submitted = await queryAll(
       `SELECT js.id, js.judge_id, js.score_type, js.raw_score,
-              js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction,
+              js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction, js.jump_code,
               j.role, j.name
        FROM judge_scores js JOIN judges j ON j.id = js.judge_id WHERE js.run_id = ?`,
       [run.id]
@@ -345,11 +346,64 @@ router.get('/active', async (req, res) => {
     }
 
     const phaseLabel = activePhase ? activePhase.label : null;
-    res.json({ ...run, submitted, run_position, total_runners, phase_label: phaseLabel });
+    const airState = await getAirCodeState(run, submitted, req.params.eventId);
+    res.json({ ...run, ...airState, submitted, run_position, total_runners, phase_label: phaseLabel });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Manual score entry helpers ─────────────────────────────────────────────────
+
+// v2.3.00 -- the tablet jump-code path's DD lookup, extracted VERBATIM from
+// PUT /:runId so the HJ "Accept These Codes" path resolves exactly the DD the
+// codes would have received had that judge submitted first: gender-specific
+// row first, then the discipline-only row, null on a miss. Deliberately NOT
+// resolveJumpDD (that one canonicalizes / throws -- it serves manual entry).
+async function tabletLookupDD(code, disc, gender) {
+  const r = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=? AND gender=?`, [code, disc, gender]);
+  if (r) return r.dd_value;
+  const r2 = await queryOne(`SELECT dd_value FROM jump_dd_table WHERE jump_code=? AND discipline=?`, [code, disc]);
+  return r2 ? r2.dd_value : null;
+}
+
+// v2.3.00 -- Air judge jump-code mismatch state for a run. Each Air judge's
+// air_jump1/air_jump2 rows carry the code that judge scored against
+// (judge_scores.jump_code); the run row holds the official pair (set by the
+// first judge to submit, or by the HJ's Accept). A mismatch exists when any
+// judge's recorded code differs from the official code for that jump --
+// compared EXACT-CASE (David's ruling 09-02-26): since v1.26.00 case carries
+// meaning (bg/bG basic vs advanced grab, bp/bP position vs pike) and changes
+// the DD. Rows without a code (turns rows, pre-v2.3.00 rows, other paths)
+// never count. Returns { air_code_mismatch, air_codes_by_judge }.
+//   `submitted` may be passed to avoid a second query (must include jump_code,
+//   judge_id, role, name, score_type); otherwise the rows are fetched.
+async function getAirCodeState(run, submitted, eventId) {
+  let rows = submitted;
+  if (!rows) {
+    rows = await queryAll(
+      `SELECT js.judge_id, js.score_type, js.jump_code, j.role, j.name
+       FROM judge_scores js JOIN judges j ON j.id = js.judge_id
+       WHERE js.run_id = ? AND js.score_type IN ('air_jump1','air_jump2')`,
+      [run.id]
+    );
+  }
+  const byJudge = new Map();
+  for (const r of rows) {
+    if (r.score_type !== 'air_jump1' && r.score_type !== 'air_jump2') continue;
+    if (r.jump_code == null || r.jump_code === '') continue;
+    if (!byJudge.has(r.judge_id)) byJudge.set(r.judge_id, { judge_id: r.judge_id, role: r.role, name: r.name, jump1_code: null, jump2_code: null });
+    const e = byJudge.get(r.judge_id);
+    if (r.score_type === 'air_jump1') e.jump1_code = String(r.jump_code).trim();
+    else e.jump2_code = String(r.jump_code).trim();
+  }
+  const same = (a, b) => (a == null ? '' : String(a).trim()) === (b == null ? '' : String(b).trim());
+  let mismatch = false;
+  for (const e of byJudge.values()) {
+    if (e.jump1_code != null && !same(e.jump1_code, run.jump1_code)) mismatch = true;
+    if (e.jump2_code != null && !same(e.jump2_code, run.jump2_code)) mismatch = true;
+  }
+  const list = [...byJudge.values()].sort((a, b) => String(a.role).localeCompare(String(b.role)));
+  return { air_code_mismatch: mismatch, air_codes_by_judge: list };
+}
 
 // Resolve DD value for a jump code; throws with a user-readable message on miss.
 async function resolveJumpDD(code, disc, gender) {
@@ -403,7 +457,7 @@ router.get('/:runId/scores', async (req, res) => {
     if (!run) return res.status(404).json({ error: 'Run not found' });
     const scores = await queryAll(
       `SELECT js.id, js.judge_id, js.score_type, js.raw_score,
-              js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction,
+              js.tl_carving, js.tl_abext, js.tl_upper_body, js.tl_deduction, js.jump_code,
               j.role, j.name, j.judge_number
        FROM judge_scores js JOIN judges j ON j.id=js.judge_id
        WHERE js.run_id=? ORDER BY j.role, js.score_type`,
@@ -1201,8 +1255,10 @@ router.put('/:runId', async (req, res) => {
 
     // If HJ is clearing jump codes so they can be re-entered
     if (clear_jump_codes) {
+      // v2.3.00: also drops the HJ-reconciled flag (this is the "Reject Both
+      // Codes" action of the mismatch box as well as the plain Reject Codes).
       await execute(
-        `UPDATE runs SET jump1_code=NULL, jump2_code=NULL, jump1_dd=NULL, jump2_dd=NULL, updated_at=datetime('now') WHERE id=? AND event_id=?`,
+        `UPDATE runs SET jump1_code=NULL, jump2_code=NULL, jump1_dd=NULL, jump2_dd=NULL, air_codes_reconciled=0, updated_at=datetime('now') WHERE id=? AND event_id=?`,
         [req.params.runId, req.params.eventId]
       );
       // Also delete air judge scores so they detect rejection and can re-enter codes + scores
@@ -1222,15 +1278,28 @@ router.put('/:runId', async (req, res) => {
       return res.json(updated);
     }
 
-    // Block jump code overwrite if codes are already set (prevent Air Judge 2 from overwriting Air Judge 1)
+    // The first Air judge's codes become the run's official codes. A second
+    // judge submitting the SAME codes falls through to a no-op update.
+    //
+    // v2.3.00 -- a second judge submitting DIFFERENT codes is no longer
+    // refused (the old 409 blocked that judge's scores entirely, stalling the
+    // run until the HJ cleared codes). The run's codes are left untouched,
+    // the response carries codes_mismatch:true, and the judge's scores go in
+    // normally -- each air row records the code its judge scored against
+    // (POST /scores jump_code), which is what the HJ mismatch box and the
+    // finalize gate read. Comparison is exact-case (see getAirCodeState).
     if (jump1_code || jump2_code) {
       const existing = await queryOne('SELECT jump1_code, jump2_code FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
-      if (existing && existing.jump1_code && existing.jump2_code) {
-        // If Air Judge 2 submits the same codes, allow it (no-op update, judge proceeds)
-        const codesMatch = (jump1_code || '').trim().toUpperCase() === (existing.jump1_code || '').trim().toUpperCase()
-                        && (jump2_code || '').trim().toUpperCase() === (existing.jump2_code || '').trim().toUpperCase();
+      const evtJumps = await queryOne('SELECT num_jumps FROM events WHERE id=?', [req.params.eventId]);
+      const needJump2 = ((evtJumps && evtJumps.num_jumps) || 2) >= 2;
+      const codesSet = !!(existing && existing.jump1_code && (!needJump2 || existing.jump2_code));
+      if (codesSet) {
+        const codesMatch = (jump1_code || '').trim() === (existing.jump1_code || '').trim()
+                        && (!needJump2 || (jump2_code || '').trim() === (existing.jump2_code || '').trim());
         if (!codesMatch) {
-          return res.status(409).json({ error: 'Jump codes differ from the other Air Judge.  Contact the Head Judge to resolve.' });
+          const current = await queryOne('SELECT * FROM runs WHERE id=?', [req.params.runId]);
+          const duplicateJumps = !!(jump1_code && jump2_code && areJumpsRepeats(jump1_code, jump2_code));
+          return res.json({ ...current, codes_mismatch: true, duplicate_jumps: duplicateJumps });
         }
         // Codes match -- fall through to the normal update (effectively a no-op)
       }
@@ -1300,13 +1369,98 @@ router.put('/:runId', async (req, res) => {
 });
 
 // POST submit a judge score for a run
+// v2.3.00 -- HJ resolves an Air judge jump-code mismatch by accepting ONE
+// judge's codes for both. PUBLIC (tablet rule: any button on a tablet must hit
+// a public endpoint -- v1.26.02). Body { judge_id }.
+//   1. The run's official codes + DDs become that judge's codes, DDs resolved
+//      through tabletLookupDD (identical to the PUT path -- no math change).
+//   2. Every air row's recorded code is overwritten with the accepted codes
+//      ("set the air codes of both judges to the codes accepted") so the
+//      mismatch clears; the originals go to the audit log.
+//   3. runs.air_codes_reconciled=1 drives the "Air Codes Reconciled by Head
+//      Judge" message on both Air judge tablets.
+//   4. tryFinalize runs so a run that is otherwise complete moves to
+//      hj_pending with fresh totals, exactly as a final score POST would.
+router.post('/:runId/air-codes/accept', async (req, res) => {
+  try {
+    const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    if (run.status === 'complete') return res.status(400).json({ error: 'Run already complete' });
+    const { judge_id } = req.body || {};
+    if (!judge_id) return res.status(400).json({ error: 'judge_id required' });
+    const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    const judge = await queryOne('SELECT * FROM judges WHERE id=? AND event_id=?', [judge_id, req.params.eventId]);
+    if (!judge) return res.status(404).json({ error: 'Judge not found for this event' });
+
+    const before = await getAirCodeState(run, null, req.params.eventId);
+    const chosen = before.air_codes_by_judge.find(j => j.judge_id === judge_id);
+    const numJumps = event.num_jumps || 2;
+    if (!chosen || !chosen.jump1_code || (numJumps >= 2 && !chosen.jump2_code)) {
+      return res.status(400).json({ error: 'That judge has not submitted a complete set of jump codes for this run.' });
+    }
+
+    const disc = event.discipline === 'dual_mogul' ? 'dual_mogul'
+               : event.discipline === 'aerials'    ? 'aerials'
+               : 'mogul';
+    const eventGender = event.gender || 'M';
+    const code1 = chosen.jump1_code;
+    const code2 = numJumps >= 2 ? chosen.jump2_code : null;
+    const dd1 = await tabletLookupDD(code1, disc, eventGender);
+    const dd2 = code2 ? await tabletLookupDD(code2, disc, eventGender) : null;
+
+    await execute(
+      `UPDATE runs SET jump1_code=?, jump1_dd=?, jump2_code=?, jump2_dd=?, air_codes_reconciled=1, updated_at=datetime('now')
+       WHERE id=? AND event_id=?`,
+      [code1, dd1, code2, dd2, run.id, req.params.eventId]
+    );
+    await execute(
+      `UPDATE judge_scores SET jump_code=? WHERE run_id=? AND score_type='air_jump1' AND jump_code IS NOT NULL`,
+      [code1, run.id]
+    );
+    if (code2) {
+      await execute(
+        `UPDATE judge_scores SET jump_code=? WHERE run_id=? AND score_type='air_jump2' AND jump_code IS NOT NULL`,
+        [code2, run.id]
+      );
+    }
+
+    try {
+      await logAudit('air_codes_reconciled', 'run', run.id,
+        { jump1_code: run.jump1_code, jump2_code: run.jump2_code, jump1_dd: run.jump1_dd, jump2_dd: run.jump2_dd, by_judge: before.air_codes_by_judge },
+        { accepted_judge_id: judge_id, accepted_role: judge.role, accepted_name: judge.name, jump1_code: code1, jump1_dd: dd1, jump2_code: code2, jump2_dd: dd2 });
+    } catch (_) {}
+
+    const updated = await queryOne('SELECT * FROM runs WHERE id=?', [run.id]);
+    if (req.app.broadcast) req.app.broadcast(req.params.eventId, 'run_updated', updated);
+
+    // Same post-write behavior as a score POST: attempt finalization and send
+    // the same broadcasts (HJ present -> interim nudge only; none -> publish).
+    const final = await tryFinalize(updated, req.params.eventId);
+    if (final && req.app.broadcast) {
+      const hjRow = await queryOne(`SELECT id FROM judges WHERE event_id=? AND role='HJ'`, [req.params.eventId]);
+      if (!hjRow) {
+        const rank = await computeOverallRank(req.params.eventId, updated.registration_id, final.total);
+        const agt = await getAgeGroupTransition(req.params.eventId, updated.registration_id);
+        req.app.broadcast(req.params.eventId, 'score_update', { ...final, runId: updated.id, rank, ...(agt && { age_group_transition: agt }) });
+      } else {
+        req.app.broadcast(req.params.eventId, 'score_update', { runId: updated.id, interim: true, hjPending: true });
+      }
+    }
+
+    const after = await queryOne('SELECT * FROM runs WHERE id=?', [run.id]);
+    const airState = await getAirCodeState(after, null, req.params.eventId);
+    res.json({ ...after, ...airState });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/:runId/scores', async (req, res) => {
   try {
     const run = await queryOne('SELECT * FROM runs WHERE id=? AND event_id=?', [req.params.runId, req.params.eventId]);
     if (!run) return res.status(404).json({ error: 'Run not found' });
     if (run.status === 'complete') return res.status(400).json({ error: 'Run already complete' });
 
-    let { judge_id, score_type, raw_score, pin, carving, abext, upper_body, deduction } = req.body;
+    let { judge_id, score_type, raw_score, pin, carving, abext, upper_body, deduction, jump_code } = req.body;
     if (!judge_id || !score_type || raw_score === undefined) {
       return res.status(400).json({ error: 'judge_id, score_type, and raw_score required' });
     }
@@ -1336,29 +1490,34 @@ router.post('/:runId/scores', async (req, res) => {
 
     const ex = await queryOne('SELECT id FROM judge_scores WHERE run_id=? AND judge_id=? AND score_type=?', [run.id, judge_id, score_type]);
     const isTurns = score_type === 'turns';
+    // v2.3.00 -- the code this Air judge scored against (mismatch reconciliation).
+    const isAirRow = score_type === 'air_jump1' || score_type === 'air_jump2';
+    const rowCode = isAirRow && typeof jump_code === 'string' && jump_code.trim() ? jump_code.trim() : null;
     if (ex) {
       await execute(
         `UPDATE judge_scores SET raw_score=?, submitted_at=datetime('now'),
-           tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?
+           tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?, jump_code=?
          WHERE id=?`,
         [raw_score,
          isTurns ? (carving    ?? null) : null,
          isTurns ? (abext      ?? null) : null,
          isTurns ? (upper_body ?? null) : null,
          isTurns ? (deduction  ?? null) : null,
+         rowCode,
          ex.id]
       );
     } else {
       try {
         await execute(
           `INSERT INTO judge_scores
-             (id,run_id,judge_id,score_type,raw_score,tl_carving,tl_abext,tl_upper_body,tl_deduction)
-           VALUES (?,?,?,?,?,?,?,?,?)`,
+             (id,run_id,judge_id,score_type,raw_score,tl_carving,tl_abext,tl_upper_body,tl_deduction,jump_code)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [uuidv4(), run.id, judge_id, score_type, raw_score,
            isTurns ? (carving    ?? null) : null,
            isTurns ? (abext      ?? null) : null,
            isTurns ? (upper_body ?? null) : null,
-           isTurns ? (deduction  ?? null) : null]
+           isTurns ? (deduction  ?? null) : null,
+           rowCode]
         );
       } catch (insErr) {
         // v2.0.00 (FR-11) -- the UNIQUE(run_id, judge_id, score_type) index can
@@ -1373,13 +1532,14 @@ router.post('/:runId/scores', async (req, res) => {
         if (!won) throw insErr;
         await execute(
           `UPDATE judge_scores SET raw_score=?, submitted_at=datetime('now'),
-             tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?
+             tl_carving=?, tl_abext=?, tl_upper_body=?, tl_deduction=?, jump_code=?
            WHERE id=?`,
           [raw_score,
            isTurns ? (carving    ?? null) : null,
            isTurns ? (abext      ?? null) : null,
            isTurns ? (upper_body ?? null) : null,
            isTurns ? (deduction  ?? null) : null,
+           rowCode,
            won.id]
         );
       }
@@ -1457,6 +1617,13 @@ async function tryFinalize(run, eventId) {
   const needsJump2 = (event.num_jumps || 2) >= 2;
   if (needsJump2 && a2.length < event.num_air_judges) return null;
   if (event.has_speed && !run.run_time) return null;
+
+  // v2.3.00 -- Air judges disagree on the jump codes: hold the run. The DDs on
+  // the run row belong to whichever judge submitted first, so computing here
+  // could publish the wrong DD. Covers BOTH the HJ approve gate and the no-HJ
+  // auto-publish path; the HJ resolves it with Accept / Reject Both Codes.
+  const airState = await getAirCodeState(run, null, eventId);
+  if (airState.air_code_mismatch) return null;
 
   // F-5: detect a repeat from the stored codes; the engine decides which jump
   // to drop after scoring (RQS keeps the higher-scored jump).
@@ -1658,6 +1825,13 @@ router.post('/:runId/approve', async (req, res) => {
     // rows. Approving therefore always publishes a fresh computation.
     const finalResult = await tryFinalize(run, req.params.eventId);
     if (finalResult == null && run.registration_id !== '__forerunner__') {
+      // v2.3.00 -- jump-code mismatch is a distinct (and more likely) reason.
+      const airState = await getAirCodeState(run, null, req.params.eventId);
+      if (airState.air_code_mismatch) {
+        return res.status(400).json({
+          error: 'Cannot finalize: the Air judges submitted different jump codes.  Accept one judge\'s codes or reject both codes first.'
+        });
+      }
       // Incomplete -- build the missing-scores breakdown for the error.
       const event = await queryOne('SELECT * FROM events WHERE id=?', [req.params.eventId]);
       const refreshed = await queryOne('SELECT run_time FROM runs WHERE id=?', [req.params.runId]);

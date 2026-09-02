@@ -31,7 +31,12 @@ const crypto = require('crypto');
 // Column additions change row canonicalization and table checksums, so a
 // mixed-version pair would fail check-in mysteriously — the version gate makes
 // an outdated venue refuse adoption cleanly and prompt for an update instead.
-const SYNC_PROTOCOL_VERSION = 2;
+// v2.3.00: bumped 2 → 3. The manifest gained judge_scores.jump_code (the code
+// each Air judge scored against) and runs.air_codes_reconciled (HJ accepted one
+// judge's codes) for the jump-code mismatch reconciliation flow. Same reasoning
+// as the 1 → 2 bump: column additions change row canonicalization and table
+// checksums, so the version gate must refuse a mixed-version pair up front.
+const SYNC_PROTOCOL_VERSION = 3;
 
 /**
  * Per-table manifest.
@@ -99,12 +104,12 @@ const TABLES = {
   },
   runs: {
     pk: ['id'],
-    columns: ['id', 'event_id', 'registration_id', 'run_number', 'round', 'bracket_round', 'bracket_position', 'course', 'jump1_code', 'jump1_dd', 'jump2_code', 'jump2_dd', 'turns_score', 'air_score', 'speed_score', 'total_score', 'run_time', 'status', 'created_at', 'updated_at', 'run_status', 'hj_pending', 'tl_carving', 'tl_abext', 'tl_upper_body', 'tl_deduction', 'manually_entered', 'air_score_no_dd', 'aerials_model', 'voice_transcript'],
+    columns: ['id', 'event_id', 'registration_id', 'run_number', 'round', 'bracket_round', 'bracket_position', 'course', 'jump1_code', 'jump1_dd', 'jump2_code', 'jump2_dd', 'turns_score', 'air_score', 'speed_score', 'total_score', 'run_time', 'status', 'created_at', 'updated_at', 'run_status', 'hj_pending', 'tl_carving', 'tl_abext', 'tl_upper_body', 'tl_deduction', 'manually_entered', 'air_score_no_dd', 'aerials_model', 'voice_transcript', 'air_codes_reconciled'],
     sync: true, checksum: true, snapshot: true, scope: 'event',
   },
   judge_scores: {
     pk: ['id'],
-    columns: ['id', 'run_id', 'judge_id', 'score_type', 'raw_score', 'submitted_at', 'tl_carving', 'tl_abext', 'tl_upper_body', 'tl_deduction'],
+    columns: ['id', 'run_id', 'judge_id', 'score_type', 'raw_score', 'submitted_at', 'tl_carving', 'tl_abext', 'tl_upper_body', 'tl_deduction', 'jump_code'],
     sync: true, checksum: true, snapshot: true, scope: 'run',
   },
   dual_bracket: {

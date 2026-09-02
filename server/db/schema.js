@@ -356,6 +356,13 @@ async function initSchema() {
     // judge_scores.submitted_at (set on insert AND refreshed on resubmit).
     // In the sync manifest (dual_judge_points.columns).
     `ALTER TABLE dual_judge_points ADD COLUMN submitted_at TEXT`,
+    // v2.3.00 -- Air judge jump-code mismatch reconciliation. Each Air judge's
+    // air_jump1/air_jump2 row records the code THAT judge scored against
+    // (NULL on turns/aerials rows and on pre-v2.3.00 rows); the run keeps the
+    // official pair. runs.air_codes_reconciled=1 once the HJ accepted one
+    // judge's codes for both. Both are in the sync manifest (protocol v3).
+    `ALTER TABLE judge_scores ADD COLUMN jump_code TEXT`,
+    `ALTER TABLE runs ADD COLUMN air_codes_reconciled INTEGER NOT NULL DEFAULT 0`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

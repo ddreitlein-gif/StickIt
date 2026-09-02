@@ -15,7 +15,14 @@ const API = '/api'
 // Frequent-jump-code lists (preserved verbatim from pre-redesign — see CLAUDE.md
 // v1.16.09 + v1.16.06 plus user's v1.18.05 confirmations Q1/Q2: RQS uses the
 // Devo list).
-const COMP_FREQ_CODES = ['N','S','T','K','TS','3','bT','bp','bL','bG','bF','7op','7oG']
+// v2.3.00 -- Comp Series (and FIS) quick-select is three explicit rows of six:
+// uprights / back flips / off-axis 720s. Adds the FS-13 basic-grab codes bg and
+// 7og (lowercase g = basic grab, v1.26.00). Devo / RQS keep the flat 7x2 list.
+const COMP_FREQ_CODES = [
+  ['N', 'S', 'T', 'K', 'TS', '3'],
+  ['bT', 'bp', 'bL', 'bG', 'bg', 'bF'],
+  ['7op', '7oG', '7og'],
+]
 const DEVO_FREQ_CODES = ['S','T','D','X','K','TS','TT','TD','TTS','3','3p']
 
 // Friendly judge-role display labels — prototype shows "T&L Judge 3", not "TL3".
@@ -718,6 +725,16 @@ export default function JudgeTablet() {
             }
             setStatus('Score rejected -- please resubmit')
           }
+          // v2.3.00 -- same run: keep the jump-code mismatch state fresh so the
+          // FIRST Air judge to submit sees the warning when the second judge's
+          // codes disagree, and both see "reconciled" after the HJ accepts.
+          // Guarded so an unchanged poll does not re-render every 3s.
+          setActiveRun(prev => {
+            if (!prev) return prev
+            const changed = ['air_code_mismatch', 'air_codes_reconciled', 'jump1_code', 'jump2_code', 'jump1_dd', 'jump2_dd']
+              .some(k => (prev[k] ?? null) !== (run[k] ?? null))
+            return changed ? { ...prev, ...run } : prev
+          })
         }
       } catch {}
     }
@@ -785,9 +802,11 @@ export default function JudgeTablet() {
   }
 
   // Returns true on success, false on any failure (validation or server error).
-  // On 409 mismatch ("Jump codes differ from the other Air Judge…"), surfaces
-  // the server's exact error text in the unified `error` state and returns
-  // false so the caller can stop the submit-all sequence.
+  // v2.3.00: codes that differ from the other Air judge's are no longer a 409
+  // -- the server keeps the first judge's codes as the run's official pair,
+  // answers codes_mismatch:true, and this judge's scores still go in (each
+  // carrying this judge's code). The mismatch is shown on the Score Submitted
+  // screen and resolved by the Head Judge.
   const submitCodes = async () => {
     if (!activeRun) { setError('No active run'); return false }
     if (!code1 || (numJumps >= 2 && !code2)) {
@@ -808,7 +827,7 @@ export default function JudgeTablet() {
         return false
       }
       const updated = await res.json()
-      setActiveRun(prev => ({ ...prev, ...updated }))
+      setActiveRun(prev => ({ ...prev, ...updated, ...(updated.codes_mismatch ? { air_code_mismatch: true } : {}) }))
       setCodesSubmitted(true)
       return true
     } catch (e) {
@@ -878,8 +897,10 @@ export default function JudgeTablet() {
         setError('Jump 2 score is required')
         return
       }
-      submissions.push({ score_type: 'air_jump1', raw_score: airJ1 })
-      if (numJumps >= 2) submissions.push({ score_type: 'air_jump2', raw_score: airJ2 })
+      // v2.3.00 -- each air row records the code THIS judge scored against
+      // (mismatch reconciliation on the HJ tablet).
+      submissions.push({ score_type: 'air_jump1', raw_score: airJ1, jump_code: code1.trim() })
+      if (numJumps >= 2) submissions.push({ score_type: 'air_jump2', raw_score: airJ2, jump_code: code2.trim() })
     }
 
     if (!submissions.length) { setError('Please enter a score before submitting'); return }
@@ -968,19 +989,29 @@ export default function JudgeTablet() {
   // ── Athlete bar right cluster (per-judge-role variant) ───────────────────
   let athleteBarRight = null
   if (isAir && activeRun) {
+    const chipDd = (localCode, runCode, runDd) => {
+      if (!localCode) return runDd
+      if (localCode === runCode) return runDd
+      const row = jumpDDs.find(d => d.jump_code === localCode)
+      return row ? row.dd_value : null
+    }
     athleteBarRight = (
       <>
+        {/* v2.3.00 -- the chip shows THIS judge's own pick once made (with its DD
+            from the event's DD list); before a pick it falls back to the run's
+            official code. Previously the run's code won, which read wrong on the
+            judge whose codes differ during a mismatch. */}
         <JumpChip
           label="JUMP 1"
-          code={activeRun.jump1_code || code1}
-          dd={activeRun.jump1_dd}
+          code={code1 || activeRun.jump1_code}
+          dd={chipDd(code1, activeRun.jump1_code, activeRun.jump1_dd)}
           score={airJ1}
         />
         {numJumps >= 2 && (
           <JumpChip
             label="JUMP 2"
-            code={activeRun.jump2_code || code2}
-            dd={activeRun.jump2_dd}
+            code={code2 || activeRun.jump2_code}
+            dd={chipDd(code2, activeRun.jump2_code, activeRun.jump2_dd)}
             score={airJ2}
           />
         )}
@@ -1119,8 +1150,25 @@ export default function JudgeTablet() {
             )}
             {isAir && (
               <div className="text-lg mt-3" style={{ color: '#fff' }}>
-                {airJ1 !== null && <div>Jump 1: <span className="tablet-mono">{Number(airJ1).toFixed(1)}</span></div>}
-                {airJ2 !== null && <div>Jump 2: <span className="tablet-mono">{Number(airJ2).toFixed(1)}</span></div>}
+                {airJ1 !== null && <div>Jump 1: {code1 && <span className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{code1} </span>}<span className="tablet-mono">{Number(airJ1).toFixed(1)}</span></div>}
+                {airJ2 !== null && <div>Jump 2: {code2 && <span className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{code2} </span>}<span className="tablet-mono">{Number(airJ2).toFixed(1)}</span></div>}
+              </div>
+            )}
+            {/* v2.3.00 -- jump-code mismatch: prominent warning on BOTH Air judge tablets
+                until the Head Judge reconciles; then the reconciled notice replaces it. */}
+            {isAir && activeRun.air_code_mismatch && (
+              <div className="mt-5 rounded-xl" style={{ padding: '18px 20px', background: 'rgba(239,68,68,0.15)', border: '3px solid var(--tablet-red2)' }}>
+                <div className="tablet-display" style={{ fontSize: 30, color: 'var(--tablet-red2)', letterSpacing: 1 }}>WARNING &mdash; JUMP CODES DO NOT MATCH</div>
+                <div className="text-lg font-bold mt-2" style={{ color: '#fff' }}>Please see the Head Judge to reconcile.</div>
+                <div className="text-sm mt-2" style={{ color: 'var(--tablet-dim)' }}>Your scores were recorded. The Head Judge will accept one judge&rsquo;s codes or reject both.</div>
+              </div>
+            )}
+            {isAir && !activeRun.air_code_mismatch && !!activeRun.air_codes_reconciled && (
+              <div className="mt-5 rounded-xl" style={{ padding: '16px 20px', background: 'rgba(34,197,94,0.12)', border: '2px solid var(--tablet-green2)' }}>
+                <div className="tablet-display" style={{ fontSize: 26, color: 'var(--tablet-green2)', letterSpacing: 1 }}>Air Codes Reconciled by Head Judge</div>
+                <div className="text-sm mt-1 tablet-mono" style={{ color: '#fff' }}>
+                  Jump 1: {activeRun.jump1_code || '--'}{numJumps >= 2 && <> &middot; Jump 2: {activeRun.jump2_code || '--'}</>}
+                </div>
               </div>
             )}
             <div className="text-sm mt-4" style={{ color: 'var(--tablet-dim)' }}>Waiting for next athlete...</div>
@@ -1147,6 +1195,13 @@ function AirJudgePanel({
   error, submitAll, activeRun,
 }) {
   const codesPicked = !!code1 && (numJumps < 2 || !!code2)
+  // v2.3.00 -- column pill DD follows THIS judge's pick (looked up in the DD
+  // list) when it differs from the run's official code; see chipDd above.
+  const pillDd = (localCode, runCode, runDd) => {
+    if (!localCode || localCode === runCode) return runDd
+    const row = (allCodes || []).find(d => d.jump_code === localCode)
+    return row ? row.dd_value : null
+  }
   const scoresPicked = airJ1 !== null && (numJumps < 2 || airJ2 !== null)
   const canSubmit = codesPicked && scoresPicked
   const submitLabel =
@@ -1169,7 +1224,7 @@ function AirJudgePanel({
           code={code1}
           setCode={(c) => { setCode1(c); if (c === 'NJ') setAirJ1(0) }}
           activeRunCode={activeRun.jump1_code}
-          dd={activeRun.jump1_dd}
+          dd={pillDd(code1, activeRun.jump1_code, activeRun.jump1_dd)}
           value={airJ1}
           onChange={setAirJ1}
           isActive={airJ1 === null && !!code1}
@@ -1182,7 +1237,7 @@ function AirJudgePanel({
             code={code2}
             setCode={(c) => { setCode2(c); if (c === 'NJ') setAirJ2(0) }}
             activeRunCode={activeRun.jump2_code}
-            dd={activeRun.jump2_dd}
+            dd={pillDd(code2, activeRun.jump2_code, activeRun.jump2_dd)}
             value={airJ2}
             onChange={setAirJ2}
             isActive={!!code1 && airJ1 !== null && airJ2 === null}

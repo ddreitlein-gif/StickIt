@@ -36,15 +36,18 @@ This is the surgical tool — used when one judge entered the wrong score but ev
 
 Less surgical. Useful when multiple judges need to re-enter, or when a fundamental error (wrong athlete bib showing on tablets) requires a full reset. Clicking **Send Back to Scoring** clears the runs row's HJ-pending status; the Scoring tab gains an "Edit Scores" affordance and the operator can adjust there.
 
-### Clear codes (Air judge mismatch)
+### Jump code mismatch (Air judges disagree)
 
-If the two Air judges submitted different jump codes for the same jump, the server raises HTTP 409 ("Jump codes differ from the other Air Judge. Contact the Head Judge to resolve."). On the HJ tablet's Air judge row, a **Clear Codes** link appears. Clicking it:
+If the two Air judges submit different jump codes for the same run (compared exactly, case included — `bG` vs `bg` is a mismatch), both judges' scores are still recorded (v2.3.00; earlier builds refused the second judge's submission outright). The HJ tablet's Air Judges card shows a red **Jump Code Mismatch** box with one line per Air judge (their two codes) and:
 
-1. Nulls out `jump1_code` / `jump2_code` on the run.
-2. Deletes all air judge `judge_scores` rows for the run.
-3. Triggers a rejection on both Air judges' tablets so they re-enter codes + scores from scratch.
+1. **Accept These Codes** next to either judge — the run's official codes and DDs become that judge's codes, both judges' air scores are scored against them, and both Air judge tablets show **Air Codes Reconciled by Head Judge**. The original codes are kept in the audit log (`air_codes_reconciled`).
+2. **Reject Both Codes** — the same action as **Reject Codes**: nulls the run's codes, deletes both Air judges' scores, and returns both tablets to code entry so they re-coordinate and resubmit.
 
-The Air judges then re-coordinate codes (verbally) and re-submit.
+**Finalize and Publish Score** stays disabled (and the server refuses approval) until the mismatch is resolved, alongside the usual missing-scores gate.
+
+### Reject codes (no mismatch)
+
+**Reject Codes** on the Air Judges card clears the run's codes and both Air judges' scores at any time — for example when both judges agreed on a wrong code.
 
 ### Approving
 

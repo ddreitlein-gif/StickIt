@@ -23,7 +23,16 @@ For each judge, the row shows:
 - **Air judges** — per-jump scores with jump codes (`J1: TS 0.49 → 3.4 / J2: bp 0.62 → 4.5`).
 - **Timekeeper** — entered time, computed time points.
 
-A red **Reject** button at the right of each row opens a confirm dialog before clearing that judge's submission.
+A red **Reject** button at the right of each row opens a confirm dialog before clearing that judge's submission. Above the Air rows, **Reject Codes** clears the run's jump codes together with both Air judges' scores.
+
+### Jump Code Mismatch box
+
+When the two Air judges submit different jump codes (compared exactly — `bG` and `bg` are different jumps), both judges' scores are still recorded and a red **JUMP CODE MISMATCH** box appears at the top of the Air Judges card, one line per Air judge with their codes (`bT / bG`, `bT / bp`) and a green **Accept These Codes** button on each line, plus **Reject Both Codes** on the bottom row.
+
+- **Accept These Codes** makes that judge's codes the run's codes for both Air judges (DDs resolve from the DD table exactly as if that judge had entered them first). Both Air judge tablets replace their warning with **Air Codes Reconciled by Head Judge**. The Running Score updates to the accepted DDs.
+- **Reject Both Codes** is the same action as **Reject Codes**: both Air judges re-enter codes and scores.
+
+**Finalize and Publish Score** stays disabled while the mismatch stands (the waiting banner reads "Jump code mismatch — reconcile below"), and the server refuses approval too. See [HJ review](./scoring-hj-review) for the full flow.
 
 ### Aerials v2
 

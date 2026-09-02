@@ -13,9 +13,9 @@ Both jumps render side-by-side so the judge can fill code/score in any order, th
 
 ### Jump code grid
 
-A 7×2 quick-pick of frequently-used codes plus an "All codes" dropdown for the long tail.
+A quick-pick grid of frequently-used codes (three rows for Comp Series, 7×2 for Devo/RQS) plus an "All codes" dropdown for the long tail.
 
-- **Comp Series defaults:** `N, S, T, K, TS, 3, bT, bp, bL, bG, bF, 7op, 7oG`
+- **Comp Series defaults (three rows of six, v2.3.00):** `N, S, T, K, TS, 3` · `bT, bp, bL, bG, bg, bF` · `7op, 7oG, 7og` + No Jump. `bg` and `7og` are the basic-grab codes (lowercase g).
 - **Devo / RQS defaults:** `S, T, D, X, K, TS, TT, TD, TTS, 3, 3p`
 - **No-Jump button** — for jumps where the athlete didn't attempt one (rare; usually a fall after takeoff).
 
@@ -33,19 +33,26 @@ Same `−0.1 / value / +0.1` row as the T&L tablet. Drift one tenth at a time.
 
 ### Submitting
 
-Tap **Submit Score** at the bottom. The submit handler first PUTs the codes (`PUT /runs/:id` with `jump1_code`/`jump2_code`), then POSTs the scores. On a code mismatch with the other Air judge (HTTP 409), a red banner appears:
+Tap **Submit Score** at the bottom. The submit handler first sends the codes (`PUT /runs/:id` with `jump1_code`/`jump2_code`), then posts the scores. The first Air judge to submit sets the run's official codes.
 
-> Jump codes differ from the other Air Judge. Contact the Head Judge to resolve.
+### Jump code mismatch (v2.3.00)
 
-Score POSTs are NOT fired in that case. Local state is preserved for retry. To recover:
+If your codes differ from the other Air judge's (compared **exactly**, including case — `bG` and `bg` are different jumps with different DDs), your scores are still recorded. The run keeps the first judge's codes for the moment, and the **Score Submitted** screen on **both** Air judge tablets shows a prominent red warning:
 
-1. Talk to the other Air judge and agree on the correct codes for each jump.
-2. The HJ can hit **Clear Codes** on their tablet to reset both Air judges to the code-entry state.
-3. Both Air judges re-enter codes and scores.
+> WARNING — JUMP CODES DO NOT MATCH. Please see the Head Judge to reconcile.
+
+Nothing is lost and nothing needs re-entering yet. The Head Judge's tablet shows a **Jump Code Mismatch** box listing each Air judge's codes, and resolves it one of two ways:
+
+| HJ action | What you see |
+|---|---|
+| **Accept These Codes** (one judge's pair) | The warning is replaced by **Air Codes Reconciled by Head Judge** with the accepted codes. Both judges' scores stand and are scored against the accepted codes' DDs. |
+| **Reject Both Codes** | Both Air judges' codes and scores are cleared; your tablet returns to code entry (the usual rejected-score flow). Agree on the codes and resubmit. |
+
+The run cannot be finalized while a mismatch stands, so there is no risk of the wrong DD being published.
 
 ### Per-judge codes
 
-Each Air judge picks codes from scratch — no pre-select. If both Air judges agree, the codes match server-side and the run proceeds. If they disagree, the mismatch is surfaced for resolution.
+Each Air judge picks codes from scratch — no pre-select. If both Air judges agree, the codes match server-side and the run proceeds. If they disagree, the mismatch goes to the Head Judge as described above.
 
 ### DD reference
 

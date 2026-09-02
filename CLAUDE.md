@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.2.01
+**Current version:** v2.3.00
 
 ## Commands
 
@@ -225,6 +225,106 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.3.00 Feature Notes
+
+### Air Judge Jump-Code Mismatch Reconciliation (v2.3.00)
+
+Single moguls only (the aerials tablet never submits codes through this path; dual has no
+codes). Per David's 09-02-26 spec + two rulings: **(a)** mismatch handling lives on the HJ
+tablet only — a Head Judge is required at every competition, the legacy no-HJ auto-publish
+path is a fallback, not a workflow; **(b)** codes compare **exact-case** (`bG` vs `bg` IS a
+mismatch — since v1.26.00 g/G and p/P are meaning-bearing and change the DD). **No scoring
+math changed**: the accepted codes' DDs resolve through the identical lookup the tablet PUT
+path always used, and finalize still recomputes from the run row's DDs.
+
+**Before:** the first Air judge's PUT set the run's codes; a second judge's differing PUT got
+a 409 and that judge's scores were never posted — the run stalled until the HJ cleared codes.
+The comparison was also case-insensitive, so `bg` silently scored against the `bG` DD.
+
+**Data.** `judge_scores.jump_code TEXT` — the code THAT judge scored against, stored on
+air_jump1/air_jump2 rows by `POST /:runId/scores` (new optional `jump_code` body field; null
+on turns/aerials rows and on pre-v2.3.00 rows, which never count). `runs.air_codes_reconciled
+INTEGER NOT NULL DEFAULT 0` — set by the HJ Accept. Both additive, both in the sync manifest,
+**`SYNC_PROTOCOL_VERSION` bumped 2 → 3** (same reasoning as v2.1.00; no Pi image fielded).
+`docs/SYNC_PROTOCOL.md` version line corrected (had still said 1). Import/export round-trip
+threaded through `executeImport`/`executeMerge` for both tables (`?? null` / `?? 0`).
+
+**Server (`runs.js`).** New `getAirCodeState(run, submitted?, eventId)` → `{ air_code_mismatch,
+air_codes_by_judge: [{ judge_id, role, name, jump1_code, jump2_code }] }` — mismatch when any
+air row's recorded code ≠ the run's official code for that jump. Attached to BOTH branches of
+`GET /runs/active` (the tablets' shared poll) and the three `submitted` SELECTs now carry
+`js.jump_code`. `PUT /:runId` codes branch: the 409 is gone — a differing second submission
+leaves the run's codes untouched and answers `200 { ...run, codes_mismatch: true }`; the
+"codes already set" test is now `num_jumps`-aware (a 1-jump event previously let the second
+judge overwrite). `tryFinalize` returns null while a mismatch stands (gates BOTH the HJ
+approve path and the no-HJ auto-publish path, so a first-submitter DD can never publish);
+`POST /:runId/approve` names the mismatch in its 400. New **public** (tablet rule)
+`POST /:runId/air-codes/accept { judge_id }`: run codes + DDs ← that judge's codes via
+`tabletLookupDD` (extracted verbatim from the PUT path — deliberately NOT `resolveJumpDD`,
+which canonicalizes/throws for manual entry), every air row's `jump_code` overwritten with the
+accepted pair (per spec: "set the air codes of both judges to the codes accepted"), flag set,
+audit `air_codes_reconciled` (originals + accepted), then the same tryFinalize + broadcast
+sequence as a score POST. `clear_jump_codes` (Reject Codes / Reject Both Codes) also resets
+the flag. Single-score reject after reconciliation keeps the flag; a differing re-entry
+re-flags the mismatch (warning outranks "reconciled" on the tablets).
+
+**Judge tablet.** Air submissions carry `jump_code`; `submitCodes` treats `codes_mismatch` as
+success and sets the local flag so the warning appears immediately; the poll's same-run branch
+now merges the mismatch/reconciled/code fields (guarded — previously the first judge's run
+object was never refreshed, so they'd never have seen the second judge's mismatch). Score
+Submitted screen: red **WARNING — JUMP CODES DO NOT MATCH / Please see the Head Judge to
+reconcile** on both Air tablets; replaced by green **Air Codes Reconciled by Head Judge** (+
+the accepted codes) after Accept. Each judge's own codes now print beside their scores, and
+the athlete-bar jump chips show the judge's OWN pick + its DD (previously the run's official
+code won, which read wrong on the differing judge during a mismatch — found in the Chrome
+walkthrough).
+
+**HJ tablet.** Red **JUMP CODE MISMATCH** box at the top of the Air Judges card (in place of
+the official-codes line while it stands): one line per Air judge — role, name, `bT / bG` —
+with a green **Accept These Codes** button, and **Reject Both Codes** (same `clear_jump_codes`
+action as Reject Codes, now via a shared `clearCodes` helper) on the bottom row. Per-score rows
+show the code that judge scored against (red when it differs from the run's). `scoreSetStatus`
+adds "Jump code mismatch — reconcile below" so **Finalize and Publish Score** is disabled
+exactly as for missing scores. Running Score recomputes from the accepted DDs automatically.
+
+**Verification.** 43-check scratch-server integration test: second judge 200 + flag with run
+codes untouched, scores accepted, `/active` state + by-judge codes + row codes, hold with all
+scores in (no hj_pending / no total), approve 400, accept → run codes/DDs from table, rows
+rewritten, flag, tryFinalize → hj_pending with total == `calcMogulScore` on the accepted DDs,
+approve 200 + published total, audit row; Reject Both path + matching resubmission normal;
+exact-case `bG`/`bg` mismatch + DD switch; single reject after reconciliation + differing
+re-entry re-flags; no-HJ event held then auto-published on accept; 1-jump event; export →
+import round-trip of both columns; double boot + `protocol_version: 3`. `verify_v16.js`
+123/123. Harness step0 87/87 (manifest drift test green). **Chrome walkthrough** of the
+built bundle on a scratch server (two Air judge tablets + HJ tablet): mismatch warning on
+both Air tablets, HJ mismatch box with Accept per judge + Reject Both, Finalize disabled with
+the mismatch reason, Accept → reconciled notice on both tablets + HJ codes/DD/running score
+updated, Reject Both → both tablets back to code entry via the rejected-score banner. Help topics `tablet-air`,
+`tablet-hj`, `scoring-hj-review` rewritten for the new flow; guide PDFs regenerated.
+
+### Comp Series Air Quick-Select — Three Rows + Basic-Grab Codes (v2.3.00)
+
+The single-mogul Air judge quick-select for Comp Series (and FIS) grew from 13 codes in a
+7×2 grid to **15 codes in three rows of six**, adding the FS-13 basic-grab codes `bg` and
+`7og` (v1.26.00 seed): row 1 uprights `N S T K TS 3`, row 2 back flips
+`bT bp bL bG bg bF`, row 3 off-axis `7op 7oG 7og` + No Jump spanning the three spare
+columns. `JumpCodeGrid` now accepts `freqCodes` as `string[][]` (explicit rows; columns =
+longest row; No Jump fills the last row's spare columns) while a flat `string[]` keeps the
+legacy 7-column shape byte-for-byte — **Devo / RQS lists are unchanged** (11 codes, No Jump
+span 2). `COMP_FREQ_CODES` in JudgeTablet.jsx is now the nested array. Display only — DD
+lookup and scoring untouched. Approved by David from a Chrome walkthrough on 09-02-26.
+
+**Files modified:** `server/routes/runs.js`, `server/routes/meets.js`, `server/db/schema.js`,
+`server/sync/protocol.js`, `docs/SYNC_PROTOCOL.md`, `client/src/pages/JudgeTablet.jsx`,
+`client/src/components/tablet/JumpCodeGrid.jsx`,
+`client/src/pages/HeadJudgeTablet.jsx`,
+`client/src/help/topics/{tablet-air,tablet-hj,scoring-hj-review}.md`,
+`server/public/docs/guides/*.pdf` (regenerated), `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

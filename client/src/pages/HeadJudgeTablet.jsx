@@ -1313,6 +1313,41 @@ export default function HeadJudgeTablet() {
     } finally { setRejectingTime(false) }
   }
 
+  // v2.3.00 -- jump-code mismatch reconciliation (Air Judges card).
+  const clearCodes = async (confirmText) => {
+    if (!activeRun) return
+    if (!confirm(confirmText)) return
+    setError(''); setStatusMsg('')
+    try {
+      const r = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear_jump_codes: true }),
+      })
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error || 'Failed') }
+      setStatusMsg('Jump codes cleared.  Air judges may resubmit.')
+      await loadActive()
+    } catch (e) { setError(e.message) }
+  }
+
+  const acceptCodes = async (entry) => {
+    if (!activeRun) return
+    const codes = [entry.jump1_code, entry.jump2_code].filter(Boolean).join(' / ')
+    const who = entry.name || ROLE_LABELS[entry.role] || entry.role
+    if (!confirm(`Accept ${who}'s jump codes (${codes}) for both Air judges?`)) return
+    setError(''); setStatusMsg('')
+    try {
+      const r = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}/air-codes/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ judge_id: entry.judge_id }),
+      })
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Failed to accept codes') }
+      setStatusMsg(`Jump codes reconciled: ${codes}.`)
+      await loadActive()
+    } catch (e) { setError(e.message) }
+  }
+
   // ── Score breakdown helpers ───────────────────────────────────────────────
 
   const submitted = activeRun?.submitted || []
@@ -1441,6 +1476,10 @@ export default function HeadJudgeTablet() {
       if (tlCount < needTL) missing.push(`T&L ${tlCount}/${needTL}`)
       if (airCount < needAir) missing.push(`Air ${airCount}/${needAir}`)
       if (eventCfg.has_speed && activeRun.run_time == null) missing.push('Time pending')
+      // v2.3.00 -- Air judges disagree on the jump codes: Finalize stays
+      // disabled until the HJ accepts one judge's codes or rejects both
+      // (mirrors the server gate in tryFinalize).
+      if (activeRun.air_code_mismatch) missing.push('Jump code mismatch — reconcile below')
     }
     return { complete: missing.length === 0, missing }
   }, [activeRun, submitted, eventCfg])
@@ -2028,8 +2067,47 @@ export default function HeadJudgeTablet() {
               <div className="tablet-card" style={{ padding: 18 }}>
                 <div className="tablet-display mb-3" style={{ fontSize: 16, letterSpacing: 1.5, color: 'var(--tablet-dim)' }}>AIR JUDGES</div>
 
+                {/* v2.3.00 -- JUMP CODE MISMATCH box: one line per Air judge with
+                    Accept, plus Reject Both (same action as Reject Codes). Shown in
+                    place of the official codes line while the mismatch stands. */}
+                {activeRun.air_code_mismatch && activeRun.status !== 'complete' && (
+                  <div className="mb-4 rounded-xl" style={{ padding: '14px 16px', background: 'rgba(239,68,68,0.12)', border: '3px solid var(--tablet-red2)' }}>
+                    <div className="tablet-display" style={{ fontSize: 22, color: 'var(--tablet-red2)', letterSpacing: 1.5 }}>JUMP CODE MISMATCH</div>
+                    <div className="text-xs mb-3" style={{ color: 'var(--tablet-dim)' }}>The Air judges entered different codes. Accept one judge&rsquo;s codes for both, or reject both codes.</div>
+                    <div className="space-y-2">
+                      {(activeRun.air_codes_by_judge || []).map(entry => (
+                        <div key={entry.judge_id} className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <span className="text-xs uppercase font-bold" style={{ color: 'var(--tablet-blue2)', letterSpacing: 1 }}>{ROLE_LABELS[entry.role] || entry.role}</span>
+                            {entry.name && <span className="text-xs italic ml-1" style={{ color: 'var(--tablet-dim)' }}>&mdash; {entry.name}</span>}
+                            <div className="tablet-mono font-bold text-xl" style={{ color: '#fff' }}>
+                              {entry.jump1_code || '--'}{(eventCfg?.num_jumps || 2) >= 2 && <> / {entry.jump2_code || '--'}</>}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => acceptCodes(entry)}
+                            className="tablet-btn-submit"
+                            style={{ height: 40, fontSize: 14, padding: '0 14px', whiteSpace: 'nowrap' }}
+                          >
+                            Accept These Codes
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end mt-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                      <button
+                        onClick={() => clearCodes('Reject BOTH judges\' jump codes?  Both Air judges will re-enter their codes and scores.')}
+                        className="tablet-btn-danger"
+                        style={{ height: 40, fontSize: 14, padding: '0 14px' }}
+                      >
+                        Reject Both Codes
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Jump codes */}
-                {(activeRun.jump1_code || activeRun.jump2_code) && (
+                {!activeRun.air_code_mismatch && (activeRun.jump1_code || activeRun.jump2_code) && (
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex flex-wrap gap-4 text-sm items-center" style={{ color: 'var(--tablet-dim)' }}>
                       {activeRun.jump1_code && (
@@ -2041,20 +2119,7 @@ export default function HeadJudgeTablet() {
                     </div>
                     {activeRun.status !== 'complete' && (
                       <button
-                        onClick={async () => {
-                          if (!confirm('Clear jump codes so they can be re-entered?')) return
-                          setError(''); setStatusMsg('')
-                          try {
-                            const r = await fetch(`${API}/events/${eventId}/runs/${activeRun.id}`, {
-                              method: 'PUT',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ clear_jump_codes: true }),
-                            })
-                            if (!r.ok) { const e = await r.json(); throw new Error(e.error || 'Failed') }
-                            setStatusMsg('Jump codes cleared.  Air judge may resubmit.')
-                            await loadActive()
-                          } catch (e) { setError(e.message) }
-                        }}
+                        onClick={() => clearCodes('Clear jump codes so they can be re-entered?')}
                         className="tablet-btn-danger"
                         style={{ height: 32, fontSize: 13, padding: '0 12px' }}
                       >
@@ -2082,11 +2147,11 @@ export default function HeadJudgeTablet() {
                             <div className="flex items-center justify-between py-1">
                               <div className="flex items-center gap-3">
                                 <span className="text-xs w-14" style={{ color: 'var(--tablet-muted)' }}>{SCORE_LABELS[s.score_type] || s.score_type}</span>
-                                {s.score_type === 'air_jump1' && activeRun.jump1_code && (
-                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump1_code}</span>
+                                {s.score_type === 'air_jump1' && (s.jump_code || activeRun.jump1_code) && (
+                                  <span className="text-xs tablet-mono" style={{ color: (s.jump_code && activeRun.jump1_code && s.jump_code !== activeRun.jump1_code) ? 'var(--tablet-red2)' : 'var(--tablet-blue2)' }}>{s.jump_code || activeRun.jump1_code}</span>
                                 )}
-                                {s.score_type === 'air_jump2' && activeRun.jump2_code && (
-                                  <span className="text-xs tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{activeRun.jump2_code}</span>
+                                {s.score_type === 'air_jump2' && (s.jump_code || activeRun.jump2_code) && (
+                                  <span className="text-xs tablet-mono" style={{ color: (s.jump_code && activeRun.jump2_code && s.jump_code !== activeRun.jump2_code) ? 'var(--tablet-red2)' : 'var(--tablet-blue2)' }}>{s.jump_code || activeRun.jump2_code}</span>
                                 )}
                                 <span className="tablet-mono font-bold text-lg" style={{ color: '#fff' }}>{fmt1(s.raw_score)}</span>
                               </div>
