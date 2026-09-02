@@ -5062,10 +5062,15 @@ function PdfReportsPanel({ event }) {
   const [phases, setPhases] = useState([])
   const [hasLogo, setHasLogo] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
+  // v2.3.01 — bottom (sponsor) logo: same formats, printed centered across the
+  // foot of page 1 of every PDF that carries the event logo
+  const [hasBottomLogo, setHasBottomLogo] = useState(false)
+  const [bottomLogoUploading, setBottomLogoUploading] = useState(false)
 
   useEffect(() => {
     api.getPhases(event.id).then(p => setPhases(p || [])).catch(() => setPhases([]))
     fetch(`/api/pdf/logo/${event.meet_id}`).then(r => r.json()).then(d => setHasLogo(d.hasLogo)).catch(() => {})
+    fetch(`/api/pdf/bottom-logo/${event.meet_id}`).then(r => r.json()).then(d => setHasBottomLogo(d.hasLogo)).catch(() => {})
   }, [event.id, event.meet_id])
 
   const uploadLogo = async (file) => {
@@ -5084,6 +5089,24 @@ function PdfReportsPanel({ event }) {
   const removeLogo = async () => {
     await fetch(`/api/pdf/logo/${event.meet_id}`, { method: 'DELETE', headers: authHeaders() })
     setHasLogo(false)
+  }
+
+  const uploadBottomLogo = async (file) => {
+    if (!file) return
+    setBottomLogoUploading(true)
+    try {
+      const form = new FormData()
+      form.append('logo', file)
+      const res = await fetch(`/api/pdf/upload-bottom-logo/${event.meet_id}`, { method: 'POST', headers: authHeaders(), body: form })
+      if (res.ok) setHasBottomLogo(true)
+      else alert('Failed to upload bottom logo')
+    } catch (e) { alert('Upload error: ' + e.message) }
+    finally { setBottomLogoUploading(false) }
+  }
+
+  const removeBottomLogo = async () => {
+    await fetch(`/api/pdf/bottom-logo/${event.meet_id}`, { method: 'DELETE', headers: authHeaders() })
+    setHasBottomLogo(false)
   }
 
   const post = async (endpoint, options, filename) => {
@@ -5286,6 +5309,18 @@ function PdfReportsPanel({ event }) {
             </label>
           )}
           {hasLogo && <span className="text-xs text-green-400">Uploaded</span>}
+        </div>
+        <div className="flex items-center gap-2 text-sm text-slate-300" title="Printed centered across the bottom of page 1 of every PDF (max 1.5 in high)">
+          <span className="text-slate-400">Bottom Logo:</span>
+          {hasBottomLogo ? (
+            <button onClick={removeBottomLogo} className="px-3 py-1 text-xs rounded bg-red-700 hover:bg-red-600 text-white">Remove Logo</button>
+          ) : (
+            <label className="px-3 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-white cursor-pointer">
+              {bottomLogoUploading ? 'Uploading...' : 'Upload PNG/JPEG'}
+              <input type="file" accept=".png,.jpg,.jpeg" className="hidden" onChange={e => uploadBottomLogo(e.target.files[0])} />
+            </label>
+          )}
+          {hasBottomLogo && <span className="text-xs text-green-400">Uploaded</span>}
         </div>
       </div>
 

@@ -14,6 +14,15 @@ The headline deliverable. Lists every athlete in rank order with all component s
 
 Includes meet header (name, location, date), event header (name, discipline, gender), and tie-break notation.
 
+### Logos on PDF reports
+
+Two optional meet-level images can be uploaded from the **PDF Reports** tab (PNG or JPEG, up to 5 MB each). Both are stored per meet, so every event in the meet shares them, and both travel with the meet through export/import and venue adoption.
+
+- **Event Logo** — printed in the upper-right corner of the header on every page, opposite the USSS logo.
+- **Bottom Logo** (v2.3.01) — a sponsor strip printed centered across the bottom of the **first page only**, scaled to at most 1.5 inches high and no wider than the page content area. Page 1's content stops above it; later pages use the full page.
+
+Use **Remove Logo** beside either control to clear it.
+
 ### Check Sheet by Bib
 
 Sorted by bib number. Used by judges and the TD during the meet for quick lookup. One row per athlete with each run's score on its own row.

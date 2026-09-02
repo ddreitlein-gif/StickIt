@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.3.00
+**Current version:** v2.3.01
 
 ## Commands
 
@@ -228,6 +228,76 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.3.01 Feature Notes
+
+### Bottom (Sponsor) Logo on PDF Reports (v2.3.01)
+
+Per David's 09-02-26 request + two rulings: **(a)** the bottom logo prints on the **first page
+only** of a multi-page PDF; **(b)** it follows the meet everywhere the event logo does (export
+zip, import, venue adoption package). Clone does not copy either logo — unchanged, pre-existing
+behavior. No scoring, schema, or sync-manifest changes; the adoption package gains an optional
+field only (no protocol version bump — old importers ignore it, new importers tolerate its
+absence).
+
+**Storage.** A second meet-level file `server/data/logos/meet_<id>_bottom.<ext>` beside the
+event logo (`meet_<id>.<ext>`), same PNG/JPEG formats and 5 MB multer limit
+(`bottomLogoUpload`, `getMeetBottomLogoPath` in `pdf.js`). On Render this is the same
+persistent-disk `data/` folder as the DB and event logo — no hosting changes. Endpoints mirror
+the event logo's access rules: `POST /api/pdf/upload-bottom-logo/:meetId` and
+`DELETE /api/pdf/bottom-logo/:meetId` (requireAuth; the upload also drops a stale copy with a
+different extension), public `GET /api/pdf/bottom-logo/:meetId` → `{ hasLogo }`.
+
+**Drawing (`drawBottomLogo`, called at the end of `pdfHeader`).** Scaled to at most
+**1.5 in (108 pt) high** and no wider than the content area, centered, bottom edge on the base
+bottom margin (above the "Generated …" footer line, which prints inside the margin). A
+`doc._bottomLogoDone` flag makes repeat `pdfHeader` calls (Entrants continuation pages,
+bracket pages) no-ops, and **page 1's `margins.bottom` is raised by logo height + 8 pt** so
+flowing text, `drawTable` pagination, and pdfkit's own auto page-break all stop above it;
+pdfkit rebuilds each new page's margins from `doc.options`, so later pages get the normal
+margin back automatically. Two consumers had to learn about the raised margin: `stampFooter`
+now positions the footer off the recorded base margin (`doc._baseBottomMargin`) instead of
+`page.margins.bottom` (otherwise the footer text + StickIt mark landed inside the logo — caught
+in the render check), and the two dual bracket layouts compute their tree height budget
+`BKH` from `doc.page.margins.bottom` instead of the `MARG` constant so the page-1 bracket
+compresses above the logo. Every PDF that calls `pdfHeader` gets it: results, run order,
+entrants, check sheets, registration listing, training day, timer sheet, run/event results
+(all variants), press, dual seed list, dual results, dual bracket, bracket keeper. The
+group-awards and TD-report PDFs don't draw the event logo and are untouched.
+
+**Meet lifecycle (`meets.js`).** `deleteMeetCascade` removes both files; the export zip adds
+`meet_bottom_logo.<ext>` beside `meet_logo.<ext>`; `copyLogoFromZip` restores both on
+import/merge. **Venue adoption:** `buildAdoptionPackage` adds `bottom_logo: {filename, base64}
+| null` (new `findBottomLogoFile`); `executeAdoptionImport`'s L-4 filename/traversal guard
+was extracted into a shared `writeLogo(entry, prefix, label)` and applied to both files
+(expects exactly `meet_<id>_bottom.<ext>`); the venue adopt/import-package responses carry
+`bottom_logo: bool`. `docs/SYNC_PROTOCOL.md` package shape updated.
+
+**Client.** PDF Reports tab: a **Bottom Logo:** control beside Event Logo (same Upload
+PNG/JPEG / Remove Logo / Uploaded pattern, tooltip explains placement). Help topic
+`reports-pdf` gained a "Logos on PDF reports" section; guide PDFs regenerated.
+
+**Verification.** 37-check scratch-server integration test (cloud + two venue-mode
+instances): status/upload/delete endpoints + non-image 400; multi-page portrait registration
+listing → bottom logo image XObject on page 1 only, page 1 holds fewer rows (A28 vs A35 last
+row) and all 60 athletes still listed; landscape check sheet page-1-only; a 200×800 tall image
+capped at exactly 27×108 pt, centered (x=292.5) with its bottom edge on the 36 pt margin (read
+from the content stream `cm` operator); extension replace cleanup; 16-athlete dual bracket +
+bracket keeper page-1-only; export zip carries both files → import creates both; delete bottom
+only leaves event logo; export-for-adoption package carries `bottom_logo` → venue
+import-package writes byte-identical file and reports both flags; `../evil.png` filename
+refused with import still succeeding; meet delete removes files. Rendered pages (pdftoppm)
+eyeballed for portrait, landscape, bracket, and bracket-keeper layouts. `verify_v16.js`
+123/123. Harness step2 (adoption package + logo round-trip) green.
+
+**Files modified:** `server/routes/pdf.js`, `server/routes/meets.js`,
+`server/routes/venue.js`, `server/sync/package.js`, `server/sync/adoptionImport.js`,
+`docs/SYNC_PROTOCOL.md`, `client/src/pages/EventDetail.jsx`,
+`client/src/help/topics/reports-pdf.md`, `server/public/docs/guides/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

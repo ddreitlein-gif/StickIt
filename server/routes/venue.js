@@ -455,7 +455,7 @@ router.post('/adopt', async (req, res) => {
     });
 
     const meet = await queryOne('SELECT id, name, date, location FROM meets WHERE id=?', [result.meet_id]);
-    res.json({ ok: true, meet, counts: result.counts, logo: result.logo });
+    res.json({ ok: true, meet, counts: result.counts, logo: result.logo, bottom_logo: result.bottom_logo });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -503,7 +503,7 @@ router.post('/import-package', async (req, res) => {
     });
 
     const meet = await queryOne('SELECT id, name, date, location FROM meets WHERE id=?', [result.meet_id]);
-    res.json({ ok: true, meet, counts: result.counts, logo: result.logo });
+    res.json({ ok: true, meet, counts: result.counts, logo: result.logo, bottom_logo: result.bottom_logo });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

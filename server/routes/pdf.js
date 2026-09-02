@@ -39,14 +39,34 @@ const logoStorage = multer.diskStorage({
     cb(null, `meet_${req.params.meetId}${ext}`);
   },
 });
+const LOGO_FILE_FILTER = (req, file, cb) => {
+  const allowed = ['.png', '.jpg', '.jpeg'];
+  const ext = path.extname(file.originalname).toLowerCase();
+  cb(null, allowed.includes(ext));
+};
 const logoUpload = multer({
   storage: logoStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowed = ['.png', '.jpg', '.jpeg'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, allowed.includes(ext));
+  fileFilter: LOGO_FILE_FILTER,
+});
+
+// v2.3.01 — second, meet-level "bottom logo" (sponsor strip) stored as
+// meet_<id>_bottom.<ext>. Same formats/size limit as the event logo; drawn
+// centered across the foot of page 1 of every PDF that uses pdfHeader().
+const bottomLogoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    try { fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true }); } catch {}
+    cb(null, MEET_LOGOS_DIR);
   },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `meet_${req.params.meetId}_bottom${ext}`);
+  },
+});
+const bottomLogoUpload = multer({
+  storage: bottomLogoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: LOGO_FILE_FILTER,
 });
 
 function getMeetLogoPath(meetId) {
@@ -55,6 +75,49 @@ function getMeetLogoPath(meetId) {
     if (fs.existsSync(p)) return p;
   }
   return null;
+}
+
+function getMeetBottomLogoPath(meetId) {
+  for (const ext of ['.png', '.jpg', '.jpeg']) {
+    const p = path.join(MEET_LOGOS_DIR, `meet_${meetId}_bottom${ext}`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// Bottom logo: max 1.5in (108pt) high, no wider than the content area,
+// centered, sitting on the base bottom margin (above the footer line, which
+// prints inside the margin). FIRST PAGE ONLY (David's ruling, 09-02-26): the
+// flag on the doc makes repeat pdfHeader() calls (continuation pages, bracket
+// pages) no-ops. Page 1's bottom margin is raised by the logo height so
+// flowing text, drawTable pagination, and the bracket height budget all stop
+// above it; pdfkit builds each new page's margins fresh from doc.options, so
+// later pages get the normal margin back automatically.
+const BOTTOM_LOGO_MAX_H = 108;
+const BOTTOM_LOGO_GAP = 8;
+function drawBottomLogo(doc, meet) {
+  if (doc._bottomLogoDone) return;
+  const p = getMeetBottomLogoPath(meet?.id);
+  if (!p) return;
+  doc._bottomLogoDone = true;
+  try {
+    const marginL = doc.page.margins.left;
+    const marginR = doc.page.margins.right;
+    const contentW = doc.page.width - marginL - marginR;
+    const img = doc.openImage(p);
+    const aspect = img.width / img.height;
+    let h = BOTTOM_LOGO_MAX_H;
+    let w = h * aspect;
+    if (w > contentW) { w = contentW; h = w / aspect; }
+    const baseBottom = doc.page.margins.bottom;
+    const x = marginL + (contentW - w) / 2;
+    const y = doc.page.height - baseBottom - h;
+    const savedX = doc.x, savedY = doc.y;
+    doc.image(p, x, y, { width: w, height: h });
+    doc.x = savedX; doc.y = savedY;
+    doc._baseBottomMargin = baseBottom; // stampFooter keys off this, not the raised margin
+    doc.page.margins.bottom = baseBottom + h + BOTTOM_LOGO_GAP;
+  } catch (e) { /* skip if image fails */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +175,9 @@ function pdfHeader(doc, meet, event, subtitle) {
   doc.moveDown(0.3);
   doc.moveTo(marginL, doc.y).lineTo(doc.page.width - marginR, doc.y).lineWidth(1).stroke('#000');
   doc.moveDown(0.5);
+
+  // Bottom (sponsor) logo — first page only, reserves its own space (v2.3.01)
+  drawBottomLogo(doc, meet);
 }
 
 function drawTable(doc, columns, rows, opts = {}) {
@@ -212,7 +278,10 @@ function stampFooter(doc, opts = {}) {
   const pageW = doc.page.width;
   const marginL = doc.page.margins.left;
   const marginR = doc.page.margins.right;
-  const footerY = doc.page.height - doc.page.margins.bottom + 8;
+  // Footer sits inside the BASE bottom margin — on a page-1 with the bottom
+  // logo the page margin is raised (v2.3.01), but the footer must stay put.
+  const baseBottom = doc._baseBottomMargin ?? doc.page.margins.bottom;
+  const footerY = doc.page.height - baseBottom + 8;
   const savedY = doc.y;
   const savedBottomMargin = doc.page.margins.bottom;
   doc.page.margins.bottom = 0;
@@ -3154,7 +3223,8 @@ router.post('/dual-bracket', async (req, res) => {
       doc.fillColor('#000');
       doc.moveDown(0.3);
       const BKTOP = doc.y + 14;
-      const BKH = PH - MARG - BKTOP;
+      // margins.bottom (not MARG): page 1 may carry the bottom logo (v2.3.01)
+      const BKH = PH - doc.page.margins.bottom - BKTOP;
       return { BKTOP, BKH };
     }
 
@@ -3348,7 +3418,8 @@ router.post('/bracket-keeper', requireAuth, async (req, res) => {
       doc.fillColor(BK_BLACK);
       doc.moveDown(0.3);
       const BKTOP = doc.y + 14;
-      const BKH = PH - MARG - BKTOP;
+      // margins.bottom (not MARG): page 1 may carry the bottom logo (v2.3.01)
+      const BKH = PH - doc.page.margins.bottom - BKTOP;
       return { BKTOP, BKH };
     }
 
@@ -3591,6 +3662,37 @@ router.delete('/logo/:meetId', requireAuth, (req, res) => {
 // GET /api/pdf/logo/:meetId — Check if meet logo exists
 router.get('/logo/:meetId', (req, res) => {
   const logoPath = getMeetLogoPath(req.params.meetId);
+  res.json({ hasLogo: !!logoPath });
+});
+
+// ===========================================================================
+// Bottom logo (v2.3.01) — same access rules as the event logo above
+// ===========================================================================
+// POST /api/pdf/upload-bottom-logo/:meetId — Upload bottom (sponsor) logo
+router.post('/upload-bottom-logo/:meetId', requireAuth, bottomLogoUpload.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No valid image file provided. Use PNG or JPEG.' });
+  // Drop a stale copy with a different extension so the lookup can't pick it up
+  for (const ext of ['.png', '.jpg', '.jpeg']) {
+    const other = path.join(MEET_LOGOS_DIR, `meet_${req.params.meetId}_bottom${ext}`);
+    if (other !== req.file.path && fs.existsSync(other)) { try { fs.unlinkSync(other); } catch {} }
+  }
+  res.json({ ok: true, filename: req.file.filename });
+});
+
+// DELETE /api/pdf/bottom-logo/:meetId — Remove uploaded bottom logo
+router.delete('/bottom-logo/:meetId', requireAuth, (req, res) => {
+  const logoPath = getMeetBottomLogoPath(req.params.meetId);
+  if (logoPath) {
+    fs.unlinkSync(logoPath);
+    res.json({ ok: true });
+  } else {
+    res.json({ ok: true, message: 'No logo found' });
+  }
+});
+
+// GET /api/pdf/bottom-logo/:meetId — Check if bottom logo exists
+router.get('/bottom-logo/:meetId', (req, res) => {
+  const logoPath = getMeetBottomLogoPath(req.params.meetId);
   res.json({ hasLogo: !!logoPath });
 });
 

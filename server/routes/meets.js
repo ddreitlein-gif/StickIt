@@ -392,10 +392,12 @@ async function deleteMeetCascade(meetId) {
   }
   await execute('DELETE FROM training_days WHERE meet_id = ?', [meetId]);
 
-  // Delete meet logo if present
+  // Delete meet logo + bottom logo (v2.3.01) if present
   for (const ext of ['.png', '.jpg', '.jpeg']) {
-    const logoPath = path.join(MEET_LOGOS_DIR, `meet_${meetId}${ext}`);
-    if (fs.existsSync(logoPath)) { try { fs.unlinkSync(logoPath); } catch {} }
+    for (const name of [`meet_${meetId}${ext}`, `meet_${meetId}_bottom${ext}`]) {
+      const logoPath = path.join(MEET_LOGOS_DIR, name);
+      if (fs.existsSync(logoPath)) { try { fs.unlinkSync(logoPath); } catch {} }
+    }
   }
 
   await execute('DELETE FROM meets WHERE id = ?', [meetId]);
@@ -921,6 +923,14 @@ async function buildMeetExportZip(meetId) {
       break;
     }
   }
+  // Bottom logo (v2.3.01)
+  for (const ext of ['.png', '.jpg', '.jpeg']) {
+    const logoPath = path.join(MEET_LOGOS_DIR, `meet_${meetId}_bottom${ext}`);
+    if (fs.existsSync(logoPath)) {
+      zip.addLocalFile(logoPath, '', `meet_bottom_logo${ext}`);
+      break;
+    }
+  }
 
   const safeName = (meet.name || 'meet').replace(/[^a-zA-Z0-9_-]/g, '_');
   const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -998,7 +1008,7 @@ async function deduplicateAthletes(athletes) {
   return athleteMap;
 }
 
-// Copy logo from ZIP to the logos directory for a given meetId
+// Copy logo (and bottom logo, v2.3.01) from ZIP to the logos directory for a given meetId
 function copyLogoFromZip(zipPath, meetId) {
   try {
     const zip = new AdmZip(zipPath);
@@ -1007,6 +1017,14 @@ function copyLogoFromZip(zipPath, meetId) {
       if (logoEntry) {
         if (!fs.existsSync(MEET_LOGOS_DIR)) fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true });
         fs.writeFileSync(path.join(MEET_LOGOS_DIR, `meet_${meetId}${ext}`), logoEntry.getData());
+        break;
+      }
+    }
+    for (const ext of ['.png', '.jpg', '.jpeg']) {
+      const logoEntry = zip.getEntry(`meet_bottom_logo${ext}`);
+      if (logoEntry) {
+        if (!fs.existsSync(MEET_LOGOS_DIR)) fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(MEET_LOGOS_DIR, `meet_${meetId}_bottom${ext}`), logoEntry.getData());
         break;
       }
     }

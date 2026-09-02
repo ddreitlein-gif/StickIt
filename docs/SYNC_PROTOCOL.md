@@ -81,7 +81,8 @@ Response:
     "meet_id": "<uuid>",
     "exported_at": "<iso>",
     "tables": { "<table>": [ { "<col>": v, ... } ] },
-    "logo": { "filename": "meet_<id>.<ext>", "base64": "..." } | null
+    "logo": { "filename": "meet_<id>.<ext>", "base64": "..." } | null,
+    "bottom_logo": { "filename": "meet_<id>_bottom.<ext>", "base64": "..." } | null   // v2.3.01, optional
   }
 }
 ```

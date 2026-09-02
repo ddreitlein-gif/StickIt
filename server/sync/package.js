@@ -25,6 +25,17 @@ function findLogoFile(meetId) {
   }
 }
 
+// v2.3.01 — bottom (sponsor) logo, meet_<id>_bottom.<ext>
+function findBottomLogoFile(meetId) {
+  try {
+    const files = fs.readdirSync(MEET_LOGOS_DIR);
+    const match = files.find(f => f.startsWith(`meet_${meetId}_bottom.`));
+    return match ? path.join(MEET_LOGOS_DIR, match) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Build the full adoption package for a meet. MUST be called only AFTER the
  * adoption lock is set (lock-drain-snapshot order, Section 5.2) — a write
@@ -61,6 +72,15 @@ async function buildAdoptionPackage(meetId) {
     };
   }
 
+  let bottom_logo = null;
+  const bottomLogoPath = findBottomLogoFile(meetId);
+  if (bottomLogoPath) {
+    bottom_logo = {
+      filename: path.basename(bottomLogoPath),
+      base64: fs.readFileSync(bottomLogoPath).toString('base64'),
+    };
+  }
+
   return {
     format: 'stickit-adoption-package',
     protocol_version: protocol.SYNC_PROTOCOL_VERSION,
@@ -68,7 +88,8 @@ async function buildAdoptionPackage(meetId) {
     exported_at: new Date().toISOString(),
     tables,
     logo,
+    bottom_logo, // v2.3.01 — optional; older importers ignore it
   };
 }
 
-module.exports = { buildAdoptionPackage, findLogoFile, MEET_LOGOS_DIR };
+module.exports = { buildAdoptionPackage, findLogoFile, findBottomLogoFile, MEET_LOGOS_DIR };
