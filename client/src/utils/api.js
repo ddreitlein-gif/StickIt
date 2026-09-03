@@ -167,6 +167,9 @@ export const api = {
   getEventOfficials: (meetId, eventId) => apiFetch(`/meets/${meetId}/officials/event/${eventId}`),
   copyOfficialsFromEvent: (meetId, sourceEventId, targetEventId) =>
     apiFetch(`/meets/${meetId}/officials/copy-from-event`, { method: 'POST', body: { sourceEventId, targetEventId } }),
+  // v2.4.00 (E-1) — copy the judge panel from another event of the same meet + discipline
+  copyJudgesFromEvent: (eventId, sourceEventId) =>
+    apiFetch(`/events/${eventId}/judges/copy-from-event`, { method: 'POST', body: { sourceEventId } }),
 
   // USSS Database
   getUsssStatus: () => apiFetch('/usss/status'),

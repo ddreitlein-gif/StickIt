@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.3.01
+**Current version:** v2.4.00
 
 ## Commands
 
@@ -228,6 +228,151 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.4.00 Feature Notes
+
+### Post-Physical-Test Fix Release (v2.4.00)
+
+Everything in `StickIt_v2_Physical_Test_Findings_09-03-26.md` (the first physical venue run,
+09-03-26, PASSED on the v2.3.01 image) worked in the prescribed order of
+`StickIt_v2_Post_Test_Fix_Prompt_09-03-26.md`: two image defects (F-1/F-2), three log-review
+items (L-1..L-3), the tablet/console items (T-1, T-2+T-3, T-4..T-7), and one enhancement (E-1).
+**No scoring math, no schema change, no sync-protocol change** (still v3; no new columns).
+Rulings recorded from the 09-03-26 chat: the role bar + Venue Menu + More-menu placement
+(approved as proposed); the amber discipline-switch notice (approved); a Head Judge tablet
+showing a judge seat side-by-side is DEFERRED (Change role covers the double-duty case).
+
+**L-1 — boot-time backfills on the venue (root cause + fix).** The 19:50 boot after the power
+pull logged `athletes.bib backfilled for 6` and `air_score_no_dd backfilled for 6 runs` on the
+adopted meet. Findings: (a) every FR-9 guard keys on `meets.adoption_status='adopted'`, a
+cloud-side column the adoption package deliberately strips (NON_SYNC_COLUMNS) — on a venue
+the guards are pass-throughs BY DESIGN (the venue is the authority), on condition that its boot
+writes are captured; (b) the v1.6 bib migration's data gate ("no athlete has a bib yet")
+reopened on the venue because FR-8 leaves only the adopted meet's athletes in the table and
+cloud athletes created after v1.6 carry NULL `athletes.bib` — it copied registration bibs into
+rows the cloud never had; the air_score_no_dd "backfill" was the 5 DNF + 1 DNS rows
+(status=complete, no scores) being written NULL over NULL and counted, on EVERY boot, cloud
+included; (c) both use the hooked `execute`, and the capture hook was installed at module
+load three statements ahead of the migrations, so the writes were captured and upsynced (Pi
+outbox seq 257, empty) — but only by winning a race. Fixes: `index.js` now AWAITS
+`installCaptureHook()` before `initSchema()` in venue mode (worker woken after init; a fresh DB
+has no app_settings yet); the bib migration is a true one-time migration behind an
+`app_settings.migration_v16_bib_done` marker (set at every server's first boot, so a venue never
+reopens it post-adoption); the air_score_no_dd backfill skips rows whose computed value is
+null. The other schema.js migrations (gender/short-code/usss_code) use the raw client and are
+uncaptured on a venue — no-ops there because the cloud normalized those rows before adoption.
+
+**L-2 — Pi timezone.** The Pi was on pi-gen's default **Europe/London** (the journal read in
+BST, not UTC as assumed); autosave/snapshot filenames and every DB timestamp are UTC. The
+image now sets `TIMEZONE_DEFAULT=America/Denver` (override `STICKIT_PI_TIMEZONE`),
+`en_US.UTF-8`, US keymap; `update-stickit.sh` moves a device still on Europe/London to the
+venue zone once. Stored timestamps stay UTC by design (documented in VENUE_OPS).
+
+**L-3 — journal lines.** Snapshot worker: one line per result (`[snapshot] written …` /
+`FAILED: …`, identical failures collapsed until the message changes or the stick recovers).
+Sync worker: state changes only — `cloud unreachable … queuing`, `cloud reachable again —
+pushed N change(s), M still queued`, `queue drained`, plus the existing revoked/stuck lines.
+
+**F-1/F-2 — backup stick.** Label **`STICKITSNAP`** (11 chars, the ExFAT/FAT32 limit) in
+`provision.sh`, README, run sheets, VENUE_OPS, MAC_FALLBACK, help; fstab gains
+`uid=1000,gid=1000` so the `stickit` service user owns the mount (was root → SQLITE_CANTOPEN).
+Decision: **ExFAT is the only supported format** (FAT32 also mounts; ext4 is refused by the
+FAT-only options and stays absent via nofail) — the Mac fallback must read the snapshots
+natively. The pre-event checklist carries the exact Disk Utility steps (Name STICKITSNAP,
+ExFAT, Master Boot Record). The test Pi's hand-edited fstab already matches.
+
+**T-1 — verified, designed.** Both events were `setup` before any run, so venue auto-follow
+fell back to the first-created event (the Men's on the Pi) and the HJ tablet had no next-up
+card for the Women's; the Scoring Computer's first Start Run put the Women's event in the
+spotlight. Rule documented in tablet-hj, scoring-live, the new venue help topics, the adoption
++ tablets run sheets: **the Chief of Scoring starts the first run of an event from the Scoring
+Computer**, after which the HJ starts runs from the tablet.
+
+**T-2/T-7 — leaving a role.** `VenueRole.jsx`: judge/HJ/timekeeper tablets get a 40 px bar
+ABOVE the embedded page (the iframe is shorter; nothing covered) — role · seat · judge (role
+label) · followed event — with **Leave seat** (judge: releases the seat, clears role memory,
+returns to `/?menu=1&pick=judge` which opens the seat picker directly, no Crew PIN re-entry)
+and **Change role** (releases the seat if any, clears memory, returns to the menu where each
+tile asks its PIN). Both `window.confirm` first. Scoreboard: no bar, a labeled corner "⌂ Change
+role" button. FR-15 preserved: a reload/reboot still returns to the remembered role; only these
+actions change it. **Singles ↔ duals:** when the followed event's discipline changes, the bar
+turns amber — "Now following <event> (Dual Moguls). You are Air Judge in seat J3 here." (or
+"…no judge in this event — Leave seat and pick the right one"; timekeeper: "Duals have no
+timekeeper"). Officials sidebar (`Layout.jsx`): in venue mode the Home link becomes **Venue
+Menu** → `/?menu=1` (memory kept; strip on the menu "This device is set up as Scoring
+Computer — Back to Scoring Computer"). Venue detection for cloud-shared pages via a new
+`useVenueMode()` hook in `venueShared.js` (cached /api/venue/status; failure reads as cloud).
+
+**T-4 — seats follow the format.** `venue.js` `seatOrderFor(event)`: mogul = `TL1..TLn` +
+`Air1..Airm` from the event's judge counts (5-judge J1–J3/J4–J5 unchanged; **7-judge J1–J5
+T&L + J6–J7 Air** — TL4/TL5 previously had no seat at all), dual 5 fixed, aerials v2 = panel
+size, legacy aerials 7. `GET /seats` returns only in-format seats (each with `role`), plus
+claimed out-of-format seats flagged `in_event:false` (still force-releasable), `seat_count`,
+and all seven when no event is active yet. The picker shows "Now scoring: <event> (Moguls) —
+5 seats", role beside each seat, judge name or "No judge assigned to this role yet", and an
+"Also in use, but not part of this event" line; it re-polls every 4 s. Also fixed: `judges.js`
+`VALID_ROLES` lacked TL4/TL5 (the event form offers 5 T&L judges; EventDetail listed the roles;
+the POST 400'd); TL4/TL5 labels added to EventDetail/JudgeTablet/HeadJudgeTablet maps.
+
+**T-5 — meet page in venue mode.** More ▾ hides Release for Adoption / New Release Code /
+Undo Release and Clone Meet; offers **Venue Menu (end of day)** (Hand Back / Check In stay on
+the venue menu with their PIN/confirm/progress handling — one implementation). The Advanced
+panel hides "Allow venue server adoption" in venue mode. Menu widened (w-56).
+
+**T-6 — finalize on reload.** `GET /runs/active` adds `finalized` (events.status='complete')
+to both event_completed branches; the HJ tablet sets `eventFinalized` on it, so a reload after
+Finalize shows "Event Completed". A repeat Finalize was verified harmless (no audit row,
+zero-row phase update, one extra broadcast).
+
+**E-1 — copy judges.** `POST /api/events/:eventId/judges/copy-from-event { sourceEventId }`
+(requireAuth = login on cloud / Control token on venue; adoption-lock + freeze prefixes apply):
+same meet + same discipline only (aerials also same v2/legacy model), roles already filled on
+the target kept, roles the target format cannot hold skipped, new id + short code per copied
+row, plain INSERT so the rows ride the outbox. Response `{copied, skipped_filled,
+skipped_role, judges}`. Client: **Copy Judges from Other Event** above Assigned Judges
+(same-discipline events only) + `api.copyJudgesFromEvent`.
+
+**PIN modal.** `type="password"` → masked `type="tel"` (`-webkit-text-security: disc`,
+`autoComplete=off`, `data-testid="venue-pin"`): a 4-digit venue PIN must not trigger iPad
+keychain / password-manager prompts (found because a Chrome password manager blocked the
+walkthrough). Harness selectors updated.
+
+**Docs.** New help group **Venue Server (StickIt box)** with `venue-server` (adoption, PINs,
+end of day, backup stick, updates, sync line) and `venue-tablets` (roles, seats, role bar,
+take-over from a dead tablet, singles/duals switch, first-run rule, Venue Menu, finalize);
+tablet-hj / scoring-live / judges-add updated; guide PDFs regenerated (66 topics). Printed
+venue material regenerated: adoption sheet step 5 (first run), tablets sheet steps 5–6 +
+take-over callout, end-of-day menu route, pre-event checklist stick-format block.
+`docs/VENUE_OPS.md` (stick + timezone/journal sections), image README (journal section),
+`VENUE_MAC_FALLBACK.md`.
+
+**Harness.** New `harness/tests/v240.test.js` (104 checks: E-1 cloud + venue-synced, T-6,
+T-1, T-4 incl. 7-judge + out-of-format claims, T-2 public release, L-1 three-restart sequence
+with the marker removed to prove capture ordering + cloud parity, L-3 outage/recovery/snapshot
+lines + collapsed FAILED, plus Playwright: judge bar, amber switch, Leave seat, Change role,
+HJ bar, scoreboard corner button, Venue Menu link + strip + reload, T-5 More menu on venue vs
+cloud). step3 seat count updated (7 → 5). `zz-gates` regression drop-list brought current
+(v2.1.00 meets columns, v2.2.00 viewer fields, v2.3.00 jump-code fields; `/api/version`
+compared by shape) — it had been failing since the v2.0.00 bump, unnoticed because only
+step subsets ran on later releases. step6 asserts the new label + uid/gid. Full suite green:
+566 (steps/review) + 31 (gates) + 104 (v240). `verify_v16.js` 123/123. Chrome walkthrough of
+the built bundle on scratch cloud+venue servers: all listed items.
+
+**Files created:** `client/src/help/topics/venue-server.md`, `venue-tablets.md`,
+`harness/tests/v240.test.js`
+**Files modified:** `server/index.js`, `server/db/schema.js`, `server/sync/worker.js`,
+`server/venue/snapshot.js`, `server/routes/venue.js`, `server/routes/judges.js`,
+`server/routes/runs.js`, `server/scripts/build_pi_image/{provision.sh,build.sh,update-stickit.sh,README.md}`,
+`server/scripts/venue_cards/build_venue_docs.js`, `client/src/pages/venue/{VenueRole,VenueHome}.jsx`,
+`client/src/pages/venue/venueShared.js`, `client/src/components/Layout.jsx`,
+`client/src/pages/{MeetDetail,EventDetail,HeadJudgeTablet,JudgeTablet}.jsx`, `client/src/utils/api.js`,
+`client/src/help/topicsIndex.js`, `client/src/help/topics/{tablet-hj,scoring-live,judges-add}.md`,
+`docs/{VENUE_OPS,VENUE_MAC_FALLBACK}.md`, `harness/tests/{step3,step6,zz-gates}.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/package.json`, `server/package.json`, `server/public/*` (rebuilt),
+`CLAUDE.md`
 
 ---
 

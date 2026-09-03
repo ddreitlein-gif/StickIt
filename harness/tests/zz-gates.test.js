@@ -38,7 +38,19 @@ const V2_ONLY_KEYS = [
   'adoption_status', 'adopted_at', 'sync_token_hash', 'last_sync_at',
   'last_applied_seq', 'remote_judging', 'release_code_hash',
   'release_code_expires_at', 'released_at', 'released_by',
+  // v2.1.00 — Advanced meet settings (meets columns, in the sync manifest)
+  'nj_rule_enabled', 'air_tie_allowed', 'start_run_timekeeper', 'start_run_head_judge', 'start_run_chief',
+  // v2.2.00 — viewer /results rule-correct ranking additions (effective_status,
+  // run_number echo). NOTE: rank VALUES also changed for ties/statused rows —
+  // a deliberate correction; the regression script has neither.
+  'effective_status', 'run_number',
+  // v2.3.00 — Air judge jump-code reconciliation (runs.air_codes_reconciled,
+  // judge_scores.jump_code, /runs/active mismatch state)
+  'air_codes_reconciled', 'jump_code', 'air_code_mismatch', 'air_codes_by_judge',
 ];
+// Keep this list current with every release's additive response fields —
+// the gate compares against a frozen v1.30.03 worktree, so any new key
+// fails it until documented here.
 
 function ensureV1Baseline() {
   if (!fs.existsSync(path.join(V1_DIR, 'server', 'index.js'))) {
@@ -110,7 +122,9 @@ async function main() {
     const M1 = await playRegressionScript(a1);
 
     const endpoints = [
-      { name: 'GET /api/version', path: () => `/api/version`, canon: d => d },
+      // Shape only: the value is the release string by definition (the gate
+      // passed pre-bump at v2.0.00 because both trees still said v1.30.03).
+      { name: 'GET /api/version', path: () => `/api/version`, canon: d => ({ keys: Object.keys(d || {}) }) },
       { name: 'GET /api/meets/:id', path: (M) => `/api/meets/${M.meet.id}`, canon: d => d },
       { name: 'GET /api/events/:id', path: (M) => `/api/events/${M.event.id}`, canon: d => d },
       { name: 'GET /api/events/:id/results', path: (M) => `/api/events/${M.event.id}/results`, canon: d => d },

@@ -15,7 +15,7 @@ Each event needs judges configured before scoring can begin. Judges live in the 
 ### Roles per discipline
 
 **Mogul (Comp Series default):**
-- `TL1`, `TL2`, `TL3` — T&L judges
+- `TL1`, `TL2`, `TL3` — T&L judges (`TL4`, `TL5` too when the event is set to 5 T&L judges — the 7-judge FIS format)
 - `Air1`, `Air2` — Air judges
 - `HeadJudge` — Head Judge
 - `Timekeeper` — Timekeeper
@@ -39,12 +39,23 @@ Each event needs judges configured before scoring can begin. Judges live in the 
 ### Friendly role display
 
 The tablets display judge roles using a friendlier mapping:
-- `TL1` → `T&L Judge 1`
+- `TL1` → `T&L Judge 1` (… `TL5` → `T&L Judge 5`)
 - `Air1` → `Air Judge 1`
 - `AeJudge1` → `Aerials Judge 1`
 - `DualTurns1` → `Dual Turns Judge 1`
 
 Internal values remain `TL1` etc. for routing/permissions. Only the display label is friendlier.
+
+### Copying judges from another event
+
+Most meets use the same panel for every event of a discipline. Instead of re-entering it, click **Copy Judges from Other Event** above the Assigned Judges table and pick the source event. The list offers only events of the **same meet and the same discipline** (moguls from moguls, dual moguls from dual moguls, aerials from aerials using the same scoring model), because the roles differ between disciplines.
+
+- Roles already filled on this event are kept — the copy never overwrites a judge you assigned.
+- Roles the target format does not have are skipped (for example TL4/TL5 from a 7-judge event into a 5-judge event); the message after the copy says how many were copied and how many were skipped.
+- Every copied judge gets a **new tablet link** (short code) — tablet URLs are per event. Generate them from the Links tab as usual.
+- The Head Judge is copied too when the target has none.
+
+The copy works the same on the cloud site and on a venue server's Scoring Computer (Control PIN); on the venue the new rows sync to the cloud like any other judge edit.
 
 ### Editing a judge
 

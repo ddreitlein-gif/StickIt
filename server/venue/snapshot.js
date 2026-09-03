@@ -50,6 +50,7 @@ async function isMountpoint(dir) {
 }
 
 let snapshotRunning = false;
+let lastLoggedError = null; // v2.4.00 (L-3): collapse repeated identical failures in the journal
 
 async function doSnapshot() {
   const dir = status.dir;
@@ -97,11 +98,26 @@ async function doSnapshot() {
     status.last_snapshot_at = new Date().toISOString();
     status.last_error = null;
     status.count = Math.min(files.length, MAX_SNAPSHOTS); // files already includes the new snapshot
+    console.log(`[snapshot] written ${path.basename(finalPath)} (${status.count} on the stick)`);
   } catch (e) {
     status.available = false;
     status.last_error = e.message;
   } finally {
     snapshotRunning = false;
+    // v2.4.00 (physical test L-3): one journal line per snapshot RESULT so a
+    // stick problem (F-2 was found only on the home screen) shows in
+    // `journalctl -u stickit-venue`. Repeated identical failures collapse to
+    // one line until the message changes or the stick recovers.
+    if (!status.available) {
+      const msg = status.last_error || 'Snapshot USB stick not available';
+      if (msg !== lastLoggedError) {
+        console.error(`[snapshot] FAILED: ${msg}${status.dir ? ` (dir ${status.dir})` : ''}`);
+        lastLoggedError = msg;
+      }
+    } else if (lastLoggedError) {
+      console.log('[snapshot] stick available again — snapshots resumed');
+      lastLoggedError = null;
+    }
   }
 }
 

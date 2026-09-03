@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../../utils/api'
-import { fetchVenueStatus, getRoleMemory, setRoleMemory, roleUrl } from './venueShared'
+import { fetchVenueStatus, getRoleMemory, setRoleMemory, roleUrl, judgeRoleLabel, disciplineLabel, describeMemory } from './venueShared'
 
 /**
  * v2.0.00 (Step 3, D9 / 6.2) — venue home screen: a role menu, not a login page.
@@ -32,11 +32,17 @@ function PinModal({ title, kind, onOk, onClose, hint }) {
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm text-center">
         <h2 className="font-display text-2xl text-white mb-1">{title}</h2>
         {hint && <p className="text-slate-500 text-sm mb-3">{hint}</p>}
+        {/* v2.4.00: a masked numeric field rather than type="password" — a
+            4-digit venue PIN must not trigger iPad keychain / password-manager
+            prompts or "save this password?" sheets for volunteers. */}
         <input
           autoFocus
-          type="password"
+          type="tel"
           inputMode="numeric"
+          autoComplete="off"
           maxLength={4}
+          data-testid="venue-pin"
+          style={{ WebkitTextSecurity: 'disc' }}
           className="input text-center text-3xl tracking-[0.5em] font-mono mb-3"
           value={pin}
           onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
@@ -70,24 +76,40 @@ function SeatPicker({ onPicked, onClose }) {
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg">
         <h2 className="font-display text-2xl text-white mb-1 text-center">Pick Your Judge Seat</h2>
-        {data?.active_event && <p className="text-slate-500 text-sm text-center mb-4">Now scoring: {data.active_event.name}</p>}
+        {/* v2.4.00 (T-4): only the seats the active event's format uses are
+            offered, each with its role, and the list re-reads every 4 s so a
+            singles → duals switch shows the dual roles as soon as it happens. */}
+        {data?.active_event
+          ? <p className="text-slate-500 text-sm text-center mb-4">Now scoring: <span className="text-slate-300">{data.active_event.name}</span> ({disciplineLabel(data.active_event.discipline)}) — {data.seat_count} seats</p>
+          : (data && <p className="text-slate-500 text-sm text-center mb-4">No event has started yet — all seats shown.</p>)}
         {err && <p className="text-red-400 text-sm text-center mb-3">{err}</p>}
         <div className="grid grid-cols-2 gap-3 mb-4">
-          {(data?.seats || []).map(s => (
+          {(data?.seats || []).filter(s => s.in_event !== false).map(s => (
             <div key={s.seat} className={`p-3 rounded-xl border ${s.claimed ? 'border-slate-800 bg-slate-800/40 opacity-70' : 'border-mountain-700 bg-mountain-900/20'}`}>
               <div className="flex items-center justify-between">
-                <span className="font-display text-2xl text-white">{s.seat}</span>
+                <span className="font-display text-2xl text-white">{s.seat}<span className="text-sm text-slate-400 font-sans ml-2">{s.role ? judgeRoleLabel(s.role) : ''}</span></span>
                 {s.claimed
                   ? <span className="text-xs text-amber-400">in use{s.device_label ? ` — ${s.device_label}` : ''}</span>
                   : <button onClick={() => claim(s.seat)} className="btn-primary text-sm px-4 py-1.5">Take</button>}
               </div>
-              <div className="text-xs text-slate-500 mt-1">{s.judge ? `${s.judge.role} — ${s.judge.name}` : 'No judge for this seat in the active event'}</div>
+              <div className="text-xs text-slate-500 mt-1">
+                {s.judge ? s.judge.name : (s.role ? 'No judge assigned to this role yet' : 'No judge for this seat in the active event')}
+              </div>
               {s.claimed && (
                 <button onClick={() => setForceFor(s.seat)} className="text-xs text-red-400 underline mt-1">Force release…</button>
               )}
             </div>
           ))}
         </div>
+        {(data?.seats || []).some(s => s.in_event === false) && (
+          <div className="text-xs text-slate-500 mb-4">
+            Also in use, but not part of this event:{' '}
+            {(data.seats).filter(s => s.in_event === false).map(s => (
+              <span key={s.seat} className="mr-3">{s.seat}{s.device_label ? ` (${s.device_label})` : ''} <button onClick={() => setForceFor(s.seat)} className="text-red-400 underline">Force release…</button></span>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-slate-600 mb-3 text-center">A seat "in use" from a dead tablet: tap Force release under it (Control PIN) — the backup tablet can then take it.</p>
         <button onClick={onClose} className="btn-secondary w-full">Cancel</button>
         {forceFor && (
           <PinModal
@@ -147,6 +169,12 @@ export default function VenueHome() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const stayOnMenu = searchParams.get('menu') === '1'
+  // v2.4.00 (T-2): "Leave seat" on a judge tablet lands here to pick again —
+  // the Crew PIN was already entered on this device, so open the picker directly.
+  const pickJudge = searchParams.get('pick') === 'judge'
+  // v2.4.00 (T-7): the menu reached on purpose (?menu=1) shows which role this
+  // device remembers, with a way back — the memory itself is untouched.
+  const [remembered] = useState(() => getRoleMemory())
   const [status, setStatus] = useState(null)
   const [pins, setPins] = useState(null)
   const [code, setCode] = useState('')
@@ -206,6 +234,11 @@ export default function VenueHome() {
       if (url) navigate(url, { replace: true })
     }
   }, [status, stayOnMenu])
+
+  // v2.4.00 (T-2): arriving from "Leave seat" — straight to the seat picker.
+  useEffect(() => {
+    if (pickJudge && status && status.adopted_meet && (status.meet_state === 'adopted' || status.meet_state === 'checking_in')) setShowSeats(true)
+  }, [pickJudge, status?.adopted_meet ? 1 : 0, status?.meet_state])
 
   const adopt = async (replace = false) => {
     setAdoptBusy(true); setAdoptErr('')
@@ -410,6 +443,20 @@ export default function VenueHome() {
 
           {pins && !pins.control_set && <PinSetupCard onDone={refresh} />}
 
+          {/* v2.4.00 (T-7): reached on purpose with a role remembered — say so,
+              offer the way back. Picking any tile below replaces the memory. */}
+          {stayOnMenu && remembered && remembered.role && !pickJudge && (
+            <div className="card mb-6 border-mountain-800 bg-mountain-900/10 flex items-center justify-between gap-4 text-sm">
+              <div className="text-slate-300">
+                This device is set up as <b className="text-white">{describeMemory(remembered)}</b>.
+                Pick a different role below to change it.
+              </div>
+              <button className="btn-secondary text-sm whitespace-nowrap" onClick={() => navigate(roleUrl(remembered))}>
+                Back to {describeMemory(remembered)}
+              </button>
+            </div>
+          )}
+
           <div className="space-y-3">
             <button className={tileStyle} onClick={() => openRole({ role: 'dashboard' }, 'control')}>
               <div className="font-display text-2xl">🖥 Scoring Computer</div>
@@ -421,7 +468,7 @@ export default function VenueHome() {
             </button>
             <button className={tileStyle} onClick={() => openRole({ role: 'judge' }, 'crew')}>
               <div className="font-display text-2xl">🎿 Judge</div>
-              <div className="text-slate-500 text-sm">Pick a seat J1–J7 (Crew PIN)</div>
+              <div className="text-slate-500 text-sm">Pick your seat (Crew PIN)</div>
             </button>
             <button className={tileStyle} onClick={() => openRole({ role: 'timekeeper' }, 'crew')}>
               <div className="font-display text-2xl">⏱ Timekeeper</div>

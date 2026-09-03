@@ -62,12 +62,21 @@ systemctl enable avahi-daemon
 systemctl enable systemd-timesyncd
 systemctl enable fake-hwclock
 
-# 6. USB snapshot stick (R11): a stick labeled STICKIT-SNAP auto-mounts at
+# 6. USB snapshot stick (R11): a stick labeled STICKITSNAP auto-mounts at
 #    /media/stickit-snapshot; the venue server snapshots there every 5 min and
 #    degrades gracefully when absent.
+#    v2.4.00 (physical test F-1/F-2): the label is 11 characters — the ExFAT /
+#    FAT32 volume-name limit; Disk Utility refused the old 12-character
+#    STICKIT-SNAP. uid/gid=1000 make the mount owned by the `stickit` service
+#    user (ExFAT/FAT have no Unix ownership, so root owned the old mount and
+#    the snapshot worker got SQLITE_CANTOPEN). Those options are only valid
+#    for ExFAT/FAT, so ExFAT is the ONLY supported stick format (FAT32 also
+#    mounts); an ext4 stick is refused by mount and stays unmounted (nofail).
+#    ExFAT was chosen because the Mac fallback (R9) must be able to read the
+#    snapshots on a laptop without extra software.
 mkdir -p /media/stickit-snapshot
-grep -q STICKIT-SNAP /etc/fstab || \
-  echo 'LABEL=STICKIT-SNAP /media/stickit-snapshot auto defaults,nofail,noatime,x-systemd.device-timeout=5 0 0' >> /etc/fstab
+grep -q 'LABEL=STICKITSNAP ' /etc/fstab || \
+  echo 'LABEL=STICKITSNAP /media/stickit-snapshot auto defaults,nofail,uid=1000,gid=1000,noatime,x-systemd.device-timeout=5 0 0' >> /etc/fstab
 
 rm -rf "$FILES"
 

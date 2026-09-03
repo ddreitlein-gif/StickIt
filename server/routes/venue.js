@@ -152,16 +152,38 @@ const SEAT_ROLES = {
   aerials_legacy: ['AirJudge1', 'AirJudge2', 'AirJudge3', 'FormJudge1', 'FormJudge2', 'FormJudge3', 'LandingJudge1'],
 };
 
-async function judgeForSeat(eventRow, seat) {
+/**
+ * v2.4.00 (physical test T-4): the seats an event's judging format actually
+ * uses, in canonical seat order. Moguls derive from the event's judge counts
+ * (5-judge: J1–J3 T&L + J4–J5 Air; 7-judge: J1–J5 T&L + J6–J7 Air — before
+ * this, TL4/TL5 had no seat at all), aerials v2 from the panel size, dual and
+ * legacy aerials are fixed. Used by the seat picker (only these seats are
+ * offered) and by role auto-follow (seat → judge).
+ */
+function seatOrderFor(eventRow) {
+  if (!eventRow) return SEAT_ROLES.mogul;
+  if (eventRow.discipline === 'aerials') {
+    if (eventRow.aerials_panel_size == null) return SEAT_ROLES.aerials_legacy;
+    const n = Math.max(2, Math.min(7, parseInt(eventRow.aerials_panel_size) || 5));
+    return SEAT_ROLES.aerials.slice(0, n);
+  }
+  if (eventRow.discipline === 'dual_mogul') return SEAT_ROLES.dual_mogul;
+  const tl = Math.max(1, Math.min(5, parseInt(eventRow.num_tl_judges) || 3));
+  const air = Math.max(1, Math.min(2, parseInt(eventRow.num_air_judges) || 2));
+  const order = [];
+  for (let i = 1; i <= tl; i++) order.push(`TL${i}`);
+  for (let i = 1; i <= air; i++) order.push(`Air${i}`);
+  return order;
+}
+
+function roleForSeat(eventRow, seat) {
   const n = parseInt(String(seat).replace(/^J/i, ''), 10);
   if (!n || n < 1 || n > 7) return null;
-  let order;
-  if (eventRow.discipline === 'aerials') {
-    order = eventRow.aerials_panel_size != null ? SEAT_ROLES.aerials : SEAT_ROLES.aerials_legacy;
-  } else {
-    order = SEAT_ROLES[eventRow.discipline] || SEAT_ROLES.mogul;
-  }
-  const role = order[n - 1];
+  return seatOrderFor(eventRow)[n - 1] || null;
+}
+
+async function judgeForSeat(eventRow, seat) {
+  const role = roleForSeat(eventRow, seat);
   if (!role) return null;
   return queryOne('SELECT id, name, role, short_code FROM judges WHERE event_id=? AND role=?', [eventRow.id, role]);
 }
@@ -177,11 +199,23 @@ router.get('/seats', async (req, res) => {
       const evId = await getActiveEventId(state.meet_id);
       if (evId) activeEvent = await queryOne('SELECT * FROM events WHERE id=?', [evId]);
     }
+    // v2.4.00 (T-4): offer only the seats the active event's format uses
+    // (J1–J5 on a 5-judge mogul event, not J1–J7). Seats outside the format
+    // that are still claimed (e.g. J6 from an earlier 7-judge event) are
+    // reported with in_event:false so the picker can still force-release
+    // them; unclaimed ones are omitted. With no active event yet, all seven.
+    const order = activeEvent ? seatOrderFor(activeEvent) : null;
     const seats = [];
     for (const seat of SEATS) {
-      const judge = activeEvent ? await judgeForSeat(activeEvent, seat) : null;
+      const idx = parseInt(seat.slice(1), 10) - 1;
+      const inEvent = !order || idx < order.length;
+      if (!inEvent && !byId[seat]) continue;
+      const role = activeEvent ? roleForSeat(activeEvent, seat) : null;
+      const judge = activeEvent && role ? await judgeForSeat(activeEvent, seat) : null;
       seats.push({
         seat,
+        in_event: inEvent,
+        role,
         claimed: !!byId[seat],
         device_label: byId[seat] ? byId[seat].device_label : null,
         claimed_at: byId[seat] ? byId[seat].claimed_at : null,
@@ -190,6 +224,7 @@ router.get('/seats', async (req, res) => {
     }
     res.json({
       seats,
+      seat_count: order ? order.length : SEATS.length,
       active_event: activeEvent ? { id: activeEvent.id, name: activeEvent.name, discipline: activeEvent.discipline } : null,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

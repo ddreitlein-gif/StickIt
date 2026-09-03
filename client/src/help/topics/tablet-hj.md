@@ -61,6 +61,8 @@ Once all judges (and timekeeper) have submitted, the big green button appears. T
 
 The **Start Run** button (with its DNS companion) on the next-up card appears only when the meet's Advanced settings allow the Head Judge to start runs (on by default). When pressed, the tablet re-checks the server's next-up athlete first — so a card that went stale while the iPad was asleep can never start the wrong athlete — and the server refuses duplicate or concurrent starts outright.
 
+**The first run of an event is started by the Chief of Scoring from the Scoring Computer.** On a venue server the HJ tablet follows whichever event is live; before any run has started nothing is live yet, so the tablet follows a best guess (the meet's first event) and may not show the expected athlete. The Scoring Computer's first Start Run — made after the run order, judge panel and course specs have been checked — puts the event in the spotlight, and from then on the Head Judge starts runs from the tablet as usual. See [Venue tablets](./venue-tablets).
+
 ### Send Back to Scoring
 
 Amber button. Opens the whole run back to specific-judge editing — useful when multiple things need to be corrected.
@@ -79,6 +81,10 @@ After every phase is finalized, the **Final Review** screen appears: a combined 
 
 - **Approve & Finalize Event** (green) — sets `events.status='complete'`. The full-screen "Event Complete — Thank You for Your Work" appears.
 - **Send Back to Scoring** (amber).
+
+Reloading the tablet after Finalize (or after a power cut) lands on the "Event Completed" screen, not on the Final Review page again. A repeat Finalize was always harmless — it writes no audit row and changes nothing — but the screen now says the event is done.
+
+On a venue server the HJ tablet also carries the role bar with **Change role** at the top — see [Venue tablets](./venue-tablets).
 
 ### Dual mogul HJ
 

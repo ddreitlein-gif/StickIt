@@ -88,7 +88,9 @@ async function main() {
 
     // ---- Seats (R1) ------------------------------------------------------
     r = await vApi.get('/api/venue/seats');
-    c.eq(r.data.seats.length, 7, 'seat registry lists J1–J7');
+    // v2.4.00 (T-4): only the seats the active event's format uses (5-judge mogul → J1–J5).
+    c.eq(r.data.seats.length, 5, 'seat registry lists only the 5 seats a 5-judge mogul event uses (T-4)');
+    c.eq(r.data.seat_count, 5, 'seat_count reported for the active event format');
     c.ok(r.data.seats[0].judge && r.data.seats[0].judge.role === 'TL1', `seat J1 maps to TL1 of the active event (got ${JSON.stringify(r.data.seats[0].judge)})`);
     r = await vApi.post('/api/venue/seats/claim', { seat: 'J1', device_label: 'iPad Alpha' });
     c.eq(r.status, 200, 'seat J1 claimed');
@@ -181,12 +183,12 @@ async function main() {
       let page = await tab.newPage();
       await page.goto(venue.base + '/?menu=1', { waitUntil: 'domcontentloaded' });
       await page.locator('text=🎿 Judge').click();
-      await page.waitForSelector('input[type="password"]');
-      await page.fill('input[type="password"]', '9999');
+      await page.waitForSelector('[data-testid="venue-pin"]');
+      await page.fill('[data-testid="venue-pin"]', '9999');
       await page.locator('button:has-text("OK")').click();
       await page.waitForSelector('text=Wrong PIN');
       c.ok(true, 'wrong Crew PIN shows an error');
-      await page.fill('input[type="password"]', '1111');
+      await page.fill('[data-testid="venue-pin"]', '1111');
       await page.locator('button:has-text("OK")').click();
       await page.waitForSelector('text=Pick Your Judge Seat');
       c.ok(true, 'right Crew PIN opens the seat picker');
@@ -215,8 +217,8 @@ async function main() {
       const page = await tab.newPage();
       await page.goto(venue.base + '/?menu=1', { waitUntil: 'domcontentloaded' });
       await page.locator('text=Scoring Computer').click();
-      await page.waitForSelector('input[type="password"]');
-      await page.fill('input[type="password"]', '4321');
+      await page.waitForSelector('[data-testid="venue-pin"]');
+      await page.fill('[data-testid="venue-pin"]', '4321');
       await page.locator('button:has-text("OK")').click();
       await page.waitForURL('**/dashboard', { timeout: 10000 });
       c.ok(true, 'Control PIN opens the Scoring Computer (full Officials console)');

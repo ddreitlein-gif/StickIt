@@ -451,9 +451,16 @@ async function initSchema() {
   // v1.6 -- one-time backfill of athletes.bib from each athlete's most
   // recent non-null registration bib.  Runs exactly once, gated on
   // detecting that no athlete has a non-null bib yet.
+  // v2.4.00 (L-1) -- a persisted marker makes this a TRUE one-time migration.
+  // The data gate alone reopened on every venue Pi at its first
+  // post-adoption boot: FR-8 leaves only the adopted meet's athletes in the
+  // venue table, and cloud athletes created after the v1.6 migration carry a
+  // NULL bib, so "no athlete has a bib yet" was true again and the venue
+  // rewrote adopted rows the cloud never had (physical test 09-03-26).
   try {
-    const anyBib = await queryOne("SELECT COUNT(*) AS cnt FROM athletes WHERE bib IS NOT NULL");
-    if (anyBib && parseInt(anyBib.cnt) === 0) {
+    const marker = await queryOne("SELECT value FROM app_settings WHERE key='migration_v16_bib_done'");
+    const anyBib = marker ? null : await queryOne("SELECT COUNT(*) AS cnt FROM athletes WHERE bib IS NOT NULL");
+    if (!marker && anyBib && parseInt(anyBib.cnt) === 0) {
       // FR-9: skip athletes locked by a current venue adoption
       const athletes = await queryAll(`SELECT id FROM athletes WHERE ${ATHLETE_NOT_LOCKED}`);
       let backfilled = 0;
@@ -472,6 +479,9 @@ async function initSchema() {
       if (backfilled > 0) {
         console.log(`[v1.6 migration] athletes.bib backfilled for ${backfilled} athletes`);
       }
+    }
+    if (!marker) {
+      await c.execute(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('migration_v16_bib_done', datetime('now'))`);
     }
   } catch (e) {
     console.log('[v1.6 migration] athletes.bib backfill skipped:', e.message);
@@ -543,6 +553,11 @@ async function backfillAirScoreNoDd() {
         const sum = n2 === 0 ? a1 * 2 : a1 + a2;
         value = Math.floor(sum * 100) / 100;
       }
+      // v2.4.00 (L-1): DNS/DNF/DSQ rows (status='complete', no scores, NULL
+      // air_score) have nothing to backfill. Writing NULL over NULL counted
+      // as a backfill, re-logged them on EVERY boot and, on a venue, pushed
+      // six no-op upserts through the outbox after the power pull.
+      if (value == null) continue;
       await execute(`UPDATE runs SET air_score_no_dd=? WHERE id=?`, [value, r.id]);
       updated++;
     }

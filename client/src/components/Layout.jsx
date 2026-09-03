@@ -2,6 +2,7 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import ChangePasswordModal from './ChangePasswordModal'
+import { useVenueMode } from '../pages/venue/venueShared'
 
 const NAV_ALL = [
   { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
@@ -82,7 +83,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v2.3.01')
+  const [version, setVersion] = useState('v2.4.00')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])
@@ -121,6 +122,11 @@ export default function Layout() {
   const navigate = useNavigate()
   const { user, authEnabled, logout } = useAuth()
   const NAV = user?.role === 'judge' ? NAV_JUDGE : NAV_ALL
+  // v2.4.00 (physical test T-7): on a venue server the Scoring Computer must
+  // always be able to reach the venue menu (Hand Back / Check In live there).
+  // "/" alone bounces back here through the device role memory, so the link
+  // carries ?menu=1; the memory itself is kept (a reload still returns here).
+  const venue = useVenueMode()
 
   useEffect(() => {
     fetch('/api/version')
@@ -157,11 +163,14 @@ export default function Layout() {
         {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           <NavLink
-            to="/"
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors mb-2"
+            to={venue ? '/?menu=1' : '/'}
+            title={venue ? 'Venue menu — roles, seats, Hand Back / Check In' : 'Home'}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-colors mb-2 ${venue
+              ? 'text-sm text-mountain-300 hover:text-white bg-mountain-900/20 border border-mountain-800 hover:bg-mountain-800/40'
+              : 'text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800'}`}
           >
-            <span dangerouslySetInnerHTML={{ __html: '&#8592;' }} />
-            {sidebarOpen && <span>Home</span>}
+            <span dangerouslySetInnerHTML={{ __html: venue ? '&#8962;' : '&#8592;' }} />
+            {sidebarOpen && <span>{venue ? 'Venue Menu' : 'Home'}</span>}
           </NavLink>
           {NAV.map(({ to, label, icon, exact }) => (
             <NavLink

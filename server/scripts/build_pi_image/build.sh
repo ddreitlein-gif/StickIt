@@ -93,8 +93,16 @@ FIRST_USER_NAME=stickit
 FIRST_USER_PASS=${STICKIT_PI_PASSWORD}
 DISABLE_FIRST_BOOT_USER_RENAME=1
 ENABLE_SSH=1
+TIMEZONE_DEFAULT=${STICKIT_PI_TIMEZONE:-America/Denver}
+LOCALE_DEFAULT=en_US.UTF-8
+KEYBOARD_KEYMAP=us
+KEYBOARD_LAYOUT="English (US)"
 STAGE_LIST="stage0 stage1 stage2 stage-stickit"
 EOS
+# v2.4.00 (physical test L-2): pi-gen's defaults are Europe/London + en_GB, so
+# the journal on the first image read in BST while autosave/snapshot filenames
+# and every DB timestamp are UTC. The journal now reads in venue-local time
+# (override with STICKIT_PI_TIMEZONE); stored timestamps stay UTC by design.
 
 echo "== Handing off to pi-gen (this takes a while) =="
 cd pi-gen

@@ -28,7 +28,7 @@ const DEVO_FREQ_CODES = ['S','T','D','X','K','TS','TT','TD','TTS','3','3p']
 // Friendly judge-role display labels — prototype shows "T&L Judge 3", not "TL3".
 // Server-side role state is unchanged; this map is display-only.
 const ROLE_DISPLAY = {
-  TL1: 'T&L Judge 1', TL2: 'T&L Judge 2', TL3: 'T&L Judge 3',
+  TL1: 'T&L Judge 1', TL2: 'T&L Judge 2', TL3: 'T&L Judge 3', TL4: 'T&L Judge 4', TL5: 'T&L Judge 5',
   Air1: 'Air J1',     Air2: 'Air J2',     HJ:  'Head Judge',
 }
 const roleDisplay = (role) => ROLE_DISPLAY[role] || role || ''

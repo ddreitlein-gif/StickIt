@@ -232,6 +232,7 @@ app.get('/api/venue/status', async (req, res) => {
 // v2.0.00 (Step 2) -- mode-gated sync/venue routers (D4: both ship in every
 // build, inert when not selected). Cloud serves /api/sync (adopt + upsync
 // apply); venue serves /api/venue (adoption, home-screen support).
+let venueCaptureReady = Promise.resolve(); // v2.4.00 (L-1): resolved before initSchema in venue mode
 {
   const { isVenueMode } = require('./venue/mode');
   if (!isVenueMode()) {
@@ -247,8 +248,13 @@ app.get('/api/venue/status', async (req, res) => {
     const outboxMod = require('./sync/outbox');
     const workerMod = require('./sync/worker');
     outboxMod.setOnAppend(() => workerMod.wake());
-    outboxMod.installCaptureHook()
-      .then(() => workerMod.wake(1000))
+    // v2.4.00 (L-1): the install used to race initSchema() — it merely won
+    // by being three statements ahead of the migrations. The boot sequence
+    // below now AWAITS this promise before running initSchema, so every
+    // boot-time migration write on an adopted meet is captured
+    // deterministically. The worker is woken after initSchema instead of
+    // here (a fresh DB has no app_settings table yet).
+    venueCaptureReady = outboxMod.installCaptureHook()
       .catch(e => console.error('[venue] outbox capture install failed:', e.message));
     // v2.0.00 (Step 5, R11) -- USB snapshot worker (5-minute cadence; graceful
     // degrade when the stick is absent).
@@ -350,7 +356,7 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-initSchema().then(async () => {
+venueCaptureReady.then(() => initSchema()).then(async () => {
   // v1.25.00 (A-6) -- load (or generate-and-persist) the JWT secret so sessions
   // survive server restarts. Must run before any login/verify can happen.
   try {
@@ -367,6 +373,8 @@ initSchema().then(async () => {
   // never mutates synced tables uncaptured.
   if (require('./venue/mode').isVenueMode()) {
     try { await require('./sync/outbox').refreshCaptureState(); } catch (_) {}
+    // v2.4.00 (L-1): resume any queued outbox rows now that the schema is up.
+    try { require('./sync/worker').wake(1000); } catch (_) {}
     // v2.0.00 (C-1) -- interrupted check-in recovery: a crash/power cut during
     // POST /api/venue/checkin leaves venue_meet_state='checking_in' persisted
     // with nobody to revert it, which would freeze every mutation (FR-10) and

@@ -4,7 +4,7 @@ This is the end-to-end loop that runs all day at a live competition. Once the se
 
 ### The loop, per athlete
 
-1. **Start Run** — on the Scoring tab, click the blue **Start Run** button next to the athlete listed as `Up Next`. A confirm dialog appears (some versions). On confirm, the server creates a `runs` row with `status='scoring'` and broadcasts `run_started` to every connected tablet and public scoreboard.
+1. **Start Run** — on the Scoring tab, click the blue **Start Run** button next to the athlete listed as `Up Next`. A confirm dialog appears (some versions). On confirm, the server creates a `runs` row with `status='scoring'` and broadcasts `run_started` to every connected tablet and public scoreboard. **The first run of every event is started here, by the Chief of Scoring**, after the run order, judge panel and course specs have been checked; on a venue server that first start is also what puts the event in front of every tablet, after which the Head Judge can start runs from the tablet (see [Venue tablets](./venue-tablets)).
 2. **Judge tablets receive the bib** — each judge's tablet shows the new athlete's bib, name, and any prior runs. Judges enter scores and submit.
 3. **Timekeeper enters the time** — when the athlete crosses the finish line, the timekeeper enters the run time (or NT for No Time).
 4. **HJ tablet shows complete score** — once all judges and the timekeeper have submitted, the Head Judge tablet shows the full computed score with per-judge breakdown.

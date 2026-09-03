@@ -12,7 +12,7 @@ import AerialsV2ManualModal from '../components/AerialsV2ManualModal'
 import { QRCodeSVG } from 'qrcode.react'
 
 const ROLE_LABELS = {
-  TL1:'T&L 1', TL2:'T&L 2', TL3:'T&L 3',
+  TL1:'T&L 1', TL2:'T&L 2', TL3:'T&L 3', TL4:'T&L 4', TL5:'T&L 5',
   Air1:'Air 1', Air2:'Air 2',
   HJ:'Head Judge',
   // Aerials v2 (v1.18.00) — single-role panel, numbered
@@ -27,7 +27,7 @@ const ROLE_LABELS = {
   DualTime:'Time Judge', DualOverall:'Overall Judge',
 }
 const ROLE_COLOR = {
-  TL1:'text-sky-400', TL2:'text-sky-400', TL3:'text-sky-400',
+  TL1:'text-sky-400', TL2:'text-sky-400', TL3:'text-sky-400', TL4:'text-sky-400', TL5:'text-sky-400',
   Air1:'text-amber-400', Air2:'text-amber-400',
   HJ:'text-emerald-400',
   // Aerials v2 (v1.18.00)
@@ -119,6 +119,34 @@ function JudgePanel({ event, judges, onRefresh }) {
     setForm(f => ({ ...f, name: `${person.last_name}, ${person.first_name}`, ussa_id: person.ussa_id || '' }))
   }
 
+  // v2.4.00 (E-1) — copy the judge panel from another event of the same meet
+  // and discipline (aerials: same scoring model). Modeled on the officials
+  // copy: roles already filled here are left alone.
+  const [copyEvents, setCopyEvents] = useState([])
+  const [showCopyJudges, setShowCopyJudges] = useState(false)
+  const [copyingJudges, setCopyingJudges] = useState(false)
+  const [copyMsg, setCopyMsg] = useState('')
+  useEffect(() => {
+    if (!meetId) return
+    api.getEvents(meetId).then(evts => setCopyEvents(evts.filter(e =>
+      e.id !== event.id && e.discipline === event.discipline &&
+      (event.discipline !== 'aerials' || ((e.aerials_panel_size == null) === (event.aerials_panel_size == null)))
+    ))).catch(() => setCopyEvents([]))
+  }, [meetId, event.id, event.discipline])
+  const copyJudgesFrom = async (sourceEventId) => {
+    setCopyingJudges(true); setCopyMsg(''); setError('')
+    try {
+      const r = await api.copyJudgesFromEvent(event.id, sourceEventId)
+      const parts = [`Copied ${r.copied} judge${r.copied === 1 ? '' : 's'}`]
+      if (r.skipped_filled) parts.push(`${r.skipped_filled} role${r.skipped_filled === 1 ? '' : 's'} already filled here`)
+      if (r.skipped_role) parts.push(`${r.skipped_role} not used by this event's format`)
+      setCopyMsg(parts.join(' · ') + '.')
+      setShowCopyJudges(false)
+      onRefresh()
+    } catch (e) { setError(e.message) }
+    finally { setCopyingJudges(false) }
+  }
+
   // v1.18.00 — Aerials v2: Seed Panel button replaces the per-component role picker.
   const isAerialsV2 = event.discipline === 'aerials' && event.aerials_panel_size != null
   const [seeding, setSeeding] = useState(false)
@@ -137,7 +165,26 @@ function JudgePanel({ event, judges, onRefresh }) {
   return (
     <div className="space-y-6">
       <div className="card">
-        <h3 className="font-display text-lg text-white mb-4">Assigned Judges</h3>
+        <div className="flex items-center justify-between mb-4 gap-3">
+          <h3 className="font-display text-lg text-white">Assigned Judges</h3>
+          {copyEvents.length > 0 && (
+            showCopyJudges ? (
+              <div className="flex items-center gap-2">
+                <select className="input input-sm" disabled={copyingJudges} defaultValue=""
+                  onChange={e => { if (e.target.value) copyJudgesFrom(e.target.value) }}>
+                  <option value="" disabled>Select event...</option>
+                  {copyEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+                </select>
+                <button onClick={() => setShowCopyJudges(false)} className="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
+              </div>
+            ) : (
+              <button onClick={() => setShowCopyJudges(true)} className="btn-secondary text-xs" title="Copy the judge panel from another event of this meet with the same discipline. Roles already filled here are kept.">
+                Copy Judges from Other Event
+              </button>
+            )
+          )}
+        </div>
+        {copyMsg && <p className="text-green-400 text-sm mb-3">{copyMsg}</p>}
         {!judges.length ? <p className="text-slate-500 text-sm">No judges assigned yet.</p> : (
           <table className="data-table">
             <thead><tr><th>Role</th><th>Name</th><th>USSS ID</th><th></th></tr></thead>

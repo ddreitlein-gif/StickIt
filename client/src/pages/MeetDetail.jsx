@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import api, { authHeaders, downloadAuthed } from '../utils/api'
 import UsssTransmitModal from '../components/UsssTransmitModal'
+import { useVenueMode } from './venue/venueShared'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
 const DIVISION_LABEL = { comp_series: 'Comp Series', devo: 'Devo', rqs_eqs: 'RQS/EQS', fis: 'FIS', open: 'Open', devo_junior: 'Devo/Junior' }
@@ -1093,6 +1094,9 @@ function AdvancedCheck({ field, title, sub, form, setForm }) {
 //   10c  Who can start a run       — default all ON
 //   10d  Allow venue adoption      — relocated remote_judging flag, inverted
 function AdvancedSettingsModal({ meet, onClose, onSave }) {
+  // v2.4.00 (T-5): "Allow venue server adoption" is cloud transport state —
+  // meaningless on the venue server that already holds the meet, so hidden there.
+  const venue = useVenueMode()
   const [form, setForm] = useState({
     nj_rule_enabled:      !!meet.nj_rule_enabled,
     air_tie_allowed:      !!meet.air_tie_allowed,
@@ -1158,15 +1162,17 @@ function AdvancedSettingsModal({ meet, onClose, onSave }) {
               </p>
             )}
           </div>
-          <div className="space-y-3">
-            <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Venue Server</div>
-            <AdvancedCheck
-              field="allow_adoption"
-              title="Allow venue server adoption"
-              sub="When off, this meet is cloud-only (remote judging) and can never be released to or adopted by a venue server. Locks once the meet is adopted."
-              form={form} setForm={setForm}
-            />
-          </div>
+          {!venue && (
+            <div className="space-y-3">
+              <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">Venue Server</div>
+              <AdvancedCheck
+                field="allow_adoption"
+                title="Allow venue server adoption"
+                sub="When off, this meet is cloud-only (remote judging) and can never be released to or adopted by a venue server. Locks once the meet is adopted."
+                form={form} setForm={setForm}
+              />
+            </div>
+          )}
           {error && <p className="text-red-400 text-sm">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
@@ -1206,6 +1212,10 @@ export default function MeetDetail() {
   }, [adoption?.adopted])
 
   const adopted = !!adoption?.adopted
+  // v2.4.00 (physical test T-5): on a venue server the cloud-only adoption
+  // actions (Release / New Release Code / Undo Release) and Clone Meet are
+  // hidden; a "Venue Menu (end of day)" item leads to Hand Back / Check In.
+  const venue = useVenueMode()
 
   const handleRelease = async () => {
     if (!window.confirm('Release this meet for venue adoption? A one-time code will be shown for the venue volunteer. The cloud copy locks read-only once a venue server redeems the code.')) return
@@ -1417,7 +1427,7 @@ export default function MeetDetail() {
             {showMore && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowMore(false)} />
-                <div className="absolute right-0 mt-1 w-44 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20 py-1">
+                <div className="absolute right-0 mt-1 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20 py-1">
                   <button
                     onClick={() => { setShowMore(false); downloadTdReport() }}
                     className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
@@ -1431,20 +1441,22 @@ export default function MeetDetail() {
                   >
                     {exportingMeet ? 'Exporting...' : 'Export Meet'}
                   </button>
-                  <button
-                    onClick={() => { setShowMore(false); setShowClone(true) }}
-                    className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
-                  >
-                    Clone Meet
-                  </button>
+                  {!venue && (
+                    <button
+                      onClick={() => { setShowMore(false); setShowClone(true) }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Clone Meet
+                    </button>
+                  )}
                   <button
                     onClick={() => { setShowMore(false); setShowTransmit(true) }}
                     className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
                   >
                     USSS Transmit
                   </button>
-                  {/* v2.0.00 (R13) — venue adoption release */}
-                  {!adopted && !adoption?.remote_judging && (
+                  {/* v2.0.00 (R13) — venue adoption release (cloud only, T-5) */}
+                  {!venue && !adopted && !adoption?.remote_judging && (
                     <button
                       onClick={() => { setShowMore(false); handleRelease() }}
                       className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
@@ -1452,12 +1464,22 @@ export default function MeetDetail() {
                       {adoption?.released ? 'New Release Code' : 'Release for Adoption'}
                     </button>
                   )}
-                  {!adopted && adoption?.released && (
+                  {!venue && !adopted && adoption?.released && (
                     <button
                       onClick={() => { setShowMore(false); handleUnrelease() }}
                       className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
                     >
                       Undo Release
+                    </button>
+                  )}
+                  {/* v2.4.00 (T-5/T-7) — venue server: the end-of-day actions
+                      (Hand Back / Check In, Control PIN) live on the venue menu. */}
+                  {venue && (
+                    <button
+                      onClick={() => { setShowMore(false); navigate('/?menu=1') }}
+                      className="w-full text-left px-4 py-2 text-sm text-mountain-300 hover:bg-slate-800 border-t border-slate-800"
+                    >
+                      Venue Menu (end of day)
                     </button>
                   )}
                 </div>

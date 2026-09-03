@@ -24,10 +24,22 @@ What the image contains (see `provision.sh`):
   `Restart=always` (power-pull safe).
 - Avahi mDNS service record; systemd-timesyncd + fake-hwclock (FR-17 — Pi 4
   has no battery clock; sequence numbers, not clocks, order the sync).
-- USB snapshot stick auto-mount: label a stick **STICKIT-SNAP** and it mounts
-  at `/media/stickit-snapshot` (R11); absent stick = home-screen warning only.
+- USB snapshot stick auto-mount: format a stick **ExFAT** named **STICKITSNAP**
+  (11 characters — the ExFAT/FAT32 volume-name limit; v2.4.00 renamed it from
+  the 12-character `STICKIT-SNAP`, which Disk Utility refuses) and it mounts at
+  `/media/stickit-snapshot` owned by the `stickit` service user (R11, F-2);
+  absent stick = home-screen warning only. **ExFAT is the only supported
+  format** (FAT32 also mounts; ext4 does not — the fstab ownership options are
+  FAT-only, and the Mac fallback must be able to read the snapshots). Disk
+  Utility on a Mac: select the stick → Erase → Name `STICKITSNAP`, Format
+  `ExFAT`, Scheme `Master Boot Record` → Erase.
   The service sets `STICKIT_SNAPSHOT_REQUIRE_MOUNT=1`, so snapshots are only
   reported healthy when a real USB stick is mounted (never the SD card, H-10).
+- Timezone `America/Denver` (override `STICKIT_PI_TIMEZONE=<zone> ./build.sh`),
+  locale `en_US.UTF-8`, US keymap. The journal therefore reads in venue-local
+  time; database timestamps, autosave and snapshot filenames stay UTC (L-2).
+  Devices flashed from the 09-03-26 image (Europe/London default) are moved to
+  the venue timezone by the next routine update.
 - SSH enabled with user `stickit`, default password `stickitvenue` (H-11 —
   every recovery path assumes SSH). Override at build time with
   `STICKIT_PI_PASSWORD=<pass> ./build.sh <ref>` and record the credential on
@@ -56,3 +68,12 @@ Both paths are on the printed provisioning card (`server/public/docs/venue/`):
 - Home screen → **Update StickIt** (shown only when no meet is adopted and the
   internet is reachable): downloads the latest release, installs, restarts.
 - SSH fallback: `ssh stickit@stickit.local 'sudo /opt/stickit/update-stickit.sh'`.
+
+## Journal (post-meet diagnosis)
+
+`ssh stickit@stickit.local 'journalctl -u stickit-venue --since today'` (or
+`-b -1` for the previous boot). Since v2.4.00 the journal carries one line per
+snapshot result (`[snapshot] written …` / `[snapshot] FAILED: …`, repeats
+collapsed) and one per sync state change (`[sync worker] cloud unreachable …`,
+`cloud reachable again — pushed N …`, `queue drained`, revoked/stuck), so an
+outage and its recovery can be reconstructed without the home screen.

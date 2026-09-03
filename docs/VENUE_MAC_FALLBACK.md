@@ -35,7 +35,8 @@ A one-page printed version ships in the kit
 - No mDNS name (`stickit.local`) — numeric address only.
 - No auto-restart on crash: if the Terminal shows a crash, press ↑ and Enter
   to re-run the `STICKIT_MODE=venue node index.js` line. Data is safe on disk.
-- USB snapshots: optionally set `STICKIT_SNAPSHOT_DIR=/Volumes/<stick-name>`
-  before the start command to snapshot to an attached stick.
+- USB snapshots: optionally set `STICKIT_SNAPSHOT_DIR=/Volumes/STICKITSNAP`
+  before the start command to snapshot to the kit's backup stick (ExFAT,
+  named `STICKITSNAP` — the Mac reads and writes it natively).
 - The database lives in `<folder>/data/scoring.db` — copy it off afterwards if
   the meet was checked in from the Mac and you want a keepsake backup.

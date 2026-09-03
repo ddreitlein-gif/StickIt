@@ -304,10 +304,16 @@ router.get('/active', async (req, res) => {
       // Check if all phases are finalized (event completed)
       const allPhases = await queryAll(`SELECT status FROM event_phases WHERE event_id=?`, [req.params.eventId]);
       const eventCompleted = allPhases.length > 0 && allPhases.every(p => p.status === 'finalized');
-      if (eventCompleted) return res.json({ event_completed: true });
-      // Also check if event itself is marked complete (no phases scenario)
+      // v2.4.00 (physical test T-6): also say whether the Head Judge has
+      // ALREADY finalized the event (events.status='complete'), so a reloaded
+      // HJ tablet shows "Event Completed" instead of the Finalize page again.
+      // (A repeat Finalize was harmless — no audit row, zero-row phase update,
+      // one extra broadcast — but it read as if something was left undone.)
       const evt = await queryOne(`SELECT status FROM events WHERE id=?`, [req.params.eventId]);
-      if (evt && evt.status === 'complete') return res.json({ event_completed: true });
+      const finalized = !!(evt && evt.status === 'complete');
+      if (eventCompleted) return res.json({ event_completed: true, finalized });
+      // Also check if event itself is marked complete (no phases scenario)
+      if (finalized) return res.json({ event_completed: true, finalized: true });
       return res.json(null);
     }
 

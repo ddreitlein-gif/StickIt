@@ -63,6 +63,36 @@ added at the venue.
 Venue-created athletes may duplicate master rows under new IDs. After check-in,
 run the usual reconcile/dedup pass from the cloud Athletes admin page.
 
+## USB backup stick (R11) — format and label (v2.4.00, physical test F-1/F-2)
+
+- Label **`STICKITSNAP`** (11 characters — the ExFAT/FAT32 volume-name limit;
+  the original `STICKIT-SNAP` was 12 and Disk Utility refused it). The image's
+  fstab line is `LABEL=STICKITSNAP /media/stickit-snapshot auto
+  defaults,nofail,uid=1000,gid=1000,noatime,x-systemd.device-timeout=5 0 0`.
+- **ExFAT is the only supported format** (FAT32 also mounts). The `uid/gid`
+  options that give the `stickit` service user ownership are FAT-family-only,
+  so an ext4 stick is refused by mount and simply stays absent (nofail); the
+  Mac fallback (R9) also needs a format macOS reads natively.
+- Disk Utility (Mac): select the stick itself (not the volume) → Erase → Name
+  `STICKITSNAP`, Format `ExFAT`, Scheme `Master Boot Record` → Erase. The
+  printed pre-event checklist carries the same steps.
+- Symptom of a wrong label or format: home screen shows "Snapshot USB stick
+  not found / not mounted". Symptom of the pre-v2.4.00 ownership bug: home
+  screen shows `SQLITE_CANTOPEN … /media/stickit-snapshot/.stickit_snapshot_tmp_…`.
+  Test Pi flashed from the 09-03-26 image: fstab was corrected by hand; the
+  spare should be flashed from the v2.4.00 image.
+
+## Pi timezone and journal (v2.4.00, physical test L-2/L-3)
+
+- The v2.4.00 image sets `America/Denver` (pi-gen's default was Europe/London,
+  so the 09-03-26 journal read in BST). The routine update script moves a
+  device still on Europe/London to the venue timezone once.
+- Database timestamps (`datetime('now')`), autosave filenames
+  (`scoring_YYYY-MM-DD_HH-MM-SS.db`) and snapshot filenames
+  (`stickit_snapshot_…Z.db`) are **UTC** by design; only the journal is local.
+- The journal now logs snapshot results and sync state changes (offline, back
+  online with the queued count, drained, revoked, stuck) — see the image README.
+
 ## Pi clock (FR-17)
 
 Pi 4 has no battery clock: offline boots resume from fake-hwclock's last saved

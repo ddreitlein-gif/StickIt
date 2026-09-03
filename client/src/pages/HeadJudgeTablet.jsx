@@ -9,7 +9,7 @@ import CalculatedScorePanel from '../components/tablet/CalculatedScorePanel'
 import RunStatusGrid from '../components/tablet/RunStatusGrid'
 
 const ROLE_DISPLAY_HJ = {
-  TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3',
+  TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3', TL4: 'T&L 4', TL5: 'T&L 5',
   Air1: 'Air J1', Air2: 'Air J2', HJ: 'Head Judge',
 }
 const roleDisp = (r) => ROLE_DISPLAY_HJ[r] || ROLE_LABELS[r] || r || ''
@@ -35,7 +35,7 @@ const SCORE_LABELS = {
 }
 
 const ROLE_LABELS = {
-  TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3',
+  TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3', TL4: 'T&L 4', TL5: 'T&L 5',
   Air1: 'Air 1', Air2: 'Air 2', HJ: 'Head Judge',
   // v1.18.00 — Aerials v2
   AeJudge1: 'Judge 1', AeJudge2: 'Judge 2', AeJudge3: 'Judge 3', AeJudge4: 'Judge 4',
@@ -1068,7 +1068,9 @@ export default function HeadJudgeTablet() {
     try {
       const r = await fetch(`${API}/events/${eventId}/runs/active`)
       const run = await r.json()
-      if (run?.event_completed) { setEventCompleted(true); setActiveRun(null); return }
+      // v2.4.00 (T-6): a reloaded tablet after Finalize lands on "Event
+      // Completed" rather than offering Finalize again (server says finalized).
+      if (run?.event_completed) { setEventCompleted(true); if (run.finalized) setEventFinalized(true); setActiveRun(null); return }
       setActiveRun(run || null)
     } catch {}
   }

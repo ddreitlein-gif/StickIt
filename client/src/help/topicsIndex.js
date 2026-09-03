@@ -29,6 +29,7 @@ export const GROUPS = [
   { id: 'scoring',         label: 'Officials — Scoring' },
   { id: 'results',         label: 'Officials — Results & Reports' },
   { id: 'tablets',         label: 'Judges (Tablets)' },
+  { id: 'venue',           label: 'Venue Server (StickIt box)' },
   { id: 'admin',           label: 'Admin Panel' },
   { id: 'public',          label: 'Public Surfaces' },
   { id: 'reference',       label: 'Reference' },
@@ -101,6 +102,10 @@ const RAW_TOPICS = [
   { slug: 'tablet-time',              group: 'tablets', title: 'Timekeeper tablet' },
   { slug: 'tablet-hj',                group: 'tablets', title: 'Head Judge tablet' },
   { slug: 'tablet-hc',                group: 'tablets', title: 'High-contrast (HC) mode' },
+
+  // Venue Server (v2.0.00 / v2.4.00)
+  { slug: 'venue-server',             group: 'venue', title: 'The venue server (StickIt box)' },
+  { slug: 'venue-tablets',            group: 'venue', title: 'Venue tablets: roles, seats, changing role' },
 
   // Admin Panel
   { slug: 'admin-dashboard',          group: 'admin', title: 'Admin Dashboard' },

@@ -109,7 +109,7 @@ function kitSetup() {
   step(doc, 1, 'Plug the StickIt box (Raspberry Pi) into power and the network.',
     'UniFi venue: any LAN port on the venue router. Starlink-router venue: one of the two Ethernet ports on the back of the Starlink router.');
   step(doc, 2, 'Plug the small USB backup stick into the StickIt box.',
-    'It is labeled STICKIT-SNAP. The home screen warns you if it is missing — scoring still works without it.');
+    'It is labeled STICKITSNAP. The home screen warns you if it is missing — scoring still works without it.');
   step(doc, 3, 'Wait about one minute for the green light to settle.');
   step(doc, 4, 'On any tablet, open Safari and go to  http://stickit.local:3001',
     'You should see the StickIt Venue menu. If not: wait another minute, then pull the power plug, plug back in, try again.');
@@ -131,6 +131,8 @@ function adoption() {
     'Control PIN (scoring computer + head judge): ________     Crew PIN (judges + timekeeper): ________');
   step(doc, 4, 'Done. The meet name shows at the top, with "Sync: Up to date".',
     'Hand out tablets — Run Sheet 3 (Tablets) gets each person to their screen.');
+  step(doc, 5, 'The Chief of Scoring starts the FIRST run of each event from the Scoring Computer.',
+    'Check the run order, judge panel and course specs first, then press Start Run on the Scoring tab. That first start puts the event in front of every tablet; after it, the Head Judge can start runs from the tablet.');
   callout(doc, 'The code works exactly once. If adoption fails partway, call the official to release a new code — nothing is harmed.');
   callout(doc, 'No internet right now? Plan B: the official can hand you the meet on a USB stick as a file — use "Import from file" on the same screen.', RED);
   footer(doc);
@@ -143,12 +145,16 @@ function tablets() {
   step(doc, 1, 'Open Safari on the tablet and go to  http://stickit.local:3001',
     'Or scan the QR code on the judges’ stand card.');
   step(doc, 2, 'Tap the person’s role.',
-    'Judges: tap Judge, enter the Crew PIN, then tap the seat number that matches where they are sitting (J1, J2, …). Timekeeper: tap Timekeeper, Crew PIN. Head Judge / Scoring Computer: Control PIN. Scoreboard: no PIN.');
+    'Judges: tap Judge, enter the Crew PIN, then tap the seat that matches their role — the picker shows only the seats this event uses, with the role and judge name under each (J1–J3 T&L and J4–J5 Air in a 5-judge event; J6–J7 Air in a 7-judge event). Timekeeper: tap Timekeeper, Crew PIN. Head Judge / Scoring Computer: Control PIN. Scoreboard: no PIN.');
   step(doc, 3, 'That’s it. The screen follows the competition by itself.',
-    'When events alternate (women’s / men’s), every tablet switches automatically. Nobody ever types a web address mid-day.');
+    'When events alternate (women’s / men’s), every tablet switches automatically. Nobody ever types a web address mid-day. The Chief of Scoring starts the FIRST run of each event from the Scoring Computer; after that the Head Judge can start runs from the tablet.');
   step(doc, 4, 'If a tablet dies or reboots, just reopen Safari.',
     'It goes straight back to its job. If Safari lost the page, go to stickit.local:3001 again — same thing.');
-  callout(doc, 'Seat already "in use" from a dead tablet? On the seat picker, tap "Force release" under that seat and enter the Control PIN.');
+  step(doc, 5, 'Wrong seat, or one person doing two jobs? Use the bar at the top of the tablet.',
+    '"Leave seat" frees the seat and shows the seat picker again. "Change role" forgets the tablet’s job and returns to the menu (the new role asks its PIN). Both ask "Are you sure?" first. The Scoreboard TV has a small "Change role" button in its bottom-left corner instead.');
+  step(doc, 6, 'When the day switches between single moguls and duals, every judge checks the bar.',
+    'Seats are positions: J3 is T&L 3 in moguls but the Air judge in duals, J4 is Air 1 in moguls but the Time judge in duals. The bar turns amber and says what the seat means now — keep going if it is right, or tap "Leave seat" and pick the right seat.');
+  callout(doc, 'Backup tablet for a dead one: on the backup, tap Judge, Crew PIN, find the seat marked "in use", tap "Force release" under it, enter the Control PIN, take the seat. Head Judge and Timekeeper have no seat — just open the role on the backup tablet.');
   footer(doc);
   doc.end();
 }
@@ -174,7 +180,8 @@ function endOfDay() {
   doc.fill('#000000');
   doc.moveDown(0.3);
   step(doc, 1, 'Confirm the head judge has approved the final results.');
-  step(doc, 2, 'Collect the judge tablets. Leave the StickIt box powered and connected.');
+  step(doc, 2, 'Collect the judge tablets. Leave the StickIt box powered and connected.',
+    'To reach the menu: on the Scoring Computer click "Venue Menu" at the top of the left sidebar (or More ▾ → "Venue Menu (end of day)" on the meet page). On a tablet, tap "Change role" in the top bar.');
   doc.moveDown(0.4);
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Ending A — more competition days remain (e.g. duals tomorrow)');
   doc.fill('#000000');
@@ -198,10 +205,17 @@ function preEvent() {
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Both profiles');
   doc.fill('#000000'); doc.moveDown(0.3);
   const item = (t) => { doc.font('Helvetica').fontSize(11.5).text(`☐  ${t}`, { width: 500 }); doc.moveDown(0.35); };
-  item('Kit packed: 2 StickIt boxes (one spare), power supplies, Ethernet cable, USB snapshot stick (STICKIT-SNAP), printed run sheets 1–5 + judges’ stand card.');
+  item('Kit packed: 2 StickIt boxes (one spare), power supplies, Ethernet cable, USB backup stick (ExFAT, named STICKITSNAP — see below), printed run sheets 1–5 + judges’ stand card.');
   item('StickIt box software updated at home: plug in, open stickit.local:3001, click Update StickIt (only shows when no meet is loaded).');
   item('Meet fully built on stickitski.com: events, registrations, judges, run orders, course specs.');
   item('Plan for the release code: who releases the meet, and how the code reaches the venue (phone / written down).');
+  doc.moveDown(0.4);
+  doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Backup stick (one-time, on a Mac)');
+  doc.fill('#000000'); doc.moveDown(0.3);
+  item('Any USB stick. Open Disk Utility, select the stick itself (not the volume under it), click Erase.');
+  item('Name:  STICKITSNAP   (exactly that — 11 characters, capitals, no hyphen; the Mac refuses a longer name).');
+  item('Format:  ExFAT.   Scheme:  Master Boot Record.   Click Erase. ExFAT is the only supported format — do not use Mac OS Extended, APFS or ext4.');
+  item('Plug it into the StickIt box before the event. The home screen stops warning about the stick within a minute; snapshots land on it every 5 minutes.');
   doc.moveDown(0.4);
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('UniFi venue (primary)');
   doc.fill('#000000'); doc.moveDown(0.3);

@@ -31,6 +31,11 @@ let timer = null;
 let backoffMs = 0;
 let running = false;
 let pendingWake = false; // L-3: an append landing during the loop's final empty SELECT must not be lost
+// v2.4.00 (physical test L-3): journal one line per STATE CHANGE — went
+// offline, back online (with how much was queued), drained — so a post-meet
+// diagnosis is possible from `journalctl -u stickit-venue` alone. Steady-state
+// pushes stay silent (one per score would swamp the journal).
+let recoveringRows = 0; // rows pushed since the uplink came back, until drained
 
 function wake(delayMs = BATCH_WINDOW_MS) {
   if (status.revoked) return;
@@ -70,7 +75,13 @@ async function runLoop() {
       // under the next adoption's token.
       const r = await rawExecute(`SELECT * FROM sync_outbox WHERE meet_id=? ORDER BY seq LIMIT ${BATCH_LIMIT}`, [st.meetId]);
       const rows = r.rows.map(rowToObj);
-      if (!rows.length) return;
+      if (!rows.length) {
+        if (recoveringRows > 0) {
+          console.log(`[sync worker] queue drained — ${recoveringRows} queued change(s) delivered to the cloud, up to date`);
+          recoveringRows = 0;
+        }
+        return;
+      }
 
       // Size-aware batching: cap each push at ~2MB of row JSON so a batch can
       // never outgrow the cloud's request-body limit.
@@ -103,7 +114,10 @@ async function runLoop() {
         data = await resp.json().catch(() => ({}));
       } catch (e) {
         // Uplink down — backoff, retry later.
-        if (!status.offline_since) status.offline_since = new Date().toISOString();
+        if (!status.offline_since) {
+          status.offline_since = new Date().toISOString();
+          console.error(`[sync worker] cloud unreachable (${e.message}) — changes queue locally, retrying with backoff`);
+        }
         status.last_error = e.message;
         backoffMs = backoffMs ? Math.min(backoffMs * 2, BACKOFF_MAX_MS) : BACKOFF_START_MS;
         running = false; status.pushing = false;
@@ -153,6 +167,13 @@ async function runLoop() {
       const applied = Number(data.applied_through_seq) || 0;
       if (applied > 0) {
         await rawExecute(`DELETE FROM sync_outbox WHERE seq <= ? AND meet_id=?`, [applied, st.meetId]);
+      }
+      if (status.offline_since || status.stuck) {
+        const cnt = await rawExecute(`SELECT COUNT(*) AS c FROM sync_outbox WHERE meet_id=?`, [st.meetId]);
+        const remaining = parseInt(rowToObj(cnt.rows[0]).c) || 0;
+        console.log(`[sync worker] cloud reachable again — pushed ${changes.length} change(s), ${remaining} still queued (offline since ${status.offline_since || 'n/a'})`);
+        recoveringRows += changes.length;
+        if (remaining === 0) { console.log('[sync worker] queue drained — up to date'); recoveringRows = 0; }
       }
       status.last_push_at = new Date().toISOString();
       status.offline_since = null;

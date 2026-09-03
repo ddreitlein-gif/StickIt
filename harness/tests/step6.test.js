@@ -43,7 +43,8 @@ async function main() {
   c.ok(/STICKIT_SNAPSHOT_DIR=\/media\/stickit-snapshot/.test(unit), 'systemd unit points at the snapshot mount (R11)');
   const prov = fs.readFileSync(path.join(IMG_DIR, 'provision.sh'), 'utf8');
   c.ok(/avahi/.test(prov) && /fake-hwclock/.test(prov) && /timesyncd/.test(prov), 'provisioning covers mDNS + NTP + fake-hwclock (D3, FR-17)');
-  c.ok(/STICKIT-SNAP/.test(prov), 'provisioning auto-mounts the STICKIT-SNAP stick');
+  c.ok(/LABEL=STICKITSNAP /.test(prov) && !/STICKIT-SNAP /.test(prov), 'provisioning auto-mounts the STICKITSNAP stick (11-char ExFAT label, F-1)');
+  c.ok(/uid=1000,gid=1000/.test(prov), 'snapshot mount owned by the stickit service user (F-2)');
   c.ok(/sudoers\.d/.test(prov), 'provisioning allows the Update button to run the update script');
   const osList = JSON.parse(fs.readFileSync(path.join(IMG_DIR, 'os_list_stickit.json'), 'utf8'));
   c.ok(Array.isArray(osList.os_list) && osList.os_list[0].url.includes('github.com'), 'Imager os_list catalog valid (GitHub Releases asset URL)');

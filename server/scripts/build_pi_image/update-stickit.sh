@@ -60,3 +60,14 @@ fi
 
 systemctl start stickit-venue.service
 echo "== Updated to $TAG and restarted =="
+
+# v2.4.00 (physical test L-2): devices flashed from the first image carry
+# pi-gen's Europe/London default, which nobody chose. Move them to the venue
+# timezone once (only when still on that default) so the journal reads in
+# local time. Best-effort — never fails the update.
+if command -v timedatectl >/dev/null 2>&1; then
+  if [ "$(timedatectl show -p Timezone --value 2>/dev/null || true)" = "Europe/London" ]; then
+    timedatectl set-timezone "${STICKIT_PI_TIMEZONE:-America/Denver}" 2>/dev/null \
+      && echo "Timezone set to ${STICKIT_PI_TIMEZONE:-America/Denver} (was the image default Europe/London)" || true
+  fi
+fi
