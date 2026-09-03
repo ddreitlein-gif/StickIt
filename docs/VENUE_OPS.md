@@ -85,8 +85,11 @@ run the usual reconcile/dedup pass from the cloud Athletes admin page.
 ## Pi timezone and journal (v2.4.00, physical test L-2/L-3)
 
 - The v2.4.00 image sets `America/Denver` (pi-gen's default was Europe/London,
-  so the 09-03-26 journal read in BST). The routine update script moves a
-  device still on Europe/London to the venue timezone once.
+  so the 09-03-26 journal read in BST). The routine update script (v2.4.02+) moves a
+  device still on Europe/London to the venue timezone once — and from v2.4.02 the
+  script also refreshes itself after each update; a device flashed from the 09-03
+  image runs its ORIGINAL script until the new one is copied into place by hand
+  (test Pi: done 09-03-26, timezone set by hand).
 - Database timestamps (`datetime('now')`), autosave filenames
   (`scoring_YYYY-MM-DD_HH-MM-SS.db`) and snapshot filenames
   (`stickit_snapshot_…Z.db`) are **UTC** by design; only the journal is local.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.4.01
+**Current version:** v2.4.02
 
 ## Commands
 
@@ -228,6 +228,29 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.4.02 Feature Notes
+
+### Update Script Refreshes Itself (v2.4.02, hotfix)
+
+Found while updating the test Pi to v2.4.01 over SSH: its journal timezone stayed
+Europe/London because the v2.4.01 timezone step lives in `update-stickit.sh`, and that script
+is copied to `/opt/stickit/update-stickit.sh` ONCE by `provision.sh` at image build — a
+fielded Pi ran its original script forever, so no fix to the update path could ever reach it.
+`update-stickit.sh` now ends by replacing itself from the tree it just installed
+(`server/scripts/build_pi_image/update-stickit.sh`, atomic rename so the running copy finishes
+on its old inode; same path keeps the sudoers entry valid). Devices flashed from the 09-03
+image need one hand fix over SSH (done on the test Pi 09-03-26: copy the v2.4.02 script into
+place + `timedatectl set-timezone America/Denver`); every later image and every device updated
+from v2.4.02 on gets script fixes automatically. The v2.4.01 image build was stopped and
+rebuilt at v2.4.02; the published image is v2.4.02.
+
+**Files modified:** `server/scripts/build_pi_image/update-stickit.sh`,
+`server/scripts/build_pi_image/README.md`, `docs/VENUE_OPS.md`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `server/public/docs/venue/*.pdf` (regenerated footer), `CLAUDE.md`
 
 ---
 

@@ -68,6 +68,12 @@ Both paths are on the printed provisioning card (`server/public/docs/venue/`):
 - Home screen → **Update StickIt** (shown only when no meet is adopted and the
   internet is reachable): downloads the latest release, installs, restarts.
 - SSH fallback: `ssh stickit@stickit.local 'sudo /opt/stickit/update-stickit.sh'`.
+- Since v2.4.02 the update script replaces itself from the newly installed tree at the
+  end of every update, so fixes to the update path reach fielded devices on the next
+  update. Devices flashed from the 09-03-26 (v2.3.01) image still run the original
+  script once: after their first update, copy
+  `/opt/stickit/server/scripts/build_pi_image/update-stickit.sh` over
+  `/opt/stickit/update-stickit.sh` by hand (and set the timezone) — done on the test Pi.
 
 ## Journal (post-meet diagnosis)
 

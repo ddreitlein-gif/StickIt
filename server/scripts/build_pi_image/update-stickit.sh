@@ -71,3 +71,18 @@ if command -v timedatectl >/dev/null 2>&1; then
       && echo "Timezone set to ${STICKIT_PI_TIMEZONE:-America/Denver} (was the image default Europe/London)" || true
   fi
 fi
+
+# v2.4.02: refresh THIS script from the tree just installed, so fixes to the
+# update path itself reach fielded devices on the next update (provision.sh
+# copies it once at image build; before this, a Pi kept its original script
+# forever — the v2.4.01 timezone step above never ran on the test Pi). Atomic
+# rename so the running copy (old inode) finishes cleanly; same path keeps the
+# sudoers entry valid. Last step on purpose — nothing below depends on it.
+NEW_SELF="$APP_DIR/server/scripts/build_pi_image/update-stickit.sh"
+if [ -f "$NEW_SELF" ] && ! cmp -s "$NEW_SELF" "$APP_DIR/update-stickit.sh"; then
+  cp "$NEW_SELF" "$APP_DIR/update-stickit.sh.new" \
+    && chmod 755 "$APP_DIR/update-stickit.sh.new" \
+    && chown root:root "$APP_DIR/update-stickit.sh.new" 2>/dev/null \
+    && mv -f "$APP_DIR/update-stickit.sh.new" "$APP_DIR/update-stickit.sh" \
+    && echo "Update script refreshed for next time" || true
+fi
