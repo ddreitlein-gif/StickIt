@@ -219,10 +219,16 @@ export default function VenueHome() {
 
   useEffect(() => { refresh() }, [])
   // v2.0.00 (Step 6) — update check, only meaningful with no meet adopted.
+  // v2.4.01: gate on the meet STATE, not on the presence of a remembered meet —
+  // after Check In the server still reports the checked-in meet, so the card
+  // never reappeared and the Update button was unreachable until the next
+  // adoption (found on the test Pi the first time an update existed). The
+  // server refuses /update only while adopted / checking_in / handed_back.
+  const updateBlocked = !status || ['adopted', 'checking_in', 'handed_back'].includes(status.meet_state)
   useEffect(() => {
-    if (!status || status.adopted_meet) { setUpdate(null); return }
+    if (updateBlocked) { setUpdate(null); return }
     api.venueUpdateCheck().then(setUpdate).catch(() => setUpdate(null))
-  }, [status?.adopted_meet ? 1 : 0, status ? 1 : 0])
+  }, [updateBlocked, status?.meet_state])
   useEffect(() => { const id = setInterval(() => refresh(), 10000); return () => clearInterval(id) }, [])
 
   // Device role memory: a rebooted tablet goes straight back to its role page.

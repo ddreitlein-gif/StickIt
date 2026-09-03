@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.4.00
+**Current version:** v2.4.01
 
 ## Commands
 
@@ -228,6 +228,27 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.4.01 Feature Notes
+
+### Venue Update Card After Check-In (v2.4.01, hotfix)
+
+Found the moment v2.4.00 became the first update a fielded Pi could see: the test Pi's home
+screen (meet state `checked_in`) showed NO "Update StickIt" card even though
+`/api/venue/update-check` reported `update_available: true`. `VenueHome.jsx` gated the card on
+`status.adopted_meet` being null, but `/api/venue/status` keeps reporting the remembered meet
+after Check In (and after Hand Back), so the card only ever appeared on a never-adopted box.
+The server's `POST /api/venue/update` already refuses only `adopted` / `checking_in` /
+`handed_back`. Fix: the card is gated on the meet STATE (`updateBlocked` = one of those three),
+so a checked-in box offers the update. Client-only; the test Pi was updated once over SSH
+(`sudo /opt/stickit/update-stickit.sh`) to get past the hidden button, and the v2.4.01 image
+carries the fix. The in-progress v2.4.00 image build was stopped and rebuilt at v2.4.01.
+
+**Files modified:** `client/src/pages/venue/VenueHome.jsx`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `server/public/docs/venue/*.pdf` (regenerated footer), `CLAUDE.md`
 
 ---
 
