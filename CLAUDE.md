@@ -596,7 +596,7 @@ items (L-1..L-3), the tablet/console items (T-1, T-2+T-3, T-4..T-7), and one enh
 **No scoring math, no schema change, no sync-protocol change** (still v3; no new columns).
 Rulings recorded from the 09-03-26 chat: the role bar + Venue Menu + More-menu placement
 (approved as proposed); the amber discipline-switch notice (approved); a Head Judge tablet
-showing a judge seat side-by-side is DEFERRED (Change role covers the double-duty case).
+showing a judge seat side-by-side is DEFERRED (Change role covers the double-duty case) — **built in v2.5.03** as two in-app tabs on the HJ role page.
 
 **L-1 — boot-time backfills on the venue (root cause + fix).** The 19:50 boot after the power
 pull logged `athletes.bib backfilled for 6` and `air_score_no_dd backfilled for 6 runs` on the
