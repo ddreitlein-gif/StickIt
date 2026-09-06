@@ -6,10 +6,10 @@
       "description": "StickIt local scoring server for USSS freestyle events. Boots to stickit.local:3001.",
       "url": "https://github.com/ddreitlein-gif/StickIt/releases/latest/download/stickit-venue.img.xz",
       "icon": "https://stickitski.com/logo.png",
-      "release_date": "2026-09-03",
+      "release_date": "2026-09-06",
       "extract_size": 3221225472,
-      "extract_sha256": "7bbe8db25159b11b2deb881ba630f4361962a2548c96358ed5ec791cd8307653",
-      "image_download_size": 559713548,
+      "extract_sha256": "dd42b88c71d8c849ec87a4c971fabdc98596a6ab76139ed33bc241656fcfe231",
+      "image_download_size": 580720492,
       "init_format": "systemd",
       "devices": [
         "pi4-64bit",
