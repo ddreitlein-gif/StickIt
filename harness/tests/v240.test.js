@@ -328,6 +328,8 @@ async function main() {
       await page.fill('[data-testid="venue-pin"]', '1111');
       await page.locator('button:has-text("OK")').click();
       await page.waitForSelector('text=Pick Your Judge Seat');
+      // The seat list loads asynchronously — wait for it before counting (flaked once on 09-06-26).
+      await page.locator('button:has-text("Take")').first().waitFor({ timeout: 10000 });
       c.ok(await page.locator('text=5 seats').count() > 0, 'T-4 UI: picker says how many seats the active event uses');
       c.eq(await page.locator('button:has-text("Take")').count(), 5, 'T-4 UI: exactly 5 Take buttons on a 5-judge event');
       c.ok(await page.locator('text=T&L 3').count() > 0, 'T-4 UI: seat role shown beside the seat number');
@@ -403,6 +405,54 @@ async function main() {
       c.ok(/Head Judge/.test(t) && /PostTest Duals/.test(t), `T-2 UI: HJ bar names the role and followed event (${t.replace(/\s+/g, ' ')})`);
       c.eq(await page.locator('button:has-text("Leave seat")').count(), 0, 'T-2 UI: HJ bar has no Leave seat');
       c.eq(await page.locator('button:has-text("Change role")').count(), 1, 'T-2 UI: HJ bar has Change role');
+
+      // --- v2.5.03: Head Judge who also scores — "Also score as a judge" → seat picker → two tabs ---
+      const memNow = () => page.evaluate(() => JSON.parse(localStorage.getItem('stickit_venue_role')));
+      const frameVis = () => page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll('iframe')).map(f => [f.title, getComputedStyle(f).visibility])));
+      c.eq(await page.locator('button:has-text("Also score as a judge")').count(), 1, 'v2.5.03 UI: HJ bar offers "Also score as a judge"');
+      await page.locator('button:has-text("Also score as a judge")').click();
+      await page.waitForSelector('text=Pick Your Judge Seat');
+      c.eq(await page.locator('[data-testid="venue-pin"]').count(), 0, 'v2.5.03 UI: no extra PIN for the seat (Control PIN already entered)');
+      await page.locator('button:has-text("Take")').first().waitFor({ timeout: 10000 });
+      c.eq(await page.locator('button:has-text("Take")').count(), 5, 'v2.5.03 UI: the same picker — 5 seats for the dual event');
+      await page.locator('button:has-text("Take")').nth(1).click(); // J2 = Turns Judge 2 in duals
+      await page.waitForURL(/\/venue\/role\/hj\?seat=J2$/, { timeout: 10000 });
+      await page.waitForSelector('[data-testid="venue-role-tab-judge"]', { timeout: 10000 });
+      c.deepEq(await memNow(), { role: 'hj', seat: 'J2' }, 'v2.5.03 UI: device memory is ONE role — hj + seat');
+      r = await vApi.get('/api/venue/seats');
+      c.ok(r.data.seats.find(s => s.seat === 'J2').claimed, 'v2.5.03: J2 claimed on the server by the HJ tablet');
+      await page.waitForSelector('[data-testid="venue-hj-judge-frame"]', { timeout: 12000 });
+      await page.waitForFunction(() => /Turns Judge 2/.test(document.querySelector('[data-testid="venue-role-tab-judge"]')?.innerText || ''), null, { timeout: 12000 }).catch(() => {});
+      const tabText = await page.locator('[data-testid="venue-role-tab-judge"]').innerText();
+      c.ok(/Judge J2/.test(tabText) && /Turns Judge 2/.test(tabText), `v2.5.03 UI: judge tab names seat + judge role (${tabText.replace(/\s+/g, ' ')})`);
+      c.eq(await page.locator('iframe').count(), 2, 'v2.5.03 UI: both role pages mounted (Head Judge + judge)');
+      let vis = await frameVis();
+      c.ok(vis['venue-hj-judge'] === 'visible' && vis['venue-hj'] === 'hidden', `v2.5.03 UI: after the pick the judge pane shows and the HJ pane is hidden, not unmounted (${JSON.stringify(vis)})`);
+      c.eq(await page.locator('button:has-text("Leave seat")').count(), 1, 'v2.5.03 UI: Leave seat offered on the judge tab');
+      const judgeSrc = await page.locator('[data-testid="venue-hj-judge-frame"]').getAttribute('src');
+      c.ok(/\/judge\/.*\?judge=/.test(judgeSrc), `v2.5.03 UI: judge pane embeds the seat's judge tablet (${judgeSrc})`);
+      await page.locator('[data-testid="venue-role-tab-hj"]').click();
+      vis = await frameVis();
+      c.ok(vis['venue-hj'] === 'visible' && vis['venue-hj-judge'] === 'hidden', `v2.5.03 UI: HJ tab shows the HJ pane and hides the judge pane (${JSON.stringify(vis)})`);
+      c.eq(await page.locator('iframe').count(), 2, 'v2.5.03 UI: switching tabs unmounts nothing');
+      c.eq(await page.locator('button:has-text("Leave seat")').count(), 0, 'v2.5.03 UI: no Leave seat on the HJ tab');
+      c.eq(await page.locator('button:has-text("Also score as a judge")').count(), 0, 'v2.5.03 UI: "Also score" gone once a seat is held');
+      // FR-15: a reload from the home address returns to BOTH tabs.
+      await page.goto(venue.base + '/', { waitUntil: 'domcontentloaded' });
+      await page.waitForURL(/\/venue\/role\/hj\?seat=J2$/, { timeout: 10000 });
+      await page.waitForSelector('[data-testid="venue-role-tab-judge"]', { timeout: 10000 });
+      c.ok(true, 'v2.5.03 FR-15: a reloaded tablet returns to Head Judge + seat J2');
+      // Leave seat on the judge tab: seat freed, Head Judge kept.
+      await page.locator('[data-testid="venue-role-tab-judge"]').click();
+      await page.locator('button:has-text("Leave seat")').click();
+      await page.waitForURL(/\/venue\/role\/hj$/, { timeout: 10000 });
+      await page.waitForFunction(() => !document.querySelector('[data-testid="venue-role-tabs"]'), null, { timeout: 10000 }).catch(() => {});
+      c.deepEq(await memNow(), { role: 'hj' }, 'v2.5.03 UI: Leave seat keeps the Head Judge role');
+      r = await vApi.get('/api/venue/seats');
+      c.ok(!r.data.seats.find(s => s.seat === 'J2').claimed, 'v2.5.03: Leave seat freed J2 on the server');
+      c.eq(await page.locator('[data-testid="venue-role-tabs"]').count(), 0, 'v2.5.03 UI: tabs gone after Leave seat');
+      c.eq(await page.locator('iframe').count(), 1, 'v2.5.03 UI: only the Head Judge page remains');
+      c.eq(await page.locator('button:has-text("Also score as a judge")').count(), 1, 'v2.5.03 UI: "Also score as a judge" offered again');
       await page.close();
       page = await tab.newPage();
       await page.goto(venue.base + '/', { waitUntil: 'domcontentloaded' });

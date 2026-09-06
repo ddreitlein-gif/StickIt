@@ -25,9 +25,24 @@ A seat can be held by one tablet at a time. A seat shown **in use** belongs to a
 Judge, Head Judge and Timekeeper tablets carry a slim bar across the top, above the scoring screen (nothing on the scoring screen is covered). It names the tablet's role, seat, the judge assigned to that seat, and the event it is following, and carries the two actions:
 
 - **Leave seat** (judge tablets) — frees the seat on the server and returns straight to the seat picker so the judge can pick the right one. No PIN is asked again. Use it when a judge picked the wrong seat, or when the panel changes between events.
-- **Change role** — forgets the tablet's role (and frees its seat, if any) and returns to the venue menu, where each tile asks its own PIN. Use it when one iPad has to serve as a different official: a Head Judge who also scores as a judge, an Air judge who becomes a T&L judge in the next event, and so on.
+- **Change role** — forgets the tablet's role (and frees its seat, if any) and returns to the venue menu, where each tile asks its own PIN. Use it when one iPad has to serve as a different official: an Air judge who becomes a T&L judge in the next event, and so on. (A Head Judge who also scores as a judge does **not** need this — see *Head Judge who also scores* below.)
+- **Also score as a judge** (Head Judge tablet only) — see the next section.
 
 Both ask "Are you sure?" first, so a stray tap mid-run cannot kick anyone out. The Scoreboard TV has no bar, only a small **Change role** button in the bottom-left corner.
+
+### Head Judge who also scores
+
+At most events the Head Judge is also one of the scoring judges — Head Judge plus, say, T&L 2 or Air 1 — and stays that same judge for the whole day. One tablet does both jobs:
+
+1. Open **Head Judge** from the venue menu (Control PIN) as usual.
+2. Tap **Also score as a judge** in the bar at the top. The same seat picker the Judge tile uses opens — no second PIN — showing only the seats the live event uses, with the role and assigned judge's name under each. Tap **Take** on the seat that holds your own judge assignment.
+
+The bar now carries two tabs, **⚖️ Head Judge** and **🎿 Judge Jn** (with your name and role), and you switch between them with one tap between runs — no PIN, no re-login, nothing reloads. Both screens stay live behind the tabs: a score half entered on the judge tab is still there after a hop to the Head Judge tab to approve the previous run. The seat follows the competition exactly like a plain judge tablet — as events alternate, both tabs switch on their own — and the device remembers *Head Judge + seat Jn* as one role, so a reboot or a Safari reload brings both tabs back.
+
+Dual moguls work the same way: the Head Judge tab shows the dual Head Judge screen and the judge tab whatever the seat means in the dual panel (J1–J2 Turns, J3 Air, J4 Time, J5 Overall). When the day switches between singles and duals, the amber notice in the bar says what your seat means now — keep going if it is right, or tap **Leave seat** on the judge tab and take the seat that matches your dual role.
+
+- **Leave seat** (on the judge tab) frees only the seat. The tablet stays the Head Judge, and *Also score as a judge* is offered again.
+- **Change role** frees the seat too and returns to the menu, as on any tablet.
 
 ### Taking over from a dead tablet
 

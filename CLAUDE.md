@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.02
+**Current version:** v2.5.03
 
 ## Commands
 
@@ -231,6 +231,71 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.03 Feature Notes
+
+### Head Judge Who Also Scores — Two In-App Tabs on the Venue HJ Tablet (v2.5.03)
+
+Per David's 09-06-26 request. On the cloud there is no tablet login, so a Head Judge who is
+also a scoring judge simply opened two Safari tabs. On the venue Pi every tablet is ONE
+remembered role (a single localStorage slot) and any tab landing on `/` is bounced to that
+role's page, so once the Head Judge tile was chosen a second tab could never reach the Judge
+tile — the "can no longer log in as a scoring judge" report. The v2.4.00 ruling had deferred
+this ("Change role covers the double-duty case"), which means a PIN on every switch.
+Rulings recorded from the chat: any seat (J3 was only an example); the same seat for the whole
+day (moguls AND duals — seats are positional, the amber switch notice covers a singles ↔ duals
+change); entry is from the Head Judge tile only (the double-duty person is always the HJ).
+
+**Client only** — no server, schema, scoring, or sync-protocol change; no tablet role page
+(JudgeTablet / HeadJudgeTablet / Timekeeper) was touched; cloud mode is byte-identical.
+
+- **`VenueRole.jsx`.** On the Head Judge page the bar offers **Also score as a judge** →
+  the Judge tile's own seat picker (no second PIN: the Control PIN that opened the HJ
+  outranks the Crew PIN) claims a seat exactly as the Judge tile does. The page then becomes
+  two in-app tabs, **⚖️ Head Judge** and **🎿 Judge Jn · name (role)**, with BOTH embedded
+  role pages kept mounted in a stacked container — the inactive one is hidden with
+  `visibility:hidden` + `pointer-events:none` (full size kept, so the embedded page never
+  sees a 0×0 viewport; a `display:none` iframe would), never unmounted — so switching is one
+  tap, no PIN, no reload, and a half-entered score survives a hop to approve the previous run.
+  The seat's target is polled in the same pass as the HJ target (`/api/venue/role-target
+  ?role=judge&seat=`), so it auto-follows interleaved events and the amber discipline notice
+  names what the seat means now (from the judge target). **Leave seat** (judge tab only) frees
+  only the seat and keeps the Head Judge (memory → `{role:'hj'}`, URL → `/venue/role/hj`);
+  **Change role** frees the seat too. The HJ page always uses the stacked container (with or
+  without a seat) so adding/removing the judge pane never remounts the HJ iframe. Plain
+  judge / timekeeper / scoreboard paths render the original markup unchanged.
+- **Memory shape.** ONE role: `{ role:'hj', seat:'Jn' }` ↔ URL `/venue/role/hj?seat=Jn`
+  (`roleUrl`, `describeMemory` → "Head Judge + Judge, seat Jn" in `venueShared.js`), so
+  a reboot / reload / home-address visit brings both tabs back (FR-15). The HJ tile in
+  `VenueHome.openRole` preserves an existing hj+seat memory (the seat is still claimed by this
+  device on the server; dropping it would strand the claim and silently lose the tab).
+- **`venueWidgets.jsx` (new).** `PinModal` + `SeatPicker` moved VERBATIM out of
+  `VenueHome.jsx` (which imports them back) so the role page can open the same picker.
+
+**Docs.** Help `venue-tablets.md` new section "Head Judge who also scores" (+ the Change-role
+bullet no longer points the double-duty HJ at it); guide PDFs regenerated (66 topics, 158
+pages). Tablets run sheet step 5 gained the one-line procedure; `server/public/docs/venue/*.pdf`
+regenerated.
+
+**Verification.** `harness/tests/v240.test.js` HJ block grew 21 checks (button present; picker
+without a PIN; memory = one role; seat claimed on the server; judge tab names seat + role; two
+iframes with the judge pane visible / HJ pane hidden-not-unmounted after the pick and the
+reverse after a tab tap with nothing unmounted; Leave seat only on the judge tab; "Also score"
+hidden while a seat is held; reload from `/` returns to hj+seat; Leave seat keeps the HJ,
+frees the seat on the server, drops the tabs, one iframe left, "Also score" offered again).
+First run against the stale bundle caught that the harness serves `server/public` — rebuilt +
+copied. **v240 suite green (124)** incl. every pre-existing judge / HJ / scoreboard bar
+regression; step3 (seat registry) green; `verify_v16.js` 123/123 (engine untouched).
+
+**Files created:** `client/src/pages/venue/venueWidgets.jsx`
+**Files modified:** `client/src/pages/venue/{VenueRole,VenueHome}.jsx`,
+`client/src/pages/venue/venueShared.js`, `client/src/help/topics/venue-tablets.md`,
+`server/scripts/venue_cards/build_venue_docs.js`, `harness/tests/v240.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

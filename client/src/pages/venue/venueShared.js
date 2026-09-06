@@ -64,7 +64,10 @@ export function venueRoleLabel(role) { return VENUE_ROLE_LABELS[role] || role ||
 export function disciplineLabel(d) { return DISCIPLINE_LABELS[d] || d || ''; }
 export function describeMemory(mem) {
   if (!mem || !mem.role) return '';
-  return mem.role === 'judge' ? `Judge, seat ${mem.seat || '?'}` : venueRoleLabel(mem.role);
+  if (mem.role === 'judge') return `Judge, seat ${mem.seat || '?'}`;
+  // v2.5.03: a Head Judge who also scores from a judge seat.
+  if (mem.role === 'hj' && mem.seat) return `Head Judge + Judge, seat ${mem.seat}`;
+  return venueRoleLabel(mem.role);
 }
 
 /**
@@ -86,6 +89,9 @@ export function useVenueMode() {
 export function roleUrl(mem) {
   if (!mem || !mem.role) return null;
   if (mem.role === 'judge') return `/venue/role/judge?seat=${encodeURIComponent(mem.seat || 'J1')}`;
+  // v2.5.03: Head Judge + judge seat — one URL, one remembered role, two tabs
+  // on the Head Judge role page (see VenueRole.jsx).
+  if (mem.role === 'hj' && mem.seat) return `/venue/role/hj?seat=${encodeURIComponent(mem.seat)}`;
   // M-15: the Scoring Computer is the officials console, not an iframe role
   // page — /venue/role/dashboard resolves to bad_role and strands the device
   // on a permanent "Waiting..." screen after a reboot.

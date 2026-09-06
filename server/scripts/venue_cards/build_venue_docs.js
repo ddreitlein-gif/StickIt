@@ -151,7 +151,7 @@ function tablets() {
   step(doc, 4, 'If a tablet dies or reboots, just reopen Safari.',
     'It goes straight back to its job. If Safari lost the page, go to stickit.local:3001 again — same thing.');
   step(doc, 5, 'Wrong seat, or one person doing two jobs? Use the bar at the top of the tablet.',
-    '"Leave seat" frees the seat and shows the seat picker again. "Change role" forgets the tablet’s job and returns to the menu (the new role asks its PIN). Both ask "Are you sure?" first. The Scoreboard TV has a small "Change role" button in its bottom-left corner instead.');
+    '"Leave seat" frees the seat and shows the seat picker again. "Change role" forgets the tablet’s job and returns to the menu (the new role asks its PIN). Both ask "Are you sure?" first. The Scoreboard TV has a small "Change role" button in its bottom-left corner instead. Head Judge who is also a scoring judge: open Head Judge, then tap "Also score as a judge" in the bar and take your seat — the bar gets two tabs (Head Judge / Judge Jn) and you flip between them with one tap all day, no PIN.');
   step(doc, 6, 'When the day switches between single moguls and duals, every judge checks the bar.',
     'Seats are positions: J3 is T&L 3 in moguls but the Air judge in duals, J4 is Air 1 in moguls but the Time judge in duals. The bar turns amber and says what the seat means now — keep going if it is right, or tap "Leave seat" and pick the right seat.');
   callout(doc, 'Backup tablet for a dead one: on the backup, tap Judge, Crew PIN, find the seat marked "in use", tap "Force release" under it, enter the Control PIN, take the seat. Head Judge and Timekeeper have no seat — just open the role on the backup tablet.');
