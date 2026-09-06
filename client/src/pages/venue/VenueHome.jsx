@@ -186,6 +186,9 @@ export default function VenueHome() {
   const [checkinErr, setCheckinErr] = useState('')
   const [update, setUpdate] = useState(null)
   const [updating, setUpdating] = useState(false)
+  // v2.5.01 — live progress of the update script (polled from /update-status):
+  // { state: launched|running|restarting|done|failed, step, message, log_tail, at }
+  const [updProgress, setUpdProgress] = useState(null)
   // v2.5.00 — offline return (file): the offer after a failed online attempt,
   // the explicit "no internet" chooser, and the archived-state card.
   const [returnOffer, setReturnOffer] = useState(null) // { mode, token } after the cloud proved unreachable
@@ -278,7 +281,52 @@ export default function VenueHome() {
   useEffect(() => {
     if (updateBlocked) { setUpdate(null); return }
     api.venueUpdateCheck().then(setUpdate).catch(() => setUpdate(null))
+    // A failed earlier attempt stays visible (the script's message + log tail)
+    // until the next attempt replaces it — the reason an update "did nothing".
+    api.venueUpdateStatus().then(s => { if (s.state === 'failed') setUpdProgress(s) }).catch(() => {})
   }, [updateBlocked, status?.meet_state])
+
+  // v2.5.01 — Update StickIt: no PIN (David's ruling 09-06-26; the server
+  // refuses only while a meet is on the box). After the POST, poll the status
+  // file the script writes: steps → "Restarting…" while the box is down →
+  // done (reload onto the new version) or failed (message + log tail shown).
+  const doUpdate = async () => {
+    if (!window.confirm(`Update StickIt from ${update.current} to ${update.latest}? The server restarts itself — takes a minute or two.`)) return
+    setUpdating(true)
+    setUpdProgress({ state: 'launched', message: 'Starting the update…' })
+    try {
+      await api.venueUpdate()
+    } catch (e) {
+      setUpdProgress({ state: 'failed', message: e.message })
+      setUpdating(false)
+      return
+    }
+    const startVersion = update.current
+    const t0 = Date.now()
+    let wasDown = false
+    const tick = async () => {
+      if (Date.now() - t0 > 12 * 60 * 1000) {
+        setUpdProgress({ state: 'failed', message: 'The update is taking longer than 12 minutes. Check the box (journalctl -u stickit-venue) or update over SSH: sudo /opt/stickit/update-stickit.sh' })
+        setUpdating(false)
+        return
+      }
+      try {
+        const s = await api.venueUpdateStatus()
+        if (s.state === 'done' || (wasDown && s.current && s.current !== startVersion)) {
+          setUpdProgress({ state: 'done', message: `Updated to ${s.current || s.tag}. Reloading…` })
+          setTimeout(() => window.location.reload(), 1500)
+          return
+        }
+        if (s.state === 'failed') { setUpdProgress(s); setUpdating(false); return }
+        setUpdProgress(s.state === 'idle' ? { state: 'launched', message: 'Starting the update…' } : s)
+      } catch (_) {
+        wasDown = true
+        setUpdProgress({ state: 'restarting', message: 'Restarting the box on the new version…' })
+      }
+      setTimeout(tick, 2000)
+    }
+    setTimeout(tick, 2000)
+  }
   useEffect(() => { const id = setInterval(() => refresh(), 10000); return () => clearInterval(id) }, [])
   // v2.5.00 — while a return file is stored (archived venue), ask whether the
   // cloud has received it (public probe; 30 s cadence).
@@ -401,9 +449,10 @@ export default function VenueHome() {
           </div>
 
           {/* v2.0.00 (Step 6) — routine update: "plug the Pi in at home, open
-              stickit.local, click Update." Shown only with internet reachable. */}
+              stickit.local, click Update." Shown only with internet reachable.
+              v2.5.01: no PIN; progress + result shown inline. */}
           {update && update.internet && (
-            <div className="card mt-6">
+            <div className="card mt-6" data-testid="update-card">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="font-display text-xl text-slate-300">StickIt software</h2>
@@ -413,30 +462,39 @@ export default function VenueHome() {
                   </p>
                 </div>
                 {update.update_available && (
-                  <button
-                    className="btn-primary"
-                    disabled={updating}
-                    onClick={() => {
-                      // M-10: the update endpoint is Control-gated.
-                      const doUpdate = async (token) => {
-                        if (!window.confirm(`Update StickIt from ${update.current} to ${update.latest}? The server restarts itself — takes a minute or two.`)) return
-                        setUpdating(true)
-                        try {
-                          const r = await api.venueUpdate(token)
-                          alert(r.message || 'Updating…')
-                        } catch (e) { alert('Update failed: ' + e.message); setUpdating(false) }
-                      }
-                      if (pins?.control_set) {
-                        setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doUpdate(r.token) } })
-                      } else {
-                        doUpdate(null)
-                      }
-                    }}
-                  >
+                  <button className="btn-primary" disabled={updating} onClick={doUpdate} data-testid="update-btn">
                     {updating ? 'Updating…' : 'Update StickIt'}
                   </button>
                 )}
               </div>
+              {updProgress && updProgress.state !== 'idle' && (
+                <div
+                  data-testid="update-progress"
+                  className={`mt-3 rounded border px-3 py-2 text-sm ${
+                    updProgress.state === 'failed' ? 'border-red-800 bg-red-900/20 text-red-300'
+                    : updProgress.state === 'done' ? 'border-green-800 bg-green-900/20 text-green-300'
+                    : 'border-mountain-800 bg-mountain-900/20 text-mountain-200'}`}
+                >
+                  {updProgress.state === 'failed' ? (
+                    <>
+                      <div className="font-semibold">Update failed{updProgress.at ? ` (${new Date(updProgress.at).toLocaleString()})` : ''}</div>
+                      <div>{updProgress.message}</div>
+                      {updProgress.log_tail && updProgress.log_tail.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs text-red-400">Show details</summary>
+                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap text-xs text-slate-400">{updProgress.log_tail.join('\n')}</pre>
+                        </details>
+                      )}
+                      <div className="mt-1 text-xs text-slate-500">You can press Update StickIt again. SSH fallback: sudo /opt/stickit/update-stickit.sh</div>
+                    </>
+                  ) : (
+                    <div>
+                      {updProgress.state !== 'done' && <span className="inline-block animate-pulse mr-2">●</span>}
+                      {updProgress.message || updProgress.step}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {status.meet_state === 'handed_back' && status.adopted_meet && (

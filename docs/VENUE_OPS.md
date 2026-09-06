@@ -130,6 +130,28 @@ run the usual reconcile/dedup pass from the cloud Athletes admin page.
   Test Pi flashed from the 09-03-26 image: fstab was corrected by hand; the
   spare should be flashed from the v2.4.00 image.
 
+## Routine software update (v2.5.01)
+
+- Home screen → **Update StickIt** (no PIN; refused only while a meet is
+  adopted / checking in / handed back). The card shows each step and the
+  result; the page reloads on the new version. Failures show the reason plus a
+  log tail — the box stays on (or rolls back to) the version it had.
+- The script (`/opt/stickit/update-stickit.sh`, run as root via sudoers) now
+  re-launches itself as a transient systemd unit when started from the button.
+  Before v2.5.01 it ran INSIDE `stickit-venue.service`'s control group, so its
+  own `systemctl stop` killed it before the swap — the box stayed stopped
+  (test Pi, 09-06-26; recovered with the SSH update). A device still on the
+  v2.4.02 script must be updated ONCE over SSH
+  (`ssh stickit@stickit.local 'sudo /opt/stickit/update-stickit.sh'`).
+- Files: `/opt/stickit/data/update-status.json` (state/step/message/tag/at;
+  `GET /api/venue/update-status`) and `/opt/stickit/data/update.log` (the last
+  run). Button-launched runs also log to `journalctl -u 'stickit-update-*'`.
+  `server.old` is the previous tree (rollback target), `server.failed` a tree
+  whose server never answered (kept for diagnosis until the next update).
+- The release lookup uses the GitHub API first (60 unauthenticated calls per
+  hour per address) and falls back to the release page's redirect, so a
+  rate-limited hour no longer fails the update.
+
 ## Pi timezone and journal (v2.4.00, physical test L-2/L-3)
 
 - The v2.4.00 image sets `America/Denver` (pi-gen's default was Europe/London,

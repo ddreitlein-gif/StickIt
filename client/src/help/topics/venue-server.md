@@ -18,7 +18,7 @@ The venue server is a small computer (a Raspberry Pi in the kit, or a Mac in an 
 
 | PIN | Opens |
 |---|---|
-| **Control PIN** | Scoring Computer (the full officials console), Head Judge, force-releasing a seat, Hand Back / Check In, software update |
+| **Control PIN** | Scoring Computer (the full officials console), Head Judge, force-releasing a seat, Hand Back / Check In |
 | **Crew PIN** | Judge seats, Timekeeper |
 
 The Scoreboard needs no PIN. Write both PINs on the adoption run sheet.
@@ -44,7 +44,9 @@ The kit's USB backup stick receives a full copy of the scoring database every 5 
 
 ### Software updates
 
-With no meet adopted and the internet reachable, the venue menu shows **Update StickIt** when a newer release exists. Press it at home the week before a meet (Control PIN); the box restarts itself in a minute or two.
+With no meet adopted and the internet reachable, the venue menu shows **Update StickIt** when a newer release exists. Press it at home the week before a meet — no PIN is needed; the box refuses only while a meet is on it. The card then shows each step (looking up the release, downloading, installing, restarting), the box restarts itself in a minute or two, and the page reloads on the new version.
+
+If anything goes wrong the card says so in red — *Update failed* with the reason and a **Show details** log — and the box stays on the version it had (an update whose server never comes back is rolled back automatically). Press **Update StickIt** again once the cause (usually the internet) is fixed. Over SSH the same job is `sudo /opt/stickit/update-stickit.sh`; the last run's log is `/opt/stickit/data/update.log`.
 
 ### If something looks wrong
 

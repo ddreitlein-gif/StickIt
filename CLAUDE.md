@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.00
+**Current version:** v2.5.01
 
 ## Commands
 
@@ -231,6 +231,74 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.01 Feature Notes
+
+### Update Button Killed Its Own Script; Update Needs No PIN; Live Update Progress (v2.5.01, hotfix)
+
+Reported by David 09-06-26 after pressing **Update StickIt** on the test Pi for v2.5.00: (1) the
+box never came back; (2) the first press appeared to do nothing — the card still offered the
+update, so he pressed again; (3) the update should not ask for the Control PIN. Diagnosed over SSH:
+`stickit-venue.service` was `inactive (dead)` since 07:34, a fully built `server.new` beside the
+untouched old `server`, and the journal showing the script's `systemctl stop` as the last act.
+
+**Root cause (1).** `POST /api/venue/update` spawns `sudo update-stickit.sh` as a child of the
+node process — i.e. INSIDE the service's control group (`detached`/`unref` only change the
+process group). `systemctl stop stickit-venue.service` kills the whole cgroup, the script
+included, before the swap; whether the box comes back is then luck (bash's EXIT trap may or may
+not get its `systemctl start` in before systemd finishes the stop — it did not this morning, it
+did in the reproduction). Every SSH update had worked because an SSH session is outside the
+cgroup; the button path was never exercised on a real Pi before v2.5.00. **Fix:** the script
+detects `stickit-venue.service` in `/proc/self/cgroup` and re-launches itself with
+`systemd-run --unit=stickit-update-<timestamp> --collect` (root already, via the existing
+sudoers entry — unchanged), then returns. Verified on the test Pi by moving a shell into the
+service cgroup and running the script: the old script died at the stop; the new one completes.
+
+**Root cause (2) — silent first failure.** The script ran with `stdio: 'ignore'`, wrote nothing
+anywhere, and the first press exited within a second (the sudo session closed at 07:29:52;
+`curl` of the GitHub API is the only step that fast — an unauthenticated-API hiccup or the
+60/hour limit). The client showed an alert and re-fetched the card. Now the script writes
+`/opt/stickit/data/update-status.json` (`state: running|done|failed`, `step`, `message`, `tag`,
+`at`) at every step and a per-run `/opt/stickit/data/update.log`; new public LAN endpoint
+`GET /api/venue/update-status` returns it (+ the last 40 log lines on failure; a `launched`
+older than 3 min or `running` older than 20 min is reported as failed). `POST /update` resets the
+file to `launched` before spawning (a stale result can never pass for this run), refuses 409
+`update_running` while one is in flight, and marks `failed` if the child exits non-zero before the
+script ever reported. The release lookup writes the API JSON to a file (no `grep -m1` SIGPIPE
+under `pipefail`) and falls back to the release page's redirect when the API fails. After the
+swap the script polls `/api/venue/status` for up to 3 min and **rolls back to `server.old`**
+(kept as `server.failed`) if the new server never answers. The home screen's card shows each
+step, "Restarting the box…" while it is down, then reloads on the new version — or a red
+*Update failed* box with the reason, a *Show details* log tail, and the SSH fallback; a failed
+earlier attempt stays visible when the card next loads.
+
+**(3) No PIN.** David's ruling: the meet-state guard (refused while adopted / checking_in /
+handed_back) is the protection; the script only reinstalls the published release, so a LAN
+device can at worst restart an idle box. `requireControlToken` removed from `/update`; the
+VenueHome PIN modal path removed. M-10's PIN throttle / token rotation elsewhere unchanged.
+
+**Fielded devices.** The script refreshes itself only at the END of a successful update, so a
+box still on the v2.4.02/v2.5.00 script dies the same way when the button is used once more —
+**update those once over SSH** (`ssh stickit@stickit.local 'sudo /opt/stickit/update-stickit.sh'`);
+the test Pi was recovered that way (twice: the second time the reproduction) and then updated
+to v2.5.01. Devices flashed from the v2.5.01 image are fine. No schema, scoring, or sync-protocol
+change (still v3).
+
+**Verification.** Harness step6 34/34 (fake script now writes the status file; no-PIN update
+with PINs set; `/update-status` idle → done + tag + current), review 62/62 (M-10 assertion
+inverted), step1 52/52 (route gate), release-gates 31/31; `verify_v16.js` passed. Test Pi:
+old-script cgroup reproduction, new-script SSH run (`done` status, script self-refresh), and
+after this release the real button path (see chat) — no PIN, progress polled from the Mac.
+
+**Files modified:** `server/scripts/build_pi_image/update-stickit.sh`, `server/routes/venue.js`,
+`client/src/pages/venue/VenueHome.jsx`, `client/src/utils/api.js`,
+`client/src/help/topics/venue-server.md`, `docs/VENUE_OPS.md`,
+`server/scripts/build_pi_image/README.md`, `harness/tests/{step6,review}.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

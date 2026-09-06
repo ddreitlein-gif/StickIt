@@ -333,7 +333,8 @@ export const api = {
   venueConnectionInfo: () => apiFetch('/venue/connection-info'),
   venueCheckin: (mode, control_token) => apiFetch('/venue/checkin', { method: 'POST', body: { mode, control_token } }),
   venueUpdateCheck: () => apiFetch('/venue/update-check'),
-  venueUpdate: (control_token) => apiFetch('/venue/update', { method: 'POST', body: { control_token } }),
+  venueUpdate: () => apiFetch('/venue/update', { method: 'POST', body: {} }), // v2.5.01: no PIN
+  venueUpdateStatus: () => apiFetch('/venue/update-status'),
   venueAbandon: (control_token) => apiFetch('/venue/abandon', { method: 'POST', body: { control_token } }),
 
   // v2.0.00 — venue adoption (Step 1)

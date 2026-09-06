@@ -74,6 +74,17 @@ Both paths are on the printed provisioning card (`server/public/docs/venue/`):
   script once: after their first update, copy
   `/opt/stickit/server/scripts/build_pi_image/update-stickit.sh` over
   `/opt/stickit/update-stickit.sh` by hand (and set the timezone) — done on the test Pi.
+- **v2.5.01:** the button launched the script as a child of `stickit-venue.service`, so
+  `systemctl stop` killed the script with the server and the box stayed down (test Pi,
+  09-06-26). The script now re-launches itself as a transient unit
+  (`stickit-update-<timestamp>`, `journalctl -u 'stickit-update-*'`) when it finds itself
+  inside the service's control group; it writes `/opt/stickit/data/update-status.json`
+  (polled by the home screen) and `/opt/stickit/data/update.log`, falls back to the release
+  page's redirect when the unauthenticated GitHub API is rate-limited, and rolls back to
+  `server.old` if the new server does not answer within 3 minutes. No PIN is required.
+  **A device still on the v2.4.02 script (flashed from the v2.4.02 image) must be updated
+  ONCE over SSH** — its old script dies at the service stop when run from the button; after
+  that the refreshed script makes the button safe. The v2.5.01 image carries the fix.
 
 ## Journal (post-meet diagnosis)
 

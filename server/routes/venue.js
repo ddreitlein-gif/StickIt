@@ -813,13 +813,65 @@ router.get('/update-check', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Progress/result of the update script (v2.5.01). The script writes
+// /opt/stickit/data/update-status.json at every step ({ state: running|done|
+// failed, step, message, tag, at }); /update resets it to "launched" before
+// spawning so a stale result from an earlier run can never be mistaken for
+// this one. Public on the LAN like /update-check — read-only.
+function updateStatusPaths() {
+  const script = process.env.STICKIT_UPDATE_SCRIPT || '';
+  const path = require('path');
+  const dir = process.env.STICKIT_UPDATE_STATUS_DIR || (script ? path.join(path.dirname(script), 'data') : null);
+  if (!dir) return null;
+  return { statusFile: path.join(dir, 'update-status.json'), logFile: path.join(dir, 'update.log') };
+}
+function readUpdateStatus() {
+  const fs = require('fs');
+  const paths = updateStatusPaths();
+  if (!paths || !fs.existsSync(paths.statusFile)) return { state: 'idle' };
+  let st;
+  try { st = JSON.parse(fs.readFileSync(paths.statusFile, 'utf8')); } catch (_) { return { state: 'idle' }; }
+  const ageMs = Date.now() - (Date.parse(st.at || '') || 0);
+  // A run that stopped reporting is a failure the volunteer must hear about,
+  // not a spinner forever: "launched" that never became "running" (the script
+  // could not start) after 3 min; "running" with no step change for 20 min
+  // (npm install on a cold Pi takes a few minutes, never twenty).
+  if ((st.state === 'launched' && ageMs > 3 * 60 * 1000) || (st.state === 'running' && ageMs > 20 * 60 * 1000)) {
+    st = { ...st, state: 'failed', message: `The update never finished (last step "${st.step || '?'}" at ${st.at}). Update over SSH: sudo /opt/stickit/update-stickit.sh` };
+  }
+  if (st.state === 'failed') {
+    try {
+      const lines = fs.readFileSync(paths.logFile, 'utf8').trimEnd().split('\n');
+      st.log_tail = lines.slice(-40);
+    } catch (_) { /* no log yet */ }
+  }
+  return st;
+}
+function writeUpdateStatus(obj) {
+  const fs = require('fs');
+  const paths = updateStatusPaths();
+  if (!paths) return;
+  try {
+    fs.mkdirSync(require('path').dirname(paths.statusFile), { recursive: true });
+    fs.writeFileSync(paths.statusFile, JSON.stringify({ ...obj, at: new Date().toISOString() }) + '\n');
+  } catch (e) { console.warn('[update] could not write status file:', e.message); }
+}
+
+router.get('/update-status', async (req, res) => {
+  try {
+    const { VERSION } = require('../version');
+    res.json({ current: VERSION, ...readUpdateStatus() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/update', async (req, res) => {
   try {
-    // M-10: Control-gated (any LAN device could otherwise trigger a sudo
-    // update + restart), and also refused in the overnight 'handed_back'
-    // state of a two-day meet — a version/protocol change overnight risks a
-    // mismatch at morning re-adoption.
-    if (!(await requireControlToken(req, res))) return;
+    // No PIN (David's ruling 09-06-26 — M-10 had Control-gated this): the
+    // meet-state guard below is the real protection. The script only
+    // reinstalls the published release, so the worst a LAN device can do is
+    // restart an idle box. Refused while a meet is on the box, and in the
+    // overnight 'handed_back' state of a two-day meet — a version/protocol
+    // change overnight risks a mismatch at morning re-adoption.
     const state = await getVenueState();
     if (state && ['adopted', 'checking_in', 'handed_back'].includes(state.meet_state)) {
       return res.status(409).json({
@@ -833,18 +885,34 @@ router.post('/update', async (req, res) => {
     if (!script || !require('fs').existsSync(script)) {
       return res.status(400).json({ error: 'no_update_script', message: 'No update script configured on this device. Use SSH: sudo /opt/stickit/update-stickit.sh' });
     }
+    const current = readUpdateStatus();
+    if (current.state === 'launched' || current.state === 'running') {
+      return res.status(409).json({ error: 'update_running', message: `An update is already running (${current.message || current.step}).` });
+    }
+    writeUpdateStatus({ state: 'launched', step: 'start', message: 'Starting the update' });
     // Fire and respond: the script restarts the service, killing this process.
-    const { spawn } = require('child_process');
     // On the Pi the stickit user runs the script via passwordless sudo
     // (sudoers drop-in from provision.sh); the harness sets
-    // STICKIT_UPDATE_SUDO=0 to run it directly.
+    // STICKIT_UPDATE_SUDO=0 to run it directly. The script re-launches itself
+    // as a transient systemd unit so the service stop cannot kill it
+    // (v2.5.01) — `detached` here only keeps it out of our process group.
+    const { spawn } = require('child_process');
     const useSudo = process.env.STICKIT_UPDATE_SUDO !== '0';
     const child = useSudo
       ? spawn('sudo', ['-n', script], { detached: true, stdio: 'ignore' })
       : spawn('bash', [script], { detached: true, stdio: 'ignore' });
-    child.on('error', () => {});
+    child.on('error', (e) => {
+      writeUpdateStatus({ state: 'failed', step: 'start', message: `The update script could not be started: ${e.message}` });
+    });
+    child.on('exit', (code) => {
+      // The script reports its own failures; this covers it never running at
+      // all (sudo refused, not executable) — status still "launched".
+      if (code !== 0 && readUpdateStatus().state === 'launched') {
+        writeUpdateStatus({ state: 'failed', step: 'start', message: `The update script exited with code ${code} before it started. Update over SSH: sudo /opt/stickit/update-stickit.sh` });
+      }
+    });
     child.unref();
-    res.json({ ok: true, message: 'Updating — the server restarts itself in a minute or two. Refresh this page after.' });
+    res.json({ ok: true, message: 'Updating — the server restarts itself in a minute or two.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

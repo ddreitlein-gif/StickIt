@@ -362,10 +362,12 @@ async function main() {
     // =====================================================================
     await vApi.must('POST', '/api/venue/pins', { control_pin: '4321', crew_pin: '8765' });
     const tok = (await vApi.must('POST', '/api/venue/verify-pin', { kind: 'control', pin: '4321' })).token;
+    // v2.5.01 (David 09-06-26): the update needs NO Control PIN — the meet-state
+    // guard is the protection. Without a token it reaches the script check.
     r = await vApi.post('/api/venue/update', {});
-    c.eq(r.status, 403, 'M-10: update without the Control token refused');
+    c.eq(r.status, 400, 'v2.5.01: update without the Control token is NOT refused — no meet + no script configured → clean 400');
     r = await vApi.post('/api/venue/update', { control_token: tok });
-    c.eq(r.status, 400, 'M-10: with token but no meet + no script configured → clean 400 (gating passed)');
+    c.eq(r.status, 400, 'update with a token behaves the same (token ignored)');
     // handed_back refusal: adopt f1 again and hand it... instead simulate by
     // writing the state directly (cheap, and the guard only reads the state).
     {

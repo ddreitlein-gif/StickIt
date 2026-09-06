@@ -76,7 +76,10 @@ async function main() {
   const fakeScript = path.join(scratchDir('step6'), 'fake-update.sh');
   // The harness Bash sandbox blocks shell-level file writes; write the marker
   // through node instead (real update scripts do far more than this anyway).
-  fs.writeFileSync(fakeScript, `#!/bin/bash\nnode -e "require('fs').writeFileSync('${marker}', 'ran')"\n`);
+  // v2.5.01: the real script reports progress in <script dir>/data/update-status.json;
+  // the fake one writes a "done" result the same way so /update-status is covered.
+  const statusFile = path.join(scratchDir('step6'), 'data', 'update-status.json');
+  fs.writeFileSync(fakeScript, `#!/bin/bash\nnode -e "require('fs').writeFileSync('${marker}', 'ran'); require('fs').mkdirSync('${path.dirname(statusFile)}', {recursive:true}); require('fs').writeFileSync('${statusFile}', JSON.stringify({state:'done',step:'done',message:'Updated to v9.9.99',tag:'v9.9.99',at:new Date().toISOString()}))"\n`);
   fs.chmodSync(fakeScript, 0o755);
 
   const cloud = new Instance({ name: 'step6-cloud', port: 3181, mode: 'cloud' });
@@ -113,10 +116,14 @@ async function main() {
     await vApi.must('POST', '/api/venue/adopt', { code: rel.code, cloud_url: cloud.base });
     r = await vApi.post('/api/venue/update', {});
     c.eq(r.status, 409, 'update refused while a meet is adopted');
-    // Hand the meet back, then update runs the script
+    r = await vApi.get('/api/venue/update-status');
+    c.eq(r.data.state, 'idle', 'v2.5.01: update-status idle before any run');
+    // Hand the meet back, then update runs the script — with NO Control PIN
+    // (v2.5.01, David's ruling 09-06-26) even though PINs are set.
     await vApi.must('POST', '/api/venue/checkin', { mode: 'checkin' });
+    await vApi.must('POST', '/api/venue/pins', { control_pin: '1111', crew_pin: '2222' });
     r = await vApi.post('/api/venue/update', {});
-    c.eq(r.status, 200, 'update accepted with no meet adopted');
+    c.eq(r.status, 200, 'v2.5.01: update accepted with no meet adopted and NO Control PIN');
     const ran = await new Promise(res => {
       const t0 = Date.now();
       const iv = setInterval(() => {
@@ -125,6 +132,11 @@ async function main() {
       }, 100);
     });
     c.ok(ran, 'update script executed (marker file written)');
+    await new Promise(r => setTimeout(r, 300));
+    r = await vApi.get('/api/venue/update-status');
+    c.eq(r.data.state, 'done', `v2.5.01: update-status reports the script's result (${JSON.stringify(r.data)})`);
+    c.eq(r.data.tag, 'v9.9.99', 'v2.5.01: update-status carries the tag');
+    c.ok(!!r.data.current, 'v2.5.01: update-status carries the running version');
   } finally {
     fake.close();
     await cloud.stop().catch(() => {});
