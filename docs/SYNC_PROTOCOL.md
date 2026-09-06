@@ -39,6 +39,18 @@ codebase (D4: single codebase, no fork).
   "Release for Adoption" (official+ login). Redeemed exactly once (atomic
   conditional UPDATE); expiry window configurable; un-releasable until
   redeemed.
+- **Backup adoption file** (v2.5.00): the same package written to a file at
+  release time (or later via "Download adoption file"), carrying a sync token.
+  Creating it **locks the cloud copy immediately** (`adoption_status='adopted'`,
+  `adopted_via='file'`, `last_sync_at=NULL`) and **keeps the release code**, so
+  the venue may adopt by code OR by file. *First to talk to the cloud wins*:
+  code redemption on a never-synced file lock succeeds and re-mints the token
+  (`adopted_via='code'`; the file goes stale → its venue gets 401
+  `invalid_sync_token` and stops); once the file's venue has synced
+  (`last_sync_at` set), the code, Undo Release, and a re-issued file are all
+  refused. `meets.adopted_via` is cloud lock state (excluded from the
+  manifest, §6). `last_sync_at` is reset to NULL whenever a new adoption
+  starts, so "never synced" always refers to the current adoption.
 - **Sync token**: issued at adoption, returned to the venue in the adopt
   response, stored locally; only its hash (`meets.sync_token_hash`, SHA-256)
   is stored on the cloud. Sent as `Authorization: Bearer <token>` on every
@@ -56,6 +68,13 @@ codebase (D4: single codebase, no fork).
 | `POST /api/sync/meets/:meetId/checksums` | Compare per-table checksums (diagnostic) |
 | `POST /api/sync/meets/:meetId/checkin` | Final verify + unlock (`mode: 'checkin'` or `'handback'`) |
 | `POST /api/sync/meets/:meetId/repush` | Full re-push of named tables after a checksum mismatch |
+| `POST /api/sync/meets/:meetId/return` | v2.5.00 — apply a venue **return package** (offline check-in/handback) sent by the venue itself; bearer sync token |
+| `POST /api/adoption/:meetId/import-return` | v2.5.00 — same importer, uploaded by an official (login); body `{ package, mode? }` |
+| `POST /api/adoption/:meetId/export-file` | v2.5.00 — backup adoption file (`{ again }` re-mints a never-synced file lock); login |
+| `POST /api/adoption/:meetId/unrelease` | v2.5.00 — undo a release, including a never-synced file lock; login |
+
+`/api/adoption` lives outside the `/api/meets/:meetId` adoption-lock prefix
+(like `/api/admin/adoption`) because these actions must run on an adopted meet.
 
 ### 4.1 Adopt
 
@@ -88,9 +107,11 @@ Response:
 ```
 
 `package.tables` holds one array per **snapshot table** (see §6), each row
-reduced to exactly the manifest columns. The USB plan-B export ("Export for
-Adoption") writes the same `package` object to a file, with the lock set
-atomically at export time; there is no lock-later variant.
+reduced to exactly the manifest columns. The backup adoption file (USB plan B;
+"Export for Adoption" / "Download adoption file" / the release-dialog checkbox)
+writes the same `package` object plus `sync_token` to a file, with the lock set
+atomically at export time; there is no lock-later variant. Since v2.5.00 the
+release code survives the export (§3).
 
 Errors: 404 unknown/expired/used code, 409 protocol mismatch, 409 remote-
 judging meet, 409 already adopted.
@@ -151,6 +172,66 @@ Venue order (FR-10): local meet → read-only ("checking in" state, all role
 pages frozen) → final outbox flush → checksums → cloud unlock → local archive
 mark. Tablet writes during check-in are cleanly refused.
 
+### 4.4 Return package (v2.5.00 — offline check-in / handback)
+
+When the cloud is unreachable at end of day, the venue writes a **return
+package** instead of calling `/checkin` — a complete, self-verifying record of
+the adopted meet that collapses flush → verify → repush → unlock into one
+idempotent artifact. The Scoring Computer downloads it through the browser
+(never a USB mount on the Pi); an official imports it on the cloud later, or
+the venue sends it itself once the uplink is back.
+
+```json
+{
+  "format": "stickit-return-package",
+  "protocol_version": 3,
+  "meet_id": "<uuid>", "meet_name": "...",
+  "mode": "checkin" | "handback",          // what the venue chose
+  "exported_at": "<iso>",
+  "sync_token": "<opaque>",                 // this adoption's token
+  "checksums": { "<checksum table>": { "count", "hash" } },   // computed from the rows below
+  "tables": { "<checksum table>": [rows...], "audit_log": [rows...] },
+  "logo": {...} | null, "bottom_logo": {...} | null
+}
+```
+
+Venue side (`POST /api/venue/return-file { mode }`, Control PIN): freeze
+(`checking_in`) → write barrier (the package is rebuilt until no outbox append
+lands across the read; capture stays active while `checking_in`) → file
+written atomically to `server/data/return/<meet_id>.json` (+ best-effort copy
+on the STICKITSNAP stick) → outbox cleared → archive (`checked_in` /
+`handed_back`, Control token rotated on check-in). **The file export is
+final** — the venue behaves exactly as after a successful online return. The
+file stays downloadable (`GET /api/venue/return-file`, Control PIN) while the
+venue is archived and is never auto-deleted. `GET /api/venue/return-status`
+probes the public adoption endpoint (H-1) to report `received | pending |
+unlocked | unknown`; `POST /api/venue/return-file/send` delivers the stored
+file to `/api/sync/meets/:meetId/return`.
+
+Cloud side (`applyReturnPackage`, shared by both routes) — nothing is written
+before every pre-check passes, in this order:
+
+| Check | Failure |
+|---|---|
+| `format` | 400 `bad_package` |
+| `protocol_version` | 409 `protocol_mismatch` |
+| `meet_id` + `tables.meets[0].id` = route meet | 400 `wrong_meet` |
+| `mode` (file's, or the importer's override — recorded in the audit row) | 400 `bad_mode` |
+| meet `checked_in` with no token | 410 `already_returned` (idempotent second import) |
+| meet not adopted / no token | 409 `not_adopted` (lock undone, force-unlocked, or handback already imported) |
+| embedded `sync_token` vs `sync_token_hash` (constant-time) | 401 `stale_return_file` (older adoption) |
+| every checksum table present, no null PKs, meet-keyed rows name this meet, file checksums reproduce from the file's rows | 400 `file_corrupt { tables }` |
+
+Then ONE atomic batch: every checksum table replaced with repush semantics
+(delete cloud rows absent from the file except master tables — H-3; upsert
+all rows through the manifest-only upsert), `audit_log` upsert-only (FR-12);
+logos written through the L-4 filename guard; cloud checksums recomputed and
+compared (409 `checksum_mismatch`, meet stays adopted, re-import idempotent);
+finally `adoption_status = 'checked_in' | NULL`, `sync_token_hash = NULL`,
+guarded by the token hash read at the start (409 `state_changed` on a race).
+Audit `meet_checked_in` / `meet_handed_back` with `via: 'official_upload' |
+'venue_direct'`, `recorded_mode`, `applied_mode`.
+
 ## 5. Canonicalization and hashing (FR-6)
 
 Computed in JS on both sides by `server/sync/protocol.js` — never `SELECT *`,
@@ -196,7 +277,7 @@ Source of truth: `TABLES` in `server/sync/protocol.js`. Summary:
 | run_round_status | (event_id, run_number) | ✓ | ✓ | ✓ | event_id |
 | training_days | id | ✓ | ✓ | ✓ | meet_id |
 | training_day_exclusions | (training_day_id, athlete_id) | ✓ | ✓ | ✓ | training_day_id |
-| audit_log (FR-12) | id | ✓ | — | — | all venue rows while adopted |
+| audit_log (FR-12) | id | ✓ | — | — | all venue rows while adopted (also rides the v2.5.00 return package, upsert-only) |
 | usss_people (R5) | ussa_id | — | — | ✓ | global snapshot |
 
 Notes:
@@ -287,3 +368,11 @@ new meet-scoped table, or (c) changes canonicalization must update
 `server/sync/protocol.js` (manifest + version bump per §1) and this document
 together. The harness drift test (`harness/tests/step0.test.js`) fails the
 build when the manifest and the migrated schema disagree.
+
+Purely **additive messages** (new endpoints / new package shapes that touch
+no manifest column and no canonicalization) do NOT bump the version: every
+row hash still agrees across versions, so a mixed pair keeps working and the
+older side simply lacks the new feature. v2.5.00 (return package, `/return`,
+`/api/adoption/*`, `meets.adopted_via` — a NON_SYNC column) stayed at
+protocol 3 for this reason; a bump would have stranded the fielded v2.4.02
+Pi image with no protocol justification.

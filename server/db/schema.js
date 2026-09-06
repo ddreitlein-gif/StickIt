@@ -332,6 +332,10 @@ async function initSchema() {
     `ALTER TABLE meets ADD COLUMN release_code_expires_at TEXT`,
     `ALTER TABLE meets ADD COLUMN released_at TEXT`,
     `ALTER TABLE meets ADD COLUMN released_by TEXT`,
+    // v2.5.00 -- how the adoption lock happened: 'code' (release code
+    // redeemed) | 'file' (backup adoption file created). Cloud lock state,
+    // NOT meet data: excluded from the sync manifest (NON_SYNC_COLUMNS).
+    `ALTER TABLE meets ADD COLUMN adopted_via TEXT`,
     // v2.0.01 -- cloud auth: forced first-login password change. Set on admin
     // user creation / password reset; cleared by POST /api/auth/change-password.
     // users is NOT in the sync manifest (protocol.js), so no protocol impact;

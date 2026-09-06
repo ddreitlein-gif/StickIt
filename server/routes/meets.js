@@ -224,22 +224,19 @@ router.post('/:id/release-for-adoption', requireAuth, async (req, res) => {
 });
 
 // Undo a release before any venue has redeemed the code.
+// v2.5.00: delegates to sync/adoptionFile.js undoFileLock — a backup-file lock
+// the venue never synced under is undone too (the mount-level adoption lock
+// still 423s this legacy path while adopted; the client uses
+// POST /api/adoption/:meetId/unrelease for that case).
 router.post('/:id/unrelease', requireAuth, async (req, res) => {
+  const { undoFileLock, AdoptionFileError } = require('../sync/adoptionFile');
   try {
-    const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
-    if (!meet) return res.status(404).json({ error: 'Meet not found' });
-    if (meet.adoption_status === 'adopted') {
-      return res.status(423).json({ error: 'meet_adopted', message: 'The code was already redeemed; the meet is adopted. Use check-in, handback, or admin force-unlock.' });
-    }
-    if (!meet.release_code_hash) return res.status(400).json({ error: 'Meet is not released for adoption' });
-    await execute(
-      `UPDATE meets SET release_code_hash=NULL, release_code_expires_at=NULL, released_at=NULL, released_by=NULL, updated_at=datetime('now') WHERE id=?`,
-      [req.params.id]
-    );
-    const { logAudit } = require('./audit');
-    try { await logAudit('meet_release_undone', 'meet', req.params.id, null, {}); } catch (_) {}
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const out = await undoFileLock(req.params.id, { actor: (req.user && (req.user.username || req.user.display_name)) || null });
+    res.json(out);
+  } catch (e) {
+    if (e instanceof AdoptionFileError) return res.status(e.httpCode).json({ error: e.code, message: e.message, ...e.extra });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // v2.0.00 (Step 2) — USB plan B: Export for Adoption. Sets the adoption lock
@@ -248,56 +245,23 @@ router.post('/:id/unrelease', requireAuth, async (req, res) => {
 // would let public tablet writes land on the cloud and be silently overwritten
 // by upsync). The produced file carries the sync token — it is the only
 // transport in the USB flow.
+// v2.5.00: body moved to sync/adoptionFile.js exportAdoptionFile (shared with
+// POST /api/adoption/:meetId/export-file, the client's path). Two behavior
+// changes: the release code is KEPT (the Pi may adopt by code or by file —
+// first to talk to the cloud wins) and meets.adopted_via='file' is recorded.
 router.post('/:id/export-for-adoption', requireAuth, async (req, res) => {
+  const { exportAdoptionFile, AdoptionFileError } = require('../sync/adoptionFile');
   try {
-    const meet = await queryOne('SELECT * FROM meets WHERE id=?', [req.params.id]);
-    if (!meet) return res.status(404).json({ error: 'Meet not found' });
-    if (meet.remote_judging) return res.status(409).json({ error: 'remote_judging_meet' });
-    // (adoption_status='adopted' is already refused by the adoption-lock guard.)
-    const crypto = require('crypto');
-    const { hashToken } = require('../sync/adoption');
-    const syncToken = crypto.randomBytes(32).toString('hex');
-    // H-2: 'checked_in' is re-exportable (day-2 recovery after a mistaken
-    // Check In instead of Hand Back).
-    const result = await execute(
-      `UPDATE meets SET adoption_status='adopted', adopted_at=datetime('now'),
-              sync_token_hash=?, release_code_hash=NULL, release_code_expires_at=NULL,
-              last_applied_seq=0, updated_at=datetime('now')
-       WHERE id=? AND (adoption_status IS NULL OR adoption_status='checked_in')`,
-      [hashToken(syncToken), req.params.id]
-    );
-    if (!result.rowsAffected) return res.status(409).json({ error: 'already_adopted' });
-    // M-2: adaptive drain of in-flight mutations (was a fixed 300 ms sleep).
-    await require('../utils/inflight').waitForMutationIdle();
-    const { buildAdoptionPackage } = require('../sync/package');
-    // M-1: on package-build failure, revert the lock (and restore any release
-    // code the meet held) so the export can simply be retried.
-    let pkg;
-    try {
-      pkg = await buildAdoptionPackage(req.params.id);
-    } catch (e) {
-      try {
-        await execute(
-          `UPDATE meets SET adoption_status=NULL, adopted_at=NULL, sync_token_hash=NULL,
-                  release_code_hash=?, release_code_expires_at=?, updated_at=datetime('now')
-           WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
-          [meet.release_code_hash, meet.release_code_expires_at, req.params.id, hashToken(syncToken)]
-        );
-      } catch (revertErr) {
-        console.error(`[meets] export-for-adoption revert ALSO failed for meet ${req.params.id}: ${revertErr.message}`);
-      }
-      return res.status(500).json({
-        error: 'package_build_failed',
-        message: `Could not build the adoption file (${e.message}). The meet was NOT locked — try again.`,
-      });
-    }
-    const { logAudit } = require('./audit');
-    try { await logAudit('meet_adopted', 'meet', req.params.id, null, { via: 'usb_export' }); } catch (_) {}
-    const fileName = `StickIt_Adoption_${meet.name.replace(/[^A-Za-z0-9]+/g, '_')}.json`;
+    const { pkg, fileName } = await exportAdoptionFile(req.params.id, {
+      remint: false, actor: (req.user && (req.user.username || req.user.display_name)) || null,
+    });
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.send(JSON.stringify({ ...pkg, sync_token: syncToken }));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    res.send(JSON.stringify(pkg));
+  } catch (e) {
+    if (e instanceof AdoptionFileError) return res.status(e.httpCode).json({ error: e.code, message: e.message, ...e.extra });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Adoption state for UI banners + polling. Public read (discloses only lock
@@ -305,7 +269,7 @@ router.post('/:id/export-for-adoption', requireAuth, async (req, res) => {
 router.get('/:id/adoption', async (req, res) => {
   try {
     const meet = await queryOne(
-      `SELECT id, name, adoption_status, adopted_at, last_sync_at, remote_judging,
+      `SELECT id, name, adoption_status, adopted_at, adopted_via, last_sync_at, remote_judging,
               released_at, released_by, release_code_expires_at,
               (release_code_hash IS NOT NULL) AS released
        FROM meets WHERE id = ?`,
@@ -317,6 +281,9 @@ router.get('/:id/adoption', async (req, res) => {
       adoption_status: meet.adoption_status || null,
       adopted: meet.adoption_status === 'adopted',
       adopted_at: meet.adopted_at || null,
+      // v2.5.00: 'code' | 'file' — with last_sync_at null + 'file' the meet is
+      // locked by a backup adoption file the venue has not used yet.
+      adopted_via: meet.adopted_via || null,
       last_sync_at: meet.last_sync_at || null,
       remote_judging: !!meet.remote_judging,
       released: !!meet.released && meet.adoption_status !== 'adopted',

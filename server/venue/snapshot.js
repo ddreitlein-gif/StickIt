@@ -143,4 +143,11 @@ function getSnapshotStatus() {
   };
 }
 
-module.exports = { startVenueSnapshots, getSnapshotStatus, doSnapshot };
+// v2.5.00: the stick's directory when the last snapshot run verified it
+// (real mountpoint under REQUIRE_MOUNT) — the offline return file drops a
+// copy there too. null when absent/unverified.
+function getSnapshotDirIfAvailable() {
+  return status.available && status.dir ? status.dir : null;
+}
+
+module.exports = { startVenueSnapshots, getSnapshotStatus, doSnapshot, getSnapshotDirIfAvailable };

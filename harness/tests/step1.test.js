@@ -64,6 +64,9 @@ const EXEMPT_PREFIXES = [
   '/api/sync/',              // sync apply endpoints (Step 2+) — carry the venue's
                              // changes; authenticated by sync token
   '/api/venue/',             // venue-mode endpoints (Step 3+)
+  '/api/adoption/',          // v2.5.00 — officials' actions ON an adopted meet (return-file
+                             // import, undo of a backup-file lock, re-issued adoption file);
+                             // login-gated; must run while adopted, like force-unlock
 ];
 
 function classifyRoute(route) {

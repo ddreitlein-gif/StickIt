@@ -36,7 +36,7 @@ All four settings survive meet export/import and cloning, and (except the adopti
 
 ### The More ▾ menu
 
-The meet header groups its less-frequent actions — **TD Report**, **Export Meet**, **Clone Meet** — under a **More ▾** button to keep the header compact.
+The meet header groups its less-frequent actions — **TD Report**, **Export Meet**, **Clone Meet**, the venue-adoption actions (**Release for Adoption…** with its recommended backup adoption file, **Download adoption file**, **Undo Release**, and **Import venue return file…** while the meet is at the venue) — under a **More ▾** button to keep the header compact. See [The venue server](./venue-server) for the adoption and offline-return flow.
 
 ### Status changes
 

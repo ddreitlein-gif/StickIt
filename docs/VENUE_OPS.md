@@ -21,6 +21,54 @@ volunteer material lives in `server/public/docs/venue/`).
   'adopted'` which v1 ignores entirely; after returning to v2, clear it with
   Admin → Venue Adoption → Force Unlock.
 
+## Offline adoption file + offline return (v2.5.00)
+
+The internet-free path, end to end. Every file moves through the **scoring
+laptop's browser** (download → USB drive → upload); nothing is ever mounted on
+the Pi, which sidesteps stick formatting/recognition issues on the Pi entirely.
+This USB drive is a different stick from the STICKITSNAP backup stick.
+
+- **Going out.** Release for Adoption now offers "Also save a backup adoption
+  file" (recommended, ticked by default). On https the browser's save picker
+  can target the USB drive directly. **The cloud copy locks the moment the file
+  exists**, and the code keeps working — the Pi may use either; first to talk
+  to the cloud wins. The meet page shows an amber "adoption file created,
+  waiting for the venue" banner with *Download adoption file again* (re-mints
+  the token; the earlier file dies) and *Undo & unlock* — both only until the
+  venue has synced. A stale file that is imported anyway shows up on the venue
+  as the red revoked banner ("sync credentials no longer valid"); Abandon it
+  and adopt with the current code/file.
+- **Coming back.** Check In / Hand Back on the venue menu try the cloud first;
+  when it is unreachable the dialog offers **Return via file instead** (also
+  reachable any time via the small "No internet? Return via file instead…"
+  link). This freezes and archives the venue exactly like a successful online
+  return — there is no "resume scoring" afterwards. The file is stored on the
+  Pi at `/opt/stickit/server/data/return/<meet_id>.json` (a copy also lands on
+  the STICKITSNAP stick as `stickit_return_<meet_id>_<mode>_<stamp>.json` when
+  it is mounted), and the archived home screen shows a **Return file** card:
+  *Download return file* (Control PIN — after a final check-in the PIN is
+  asked again because the token rotated) and the cloud line (*Not yet received
+  / Received / unreachable / no longer expects this file*). Once the box sees
+  internet again it also offers **Send to cloud now**.
+- **On the cloud.** Meet page → More → *Import venue return file…* (or the
+  banner link, or Admin → Venue Adoption → *Import venue return file…*, which
+  routes by the file's own meet). The dialog shows what the venue chose
+  (Check In / Hand Back) and lets you change it. Refusals are all pre-write:
+  wrong meet, tampered/truncated file, protocol mismatch, stale file from an
+  older adoption, meet no longer adopted. A second import of the same file is
+  a harmless 410. Mode override is recorded in the audit row
+  (`recorded_mode` / `applied_mode`).
+- **Handback by file for a two-day meet:** import the file on the cloud
+  BEFORE re-releasing in the morning (the cloud stays locked until then, so
+  Release/New Release Code 423s and the banner says why). The morning
+  adoption then replaces the Pi's local copy as usual.
+- **Force-unlock while a return file is pending** makes the file unimportable
+  (409 `not_adopted`) — the venue's copy is intact; recover with the standard
+  Export/Import if the scores never reached the cloud.
+- The lossy procedure below (generic export → import with regenerated IDs →
+  force-unlock) is now a **last resort** only; the return file is the
+  supported offline return.
+
 ## Dual-host caveat: the adoption lock is per-database (L-10)
 
 The adoption lock lives in the **Render database only**. The legacy Railway

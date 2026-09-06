@@ -103,6 +103,34 @@ async function clearMeetLocal(meetId) {
   }
 }
 
+// L-4: the filename must be exactly this meet's logo name (traversal
+// guard AND cross-meet-clobber guard), and a replace removes any stale
+// logo with a different extension first. Shared by the event logo
+// (meet_<id>.<ext>) and the v2.3.01 bottom logo (meet_<id>_bottom.<ext>).
+// v2.5.00: module scope + exported — the return import (sync/returnImport.js)
+// writes venue-uploaded logos through the same guard.
+function writeLogo(entry, prefix, label) {
+  if (!entry || !entry.filename || !entry.base64) return false;
+  try {
+    fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true });
+    const safe = path.basename(entry.filename);
+    if (!safe.startsWith(prefix) || !/^[A-Za-z0-9]+$/.test(safe.slice(prefix.length))) {
+      console.error(`[adoption import] refusing ${label} filename "${safe}" (expected ${prefix}<ext>)`);
+      return false;
+    }
+    for (const f of fs.readdirSync(MEET_LOGOS_DIR)) {
+      if (f.startsWith(prefix) && f !== safe) {
+        try { fs.unlinkSync(path.join(MEET_LOGOS_DIR, f)); } catch (_) {}
+      }
+    }
+    fs.writeFileSync(path.join(MEET_LOGOS_DIR, safe), Buffer.from(entry.base64, 'base64'));
+    return true;
+  } catch (e) {
+    console.error(`[adoption import] ${label} write failed:`, e.message);
+    return false;
+  }
+}
+
 /**
  * Import an adoption package. opts: { replace: false }.
  * Returns { meet_id, counts: { table: n }, logo: bool, bottom_logo: bool }.
@@ -168,35 +196,10 @@ async function executeAdoptionImport(pkg, opts = {}) {
   const { batch } = require('../db/schema');
   await batch(stmts);
 
-  // L-4: the filename must be exactly this meet's logo name (traversal
-  // guard AND cross-meet-clobber guard), and a replace removes any stale
-  // logo with a different extension first. Shared by the event logo
-  // (meet_<id>.<ext>) and the v2.3.01 bottom logo (meet_<id>_bottom.<ext>).
-  function writeLogo(entry, prefix, label) {
-    if (!entry || !entry.filename || !entry.base64) return false;
-    try {
-      fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true });
-      const safe = path.basename(entry.filename);
-      if (!safe.startsWith(prefix) || !/^[A-Za-z0-9]+$/.test(safe.slice(prefix.length))) {
-        console.error(`[adoption import] refusing ${label} filename "${safe}" (expected ${prefix}<ext>)`);
-        return false;
-      }
-      for (const f of fs.readdirSync(MEET_LOGOS_DIR)) {
-        if (f.startsWith(prefix) && f !== safe) {
-          try { fs.unlinkSync(path.join(MEET_LOGOS_DIR, f)); } catch (_) {}
-        }
-      }
-      fs.writeFileSync(path.join(MEET_LOGOS_DIR, safe), Buffer.from(entry.base64, 'base64'));
-      return true;
-    } catch (e) {
-      console.error(`[adoption import] ${label} write failed:`, e.message);
-      return false;
-    }
-  }
   const logoWritten = writeLogo(pkg.logo, `meet_${meetId}.`, 'logo');
   const bottomLogoWritten = writeLogo(pkg.bottom_logo, `meet_${meetId}_bottom.`, 'bottom logo');
 
   return { meet_id: meetId, counts, logo: logoWritten, bottom_logo: bottomLogoWritten };
 }
 
-module.exports = { executeAdoptionImport, clearMeetLocal };
+module.exports = { executeAdoptionImport, clearMeetLocal, writeLogo, IMPORT_ORDER, UPSERT_TABLES };

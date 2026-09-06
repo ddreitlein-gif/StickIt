@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../../utils/api'
+import ReturnImportDialog from '../../components/ReturnImportDialog'
 
 /**
  * v2.0.00 (Step 1, R8) — Venue Adoption admin page.
@@ -14,6 +15,23 @@ export default function AdminAdoption() {
   const [unlocking, setUnlocking] = useState(null) // meet being confirmed
   const [confirmName, setConfirmName] = useState('')
   const [busy, setBusy] = useState(false)
+  // v2.5.00 — venue return file import (offline check-in / handback)
+  const [returnPkg, setReturnPkg] = useState(null)
+  const [returnFor, setReturnFor] = useState(null) // expected meet id when opened from a row
+  const fileRef = useRef(null)
+
+  const onReturnFile = async (file) => {
+    if (!file) return
+    try {
+      const pkg = JSON.parse(await file.text())
+      if (!pkg || pkg.format !== 'stickit-return-package') {
+        setError('That is not a StickIt return file. Use the "Return file" downloaded from the venue server.')
+        return
+      }
+      setError('')
+      setReturnPkg(pkg)
+    } catch (e) { setError('Could not read that file: ' + e.message) }
+  }
 
   const load = () => api.adminAdoptionList()
     .then(d => setMeets(d.meets || []))
@@ -37,6 +55,8 @@ export default function AdminAdoption() {
   }
 
   const statusBadge = (m) => {
+    // v2.5.00: a backup adoption file exists but the venue has not synced under it yet
+    if (m.adoption_status === 'adopted' && m.adopted_via === 'file' && !m.last_sync_at) return <span className="px-2 py-0.5 rounded text-xs bg-amber-900/50 text-amber-300 border border-amber-800">Locked — file, waiting for venue</span>
     if (m.adoption_status === 'adopted') return <span className="px-2 py-0.5 rounded text-xs bg-amber-900/50 text-amber-300 border border-amber-800">Adopted (venue)</span>
     if (m.adoption_status === 'checked_in') return <span className="px-2 py-0.5 rounded text-xs bg-green-900/50 text-green-400 border border-green-800">Checked in</span>
     if (m.released) return <span className="px-2 py-0.5 rounded text-xs bg-mountain-900/50 text-mountain-300 border border-mountain-800">Released (code pending)</span>
@@ -48,13 +68,27 @@ export default function AdminAdoption() {
 
   return (
     <div className="p-8 max-w-5xl">
-      <h1 className="font-display text-3xl text-white mb-2">Venue Adoption</h1>
+      <div className="flex items-start justify-between gap-4 mb-2">
+        <h1 className="font-display text-3xl text-white">Venue Adoption</h1>
+        {/* v2.5.00 — the file names its meet, so any meet's return file can be imported from here */}
+        <button onClick={() => { setReturnFor(null); fileRef.current?.click() }} className="btn-secondary text-sm whitespace-nowrap">
+          Import venue return file…
+        </button>
+      </div>
       <p className="text-slate-500 text-sm mb-6">
         Meets released for, adopted by, or checked in from a venue server. Force Unlock is the
         recovery path for an abandoned adoption (venue server lost or destroyed): it revokes the
         venue's sync token and returns cloud control. Cloud data is as of the last successful sync —
-        recover anything newer from the venue's USB snapshot.
+        recover anything newer from the venue's USB snapshot. A venue that had no internet at the end
+        of the day writes a <b>return file</b> instead — import it here or on the meet page.
       </p>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; onReturnFile(f) }}
+      />
 
       {error && <div className="mb-4 p-3 rounded-lg border border-red-800 bg-red-900/30 text-red-300 text-sm">{error}</div>}
 
@@ -81,7 +115,15 @@ export default function AdminAdoption() {
                   <td className="py-2 pr-4">{statusBadge(m)}</td>
                   <td className="py-2 pr-4 text-slate-500">{m.adopted_at || '—'}</td>
                   <td className="py-2 pr-4 text-slate-500">{m.last_sync_at || '—'}</td>
-                  <td className="py-2 text-right">
+                  <td className="py-2 text-right whitespace-nowrap">
+                    {m.adoption_status === 'adopted' && (
+                      <button
+                        onClick={() => { setReturnFor(m.id); fileRef.current?.click() }}
+                        className="text-xs px-3 py-1.5 rounded border border-mountain-800 text-mountain-300 hover:bg-mountain-900/30 mr-2"
+                      >
+                        Import return file…
+                      </button>
+                    )}
                     {m.adoption_status === 'adopted' && (
                       <button
                         onClick={() => { setUnlocking(m); setConfirmName(''); setError('') }}
@@ -96,6 +138,15 @@ export default function AdminAdoption() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {returnPkg && (
+        <ReturnImportDialog
+          pkg={returnPkg}
+          expectedMeetId={returnFor || undefined}
+          onDone={() => load()}
+          onClose={() => setReturnPkg(null)}
+        />
       )}
 
       {unlocking && (

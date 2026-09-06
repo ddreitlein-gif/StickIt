@@ -50,6 +50,71 @@ export async function downloadAuthed(url, { method = 'GET', body, fallbackName =
   URL.revokeObjectURL(objectUrl);
 }
 
+// v2.5.00 — save a file to the user's computer. On https (the cloud) Chrome/
+// Edge offer the File System Access picker, so the USB drive can be chosen
+// directly; elsewhere (the venue's http://stickit.local, Safari, Firefox) a
+// normal browser download. The picker opens BEFORE the fetch (it needs the
+// click's activation, and a cancel must not trigger a side effect such as
+// locking a meet). Returns { saved: 'picker' | 'download' | 'cancelled', fileName }.
+export async function saveFile(fileName, getBlob) {
+  let handle = null;
+  if (window.isSecureContext && typeof window.showSaveFilePicker === 'function') {
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: 'StickIt file', accept: { 'application/json': ['.json'] } }],
+      });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return { saved: 'cancelled', fileName };
+      handle = null; // not permitted here (iframe, policy) — plain download
+    }
+  }
+  const { blob, fileName: served } = await getBlob();
+  if (handle) {
+    const w = await handle.createWritable();
+    await w.write(blob);
+    await w.close();
+    return { saved: 'picker', fileName: handle.name || fileName };
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = served || fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return { saved: 'download', fileName: served || fileName };
+}
+
+// v2.5.00 — authenticated fetch that returns the blob + served filename
+// (for saveFile). `token` overrides the stored auth token (venue Control PIN
+// token for the return-file download). Errors carry code/body/status like
+// apiFetch.
+export async function fetchAuthedBlob(url, { method = 'GET', body, token = null, fallbackName = 'download' } = {}) {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : authHeaders()),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401 && !token) { handle401(); throw new Error('Authentication required'); }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e = new Error(err.message || err.error || `HTTP ${res.status}`);
+    e.code = err.error || null;
+    e.body = err;
+    e.status = res.status;
+    throw e;
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^";]+)"?/);
+  return { blob, fileName: m ? m[1] : fallbackName, headers: res.headers };
+}
+
 async function apiFetch(path, options = {}) {
   const url = `${API_BASE}${path}`;
   const res = await fetch(url, {
@@ -275,6 +340,17 @@ export const api = {
   getMeetAdoption: (id) => apiFetch(`/meets/${id}/adoption`),
   releaseForAdoption: (id) => apiFetch(`/meets/${id}/release-for-adoption`, { method: 'POST' }),
   unreleaseMeet: (id) => apiFetch(`/meets/${id}/unrelease`, { method: 'POST' }),
+  // v2.5.00 — backup adoption file + offline return (file)
+  exportAdoptionFile: (meetId, opts = {}) =>
+    fetchAuthedBlob(`/api/adoption/${meetId}/export-file`, { method: 'POST', body: { again: !!opts.again }, fallbackName: 'StickIt_Adoption.json' }),
+  undoAdoptionRelease: (meetId) => apiFetch(`/adoption/${meetId}/unrelease`, { method: 'POST' }),
+  importReturnFile: (meetId, pkg, mode) =>
+    apiFetch(`/adoption/${meetId}/import-return`, { method: 'POST', body: { package: pkg, ...(mode ? { mode } : {}) } }),
+  venueReturnFile: (mode, control_token) => apiFetch('/venue/return-file', { method: 'POST', body: { mode, control_token } }),
+  venueReturnStatus: (fresh = false) =>
+    apiFetch(`/venue/return-status${fresh ? '?fresh=1' : ''}`, { signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(9000) : undefined }),
+  venueReturnFileBlob: (token) => fetchAuthedBlob('/api/venue/return-file', { token, fallbackName: 'StickIt_Return.json' }),
+  venueReturnSend: (control_token) => apiFetch('/venue/return-file/send', { method: 'POST', body: { control_token } }),
   adminAdoptionList: () => apiFetch('/admin/adoption'),
   adminForceUnlock: (meetId, confirmName) =>
     apiFetch(`/admin/adoption/${meetId}/force-unlock`, { method: 'POST', body: { confirm_name: confirmName } }),

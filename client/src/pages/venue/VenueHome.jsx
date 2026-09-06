@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import api from '../../utils/api'
+import api, { saveFile } from '../../utils/api'
 import { fetchVenueStatus, getRoleMemory, setRoleMemory, roleUrl, judgeRoleLabel, disciplineLabel, describeMemory } from './venueShared'
 
 /**
@@ -186,6 +186,36 @@ export default function VenueHome() {
   const [checkinErr, setCheckinErr] = useState('')
   const [update, setUpdate] = useState(null)
   const [updating, setUpdating] = useState(false)
+  // v2.5.00 — offline return (file): the offer after a failed online attempt,
+  // the explicit "no internet" chooser, and the archived-state card.
+  const [returnOffer, setReturnOffer] = useState(null) // { mode, token } after the cloud proved unreachable
+  const [returnPick, setReturnPick] = useState(false)  // explicit "Return via file" mode chooser
+  const [returnStatus, setReturnStatus] = useState(null)
+  const [returnBusy, setReturnBusy] = useState('')
+  const [returnMsg, setReturnMsg] = useState(null) // { ok, text }
+
+  // v2.5.00 — write the return file (freeze + archive, exactly like a
+  // successful online return — ruling 2), then the volunteer downloads it.
+  const doReturnFile = async (mode, token) => {
+    const label = mode === 'handback' ? 'Hand Back' : 'Check In'
+    if (!window.confirm(`Return this meet via file (${label})?\n\nScoring STOPS on this server now, exactly like a normal ${label}. A return file is written here; download it onto the USB drive and import it on stickitski.com from a computer with internet (meet page → More → Import venue return file).`)) return
+    setCheckinBusy(`${label} via file — writing the return file…`)
+    setCheckinErr('')
+    setReturnOffer(null)
+    setReturnPick(false)
+    try {
+      const r = await api.venueReturnFile(mode, token)
+      setReturnMsg({ ok: true, text: `Return file written (${Math.round((r.file?.bytes || 0) / 1024)} KB)${r.file?.snapshot_copy ? ' — a copy is also on the backup stick' : ''}. Download it below.` })
+      await refresh()
+    } catch (e) {
+      setCheckinErr(e.message)
+    } finally { setCheckinBusy(null) }
+  }
+
+  const withControl = (fn) => {
+    if (pins?.control_set) setPinModal({ kind: 'control', then: (r) => { setPinModal(null); fn(r.token) } })
+    else fn(null)
+  }
 
   // v2.0.00 (Step 5) — Hand Back / Check In: Control PIN, confirm, run, report.
   const startCheckin = (mode) => {
@@ -196,19 +226,39 @@ export default function VenueHome() {
         : 'Check this meet in?\n\nThis is final: results are verified against stickitski.com and scoring closes on this server for good.')) return
       setCheckinBusy(`${label} — verifying every score against the cloud…`)
       setCheckinErr('')
+      setReturnOffer(null)
       try {
         await api.venueCheckin(mode, token)
         await refresh()
       } catch (e) {
         setCheckinErr(e.message)
+        // v2.5.00: the cloud is unreachable — offer the file path with the
+        // same token (the venue reverted to 'adopted'; nothing rotated yet).
+        const offline = (e.code === 'flush_failed' && e.body && e.body.reason === 'offline') || e.code === 'cloud_unreachable'
+        if (offline) setReturnOffer({ mode, token })
       } finally { setCheckinBusy(null) }
     }
-    if (pins?.control_set) {
-      setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doIt(r.token) } })
-    } else {
-      doIt(null)
-    }
+    withControl(doIt)
   }
+
+  // v2.5.00 — archived-state actions.
+  const downloadReturnFile = () => withControl(async (token) => {
+    setReturnBusy('download'); setReturnMsg(null)
+    try {
+      const res = await saveFile('StickIt_Return.json', () => api.venueReturnFileBlob(token))
+      if (res.saved !== 'cancelled') setReturnMsg({ ok: true, text: `Saved ${res.fileName}. Copy it onto the USB drive if it went to Downloads.` })
+    } catch (e) { setReturnMsg({ ok: false, text: 'Download failed: ' + e.message }) }
+    finally { setReturnBusy('') }
+  })
+  const sendReturnFile = () => withControl(async (token) => {
+    setReturnBusy('send'); setReturnMsg(null)
+    try {
+      const r = await api.venueReturnSend(token)
+      setReturnMsg({ ok: true, text: r.already_received ? (r.message || 'The cloud already has this meet.') : 'Delivered — stickitski.com has verified and received the meet.' })
+      setReturnStatus(await api.venueReturnStatus(true).catch(() => null))
+    } catch (e) { setReturnMsg({ ok: false, text: e.message }) }
+    finally { setReturnBusy('') }
+  })
 
   // M-13: keep the previous status when a refresh poll fails — one transient
   // failure must not re-render the operator console as the Adopt screen.
@@ -230,6 +280,17 @@ export default function VenueHome() {
     api.venueUpdateCheck().then(setUpdate).catch(() => setUpdate(null))
   }, [updateBlocked, status?.meet_state])
   useEffect(() => { const id = setInterval(() => refresh(), 10000); return () => clearInterval(id) }, [])
+  // v2.5.00 — while a return file is stored (archived venue), ask whether the
+  // cloud has received it (public probe; 30 s cadence).
+  const returnAvailable = !!(status && status.return_file && status.return_file.available)
+  useEffect(() => {
+    if (!returnAvailable) { setReturnStatus(null); return }
+    let alive = true
+    const tick = () => api.venueReturnStatus().then(r => { if (alive) setReturnStatus(r) }).catch(() => {})
+    tick()
+    const id = setInterval(tick, 30000)
+    return () => { alive = false; clearInterval(id) }
+  }, [returnAvailable, status?.meet_state])
 
   // Device role memory: a rebooted tablet goes straight back to its role page.
   useEffect(() => {
@@ -387,7 +448,46 @@ export default function VenueHome() {
           )}
           {status.meet_state === 'checked_in' && status.adopted_meet && (
             <div className="card mt-6 border-green-800 bg-green-900/10 text-green-300 text-sm">
-              "{status.adopted_meet.name}" was checked in to the cloud. This server is ready for the next meet.
+              "{status.adopted_meet.name}" was {returnAvailable ? 'checked in via return file' : 'checked in to the cloud'}. This server is ready for the next meet.
+            </div>
+          )}
+          {/* v2.5.00 — offline return: the stored return file + whether the cloud has it */}
+          {returnAvailable && (
+            <div className="card mt-6 border-mountain-800 bg-mountain-900/10" data-testid="return-file-card">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="font-display text-xl text-white">Return file</h2>
+                  <p className="text-slate-400 text-sm">
+                    {status.return_file.mode === 'handback' ? 'Hand Back' : 'Check In'} · written{' '}
+                    {status.return_file.exported_at ? new Date(status.return_file.exported_at).toLocaleString() : ''}
+                  </p>
+                </div>
+                <div className="text-sm text-right">
+                  {!returnStatus && <span className="text-slate-500">Checking stickitski.com…</span>}
+                  {returnStatus?.cloud === 'received' && <span className="text-green-400">✓ Received by stickitski.com</span>}
+                  {returnStatus?.cloud === 'pending' && <span className="text-amber-300">Not yet received by stickitski.com</span>}
+                  {returnStatus?.cloud === 'unknown' && <span className="text-slate-400">stickitski.com unreachable</span>}
+                  {returnStatus?.cloud === 'unlocked' && <span className="text-amber-300">stickitski.com no longer expects this file</span>}
+                </div>
+              </div>
+              <p className="text-slate-500 text-sm mt-3">
+                {returnStatus?.cloud === 'received'
+                  ? 'Nothing more to do — the cloud has verified and stored every score. Keep the file until the results are published.'
+                  : returnStatus?.cloud === 'unlocked'
+                    ? 'The meet was unlocked on stickitski.com (handback imported, or force-unlocked). If the results are missing there, call the office — the file is still stored here.'
+                    : 'Download the file onto the USB drive, take the laptop somewhere with internet, and import it on stickitski.com: open the meet → More → Import venue return file. Or, once this box has internet, send it directly.'}
+              </p>
+              <div className="flex flex-wrap gap-3 mt-4">
+                <button className="btn-primary text-sm" disabled={!!returnBusy} onClick={downloadReturnFile}>
+                  {returnBusy === 'download' ? 'Preparing…' : '💾 Download return file'}
+                </button>
+                {returnStatus && returnStatus.cloud !== 'received' && returnStatus.cloud !== 'unlocked' && (
+                  <button className="btn-secondary text-sm" disabled={!!returnBusy} onClick={sendReturnFile}>
+                    {returnBusy === 'send' ? 'Sending…' : '☁️ Send to cloud now'}
+                  </button>
+                )}
+              </div>
+              {returnMsg && <p className={`text-sm mt-3 ${returnMsg.ok ? 'text-green-400' : 'text-red-400'}`}>{returnMsg.text}</p>}
             </div>
           )}
         </>
@@ -514,6 +614,41 @@ export default function VenueHome() {
               </div>
             )}
             {checkinErr && <p className="text-red-400 text-sm mt-3">{checkinErr}</p>}
+            {/* v2.5.00 — the cloud proved unreachable: offer the file path */}
+            {returnOffer && !checkinBusy && (
+              <div className="mt-3 p-3 rounded-xl border border-amber-800 bg-amber-900/20 text-amber-200 text-sm">
+                <div className="font-semibold">No internet right now.</div>
+                <div className="text-amber-300/80 mt-1">
+                  You can return the meet via file instead: scoring stops here exactly as with a normal
+                  {returnOffer.mode === 'handback' ? ' Hand Back' : ' Check In'}, and you download a return file to carry to
+                  a computer with internet. Or leave the box powered and try again when the internet is back.
+                </div>
+                <div className="flex gap-3 mt-3">
+                  <button className="btn-primary text-sm" data-testid="return-file-offer" onClick={() => doReturnFile(returnOffer.mode, returnOffer.token)}>
+                    Return via file instead
+                  </button>
+                  <button className="btn-secondary text-sm" onClick={() => setReturnOffer(null)}>Not now</button>
+                </div>
+              </div>
+            )}
+            {!checkinBusy && !returnOffer && (
+              <div className="mt-3 text-xs text-slate-500">
+                No internet?{' '}
+                <button className="underline hover:text-slate-300" data-testid="return-file-link" onClick={() => setReturnPick(p => !p)}>
+                  Return via file instead…
+                </button>
+                {returnPick && (
+                  <div className="flex gap-3 mt-2">
+                    <button className="btn-secondary text-sm flex-1" onClick={() => withControl(token => doReturnFile('handback', token))}>
+                      🌙 Hand Back via file
+                    </button>
+                    <button className="btn-secondary text-sm flex-1" onClick={() => withControl(token => doReturnFile('checkin', token))}>
+                      ✅ Check In via file
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

@@ -24,6 +24,7 @@ app.use(cors());
 // route keeps the v1 default (a later json() skips an already-parsed body).
 app.use('/api/sync', express.json({ limit: '64mb' }));
 app.use('/api/venue', express.json({ limit: '64mb' }));
+app.use('/api/adoption', express.json({ limit: '64mb' })); // v2.5.00: return-file upload
 app.use(express.json());
 
 // v2.0.00 (M-2) -- count mutating requests in flight so the adoption drain can
@@ -215,6 +216,8 @@ app.get('/api/venue/status', async (req, res) => {
         // v2.0.00 (Step 4) -- home-screen sync status: Up to date / N queued /
         // Offline since HH:MM / revoked.
         out.sync = await require('./sync/worker').getSyncStatus();
+        // v2.5.00 -- offline return: is a return file stored for this meet?
+        try { out.return_file = await require('./routes/venue').returnFileSummary(state); } catch (_) { out.return_file = null; }
       } else {
         out.adopted_meet = null;
         out.meet_state = null;
@@ -237,6 +240,11 @@ let venueCaptureReady = Promise.resolve(); // v2.4.00 (L-1): resolved before ini
   const { isVenueMode } = require('./venue/mode');
   if (!isVenueMode()) {
     app.use('/api/sync', require('./routes/sync'));
+    // v2.5.00 -- officials' adoption actions that must run on an ADOPTED meet
+    // (return-file import, undo of a backup-file lock, re-issue of the file).
+    // Deliberately outside the /api/meets/:meetId adoption-lock prefix, like
+    // /api/admin/adoption; login-gated inside the router.
+    app.use('/api/adoption', require('./routes/adoption'));
   } else {
     const venueRouter = require('./routes/venue');
     app.use('/api/venue', venueRouter);

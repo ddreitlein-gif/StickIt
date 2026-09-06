@@ -15,10 +15,15 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { queryOne, execute } = require('../db/schema');
+const { queryOne, queryAll, execute } = require('../db/schema');
 const protocol = require('../sync/protocol');
 const { hashToken } = require('../sync/adoption');
 const { buildAdoptionPackage } = require('../sync/package');
+// v2.5.00: apply/verify primitives shared with the file-based return import.
+const {
+  hashesEqual, clearUniqueKeyConflicts, upsertSql, cloudChecksums, compareChecksums,
+} = require('../sync/cloudApply');
+const { handleReturnImport } = require('../sync/returnImport');
 
 // L-8: release codes are 8-char one-time secrets — cheap per-IP failure
 // limiter on /peek and /adopt to match the auth posture (v1.25.00 A-7).
@@ -46,15 +51,6 @@ function codeThrottleFail(req) {
   } else {
     rec.count++;
   }
-}
-
-// L-8: constant-time hash comparison for token auth.
-function hashesEqual(aHex, bHex) {
-  try {
-    const a = Buffer.from(String(aHex), 'hex');
-    const b = Buffer.from(String(bHex), 'hex');
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  } catch (_) { return false; }
 }
 
 function protocolMismatch(res, received) {
@@ -129,21 +125,34 @@ router.post('/adopt', async (req, res) => {
     // never both succeed (FR-4). Clearing release_code_hash burns the code.
     // H-2: a 'checked_in' meet is re-adoptable (day-2 recovery after a
     // mistaken Check In instead of Hand Back).
+    // v2.5.00 (ruling 1, "first to talk to the cloud wins"): a meet locked by
+    // a backup adoption FILE whose venue has never synced is still redeemable
+    // by code — the token is re-minted (the file goes stale) and adopted_via
+    // flips to 'code'. Once the file's venue synced (last_sync_at set), the
+    // code is refused.
+    const supersededFileLock = meet.adoption_status === 'adopted';
     const syncToken = crypto.randomBytes(32).toString('hex');
     const result = await execute(
       `UPDATE meets
-         SET adoption_status='adopted', adopted_at=datetime('now'),
+         SET adoption_status='adopted', adopted_at=datetime('now'), adopted_via='code',
              sync_token_hash=?, release_code_hash=NULL, release_code_expires_at=NULL,
-             last_applied_seq=0, updated_at=datetime('now')
-       WHERE id=? AND release_code_hash=? AND (adoption_status IS NULL OR adoption_status='checked_in')`,
+             last_applied_seq=0, last_sync_at=NULL, updated_at=datetime('now')
+       WHERE id=? AND release_code_hash=?
+         AND (adoption_status IS NULL OR adoption_status='checked_in'
+              OR (adoption_status='adopted' AND adopted_via='file' AND last_sync_at IS NULL))`,
       [hashToken(syncToken), meet.id, codeHash]
     );
     if (!result.rowsAffected) {
       // H-2: report the truth — distinguish a genuine race from any other
       // zero-row outcome by re-reading the row.
-      const now = await queryOne('SELECT adoption_status, release_code_hash FROM meets WHERE id=?', [meet.id]);
+      const now = await queryOne('SELECT adoption_status, release_code_hash, adopted_via, last_sync_at FROM meets WHERE id=?', [meet.id]);
       if (now && now.adoption_status === 'adopted') {
-        return res.status(409).json({ error: 'already_adopted', message: 'Another venue server redeemed this code first.' });
+        return res.status(409).json({
+          error: 'already_adopted',
+          message: now.adopted_via === 'file' && now.last_sync_at
+            ? 'A venue server already imported the backup adoption file for this meet and synced with the cloud. That venue must return the meet (Check In / Hand Back, or its return file).'
+            : 'Another venue server redeemed this code first.',
+        });
       }
       return res.status(409).json({
         error: 'adopt_conflict',
@@ -166,12 +175,23 @@ router.post('/adopt', async (req, res) => {
       pkg = await buildAdoptionPackage(meet.id);
     } catch (e) {
       try {
-        await execute(
-          `UPDATE meets SET adoption_status=NULL, adopted_at=NULL, sync_token_hash=NULL,
-                  release_code_hash=?, release_code_expires_at=?, updated_at=datetime('now')
-           WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
-          [meet.release_code_hash, meet.release_code_expires_at, meet.id, hashToken(syncToken)]
-        );
+        if (supersededFileLock) {
+          // v2.5.00: the code superseded a file lock — put the FILE's token
+          // back (that file stays the valid one) instead of unlocking.
+          await execute(
+            `UPDATE meets SET adopted_via='file', adopted_at=?, sync_token_hash=?,
+                    release_code_hash=?, release_code_expires_at=?, updated_at=datetime('now')
+             WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
+            [meet.adopted_at, meet.sync_token_hash, meet.release_code_hash, meet.release_code_expires_at, meet.id, hashToken(syncToken)]
+          );
+        } else {
+          await execute(
+            `UPDATE meets SET adoption_status=?, adopted_at=NULL, adopted_via=NULL, sync_token_hash=NULL,
+                    release_code_hash=?, release_code_expires_at=?, last_sync_at=?, updated_at=datetime('now')
+             WHERE id=? AND adoption_status='adopted' AND sync_token_hash=?`,
+            [meet.adoption_status || null, meet.release_code_hash, meet.release_code_expires_at, meet.last_sync_at || null, meet.id, hashToken(syncToken)]
+          );
+        }
       } catch (revertErr) {
         console.error(`[sync] adopt revert after package failure ALSO failed for meet ${meet.id}: ${revertErr.message}`);
       }
@@ -183,7 +203,7 @@ router.post('/adopt', async (req, res) => {
 
     try {
       const { logAudit } = require('./audit');
-      await logAudit('meet_adopted', 'meet', meet.id, null, { via: 'release_code' });
+      await logAudit('meet_adopted', 'meet', meet.id, null, { via: 'release_code', superseded_file_lock: supersededFileLock });
     } catch (_) {}
 
     res.json({
@@ -227,39 +247,6 @@ async function authSyncRequest(req, res) {
     return null;
   }
   return meet;
-}
-
-// M-8: non-PK UNIQUE keys. An upsert whose new id collides with a
-// DIFFERENT-id row under the unique key (e.g. a judge_scores re-submit after
-// an HJ reject, under the FR-11 index) would fail SQLITE_CONSTRAINT — the
-// worker would then retry the same batch forever. Mirror the venue's REPLACE
-// displacement semantics: remove the different-id row first (the venue's
-// ordered history is authoritative for its adopted meet).
-const UNIQUE_KEYS = {
-  judge_scores: ['run_id', 'judge_id', 'score_type'],
-  dual_judge_points: ['match_id', 'judge_number'],
-  phase_run_order: ['phase_id', 'registration_id'],
-};
-
-async function clearUniqueKeyConflicts(tbl, row) {
-  const uk = UNIQUE_KEYS[tbl];
-  if (!uk || uk.some(c => row[c] === null || row[c] === undefined)) return;
-  const pk = protocol.TABLES[tbl].pk;
-  await execute(
-    `DELETE FROM ${tbl} WHERE ${uk.map(c => `${c}=?`).join(' AND ')} AND ${pk.map(c => `${c} != ?`).join(' AND ')}`,
-    [...uk.map(c => row[c]), ...pk.map(c => row[c])]
-  );
-}
-
-function upsertSql(table) {
-  const spec = protocol.TABLES[table];
-  const cols = spec.columns;
-  const nonPk = cols.filter(c => !spec.pk.includes(c));
-  const conflictUpdate = nonPk.length
-    ? `DO UPDATE SET ${nonPk.map(c => `${c}=excluded.${c}`).join(', ')}`
-    : 'DO NOTHING';
-  return `INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})
-          ON CONFLICT(${spec.pk.join(',')}) ${conflictUpdate}`;
 }
 
 /**
@@ -454,27 +441,6 @@ router.post('/meets/:meetId/changes', async (req, res) => {
 // Step 5 — checksums / check-in / handback / repush (Section 5.4, R7, D8).
 // ---------------------------------------------------------------------------
 
-const { queryAll } = require('../db/schema');
-
-async function cloudChecksums(meetId) {
-  const out = {};
-  for (const t of protocol.CHECKSUM_TABLES) {
-    const rows = await queryAll(protocol.selectForMeet(t), [meetId]);
-    out[t] = protocol.tableChecksum(t, rows.map(r => protocol.manifestRow(t, r)));
-  }
-  return out;
-}
-
-function compareChecksums(venueSums, cloudSums) {
-  const mismatched = [];
-  for (const t of protocol.CHECKSUM_TABLES) {
-    const v = venueSums[t];
-    const c = cloudSums[t];
-    if (!v || !c || v.hash !== c.hash || v.count !== c.count) mismatched.push(t);
-  }
-  return { match: mismatched.length === 0, mismatched };
-}
-
 // Diagnostic comparison (no state change).
 router.post('/meets/:meetId/checksums', async (req, res) => {
   try {
@@ -561,6 +527,25 @@ router.post('/meets/:meetId/checkin', async (req, res) => {
       await logAudit(mode === 'checkin' ? 'meet_checked_in' : 'meet_handed_back', 'meet', meet.id, null, { verified_tables: protocol.CHECKSUM_TABLES.length });
     } catch (_) {}
     res.json({ ok: true, mode, verified_tables: protocol.CHECKSUM_TABLES.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// v2.5.00 — POST /api/sync/meets/:meetId/return — the venue sends its stored
+// RETURN package itself ("Send to cloud now" once the uplink is back after an
+// offline check-in / handback). Same importer as the officials' file upload
+// (POST /api/adoption/:meetId/import-return); bearer sync token, so a venue
+// whose adoption was superseded gets the same 401/409/410 vocabulary as the
+// worker. Body: { protocol_version, package, mode? }.
+// ---------------------------------------------------------------------------
+router.post('/meets/:meetId/return', async (req, res) => {
+  try {
+    const meet = await authSyncRequest(req, res);
+    if (!meet) return;
+    const { protocol_version, package: pkg, mode } = req.body || {};
+    if (protocol_version !== protocol.SYNC_PROTOCOL_VERSION) return protocolMismatch(res, protocol_version);
+    if (!pkg) return res.status(400).json({ error: 'package_required' });
+    await handleReturnImport(req, res, { meet, pkg, mode: mode || null, via: 'venue_direct' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -684,7 +684,7 @@ router.post('/backups/:filename/restore', async (req, res) => {
 router.get('/adoption', async (req, res) => {
   try {
     const meets = await queryAll(
-      `SELECT id, name, location, date, adoption_status, adopted_at, last_sync_at,
+      `SELECT id, name, location, date, adoption_status, adopted_at, adopted_via, last_sync_at,
               last_applied_seq, remote_judging, released_at, released_by,
               release_code_expires_at,
               (release_code_hash IS NOT NULL) AS released
@@ -718,7 +718,7 @@ router.post('/adoption/:meetId/force-unlock', async (req, res) => {
       });
     }
     await execute(
-      `UPDATE meets SET adoption_status=NULL, sync_token_hash=NULL,
+      `UPDATE meets SET adoption_status=NULL, adopted_via=NULL, sync_token_hash=NULL,
               release_code_hash=NULL, release_code_expires_at=NULL,
               updated_at=datetime('now')
        WHERE id=?`,

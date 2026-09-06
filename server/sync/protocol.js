@@ -36,6 +36,12 @@ const crypto = require('crypto');
 // judge's codes) for the jump-code mismatch reconciliation flow. Same reasoning
 // as the 1 → 2 bump: column additions change row canonicalization and table
 // checksums, so the version gate must refuse a mixed-version pair up front.
+// v2.5.00: NOT bumped. The offline return path adds new MESSAGES (the return
+// package, POST /meets/:id/return, POST /api/adoption/:id/import-return) but no
+// manifest column and no canonicalization change, so a v2.4.x venue and a
+// v2.5.0 cloud still agree on every row hash. A bump would strand the fielded
+// v2.4.02 Pi image for no protocol reason; the venue simply lacks the new
+// buttons until it updates.
 const SYNC_PROTOCOL_VERSION = 3;
 
 /**
@@ -195,6 +201,7 @@ const NON_SYNC_COLUMNS = {
     'adoption_status', 'adopted_at', 'sync_token_hash', 'last_sync_at',
     'last_applied_seq', 'remote_judging', 'release_code_hash',
     'release_code_expires_at', 'released_at', 'released_by',
+    'adopted_via', // v2.5.00 — 'code' | 'file' (how the lock happened)
   ],
 };
 

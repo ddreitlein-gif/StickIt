@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import api, { authHeaders, downloadAuthed } from '../utils/api'
+import api, { authHeaders, downloadAuthed, saveFile } from '../utils/api'
 import UsssTransmitModal from '../components/UsssTransmitModal'
+import ReturnImportDialog from '../components/ReturnImportDialog'
 import { useVenueMode } from './venue/venueShared'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
@@ -1184,6 +1185,50 @@ function AdvancedSettingsModal({ meet, onClose, onSave }) {
   )
 }
 
+// v2.5.00 — Release for Adoption dialog. The backup adoption file is
+// recommended (ticked by default): it is the offline plan for a venue with no
+// internet, carried to the venue on the scoring laptop's USB drive. Creating
+// it locks the cloud copy immediately; the code keeps working (ruling 1).
+function ReleaseDialog({ meetName, renew, onClose, onConfirm }) {
+  const [withFile, setWithFile] = useState(true)
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" data-testid="release-dialog">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-lg">
+        <h2 className="font-display text-2xl text-white mb-2">{renew ? 'New Release Code' : 'Release for Adoption'}</h2>
+        <p className="text-slate-400 text-sm mb-4">
+          A one-time code will be shown for the venue volunteer. With the code alone, the cloud copy of
+          "{meetName}" locks read-only once a venue server redeems it over the internet.
+        </p>
+        <label className="flex items-start gap-3 p-3 rounded-xl border border-mountain-800 bg-mountain-900/20 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={withFile}
+            onChange={e => setWithFile(e.target.checked)}
+            data-testid="release-backup-file"
+          />
+          <span className="text-sm">
+            <span className="text-white font-semibold">Also save a backup adoption file</span>
+            <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-green-900/50 text-green-300 border border-green-800">Recommended</span>
+            <span className="block text-slate-400 mt-1">
+              Put it on the USB drive that travels with the scoring laptop. If the venue has no internet, the venue
+              server adopts the meet from this file instead of the code. <b className="text-amber-300">The cloud copy
+              locks the moment the file is saved</b> — the code still works too; whichever reaches the cloud first wins.
+              Undo Release stays available until the venue has synced.
+            </span>
+          </span>
+        </label>
+        <div className="flex gap-3 mt-5">
+          <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+          <button onClick={() => onConfirm(withFile)} className="btn-primary flex-1" data-testid="release-confirm">
+            {withFile ? 'Release + save file' : 'Release (code only)'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function MeetDetail() {
   const { meetId } = useParams()
   const navigate = useNavigate()
@@ -1200,6 +1245,10 @@ export default function MeetDetail() {
   // v2.0.00 (Step 1) — venue adoption state + release-code modal
   const [adoption, setAdoption] = useState(null)
   const [releaseInfo, setReleaseInfo] = useState(null)
+  // v2.5.00 — backup adoption file + offline return
+  const [showRelease, setShowRelease] = useState(false)
+  const [returnPkg, setReturnPkg] = useState(null)
+  const returnFileRef = useRef(null)
 
   const refreshAdoption = () => api.getMeetAdoption(meetId).then(setAdoption).catch(() => {})
 
@@ -1217,21 +1266,81 @@ export default function MeetDetail() {
   // hidden; a "Venue Menu (end of day)" item leads to Hand Back / Check In.
   const venue = useVenueMode()
 
-  const handleRelease = async () => {
-    if (!window.confirm('Release this meet for venue adoption? A one-time code will be shown for the venue volunteer. The cloud copy locks read-only once a venue server redeems the code.')) return
+  // v2.5.00: the file lock — a backup adoption file exists and the venue has
+  // not talked to the cloud under it yet (the code still works; undo allowed).
+  const fileLocked = adopted && adoption?.adopted_via === 'file' && !adoption?.last_sync_at
+  const adoptionFileName = () => `StickIt_Adoption_${String(meet?.name || meetId).replace(/[^A-Za-z0-9]+/g, '_')}.json`
+
+  const handleRelease = () => setShowRelease(true)
+
+  // v2.5.00 — release (code) + optional backup adoption file (recommended).
+  // The file locks the cloud copy immediately; the code keeps working.
+  const doRelease = async (withFile) => {
+    setShowRelease(false)
+    let info
     try {
-      const info = await api.releaseForAdoption(meetId)
-      setReleaseInfo(info)
+      info = await api.releaseForAdoption(meetId)
+    } catch (e) { alert('Release failed: ' + e.message); return }
+    let fileNote = null
+    if (withFile) {
+      try {
+        const res = await saveFile(adoptionFileName(), () => api.exportAdoptionFile(meetId))
+        fileNote = res.saved === 'cancelled'
+          ? { ok: false, text: 'Backup file skipped — the cloud copy is NOT locked yet. If you need the file later: More → Download adoption file.' }
+          : { ok: true, text: `Backup file saved${res.fileName ? ` (${res.fileName})` : ''}. Copy it onto the USB drive for the venue. The cloud copy is now locked; the code above still works — the venue may use either.` }
+      } catch (e) {
+        fileNote = { ok: false, text: `The backup file could not be created (${e.message}). The cloud copy is NOT locked; the code still works. Try More → Download adoption file.` }
+      }
+    }
+    setReleaseInfo({ ...info, fileNote })
+    refreshAdoption()
+  }
+
+  // v2.5.00 — download the adoption file outside the release dialog: a first
+  // export locks the meet now; `again` re-mints the token of a never-synced
+  // file lock (the earlier file stops working).
+  const handleDownloadFile = async (again) => {
+    const msg = again
+      ? 'Issue a NEW adoption file?\n\nThe file created earlier stops working the moment this one exists. Only do this if that file was lost or never reached the venue.'
+      : 'Download an adoption file?\n\nThe cloud copy locks read-only the moment the file exists (a venue server can import it at any time). The release code, if one was issued, keeps working.'
+    if (!window.confirm(msg)) return
+    try {
+      const res = await saveFile(adoptionFileName(), () => api.exportAdoptionFile(meetId, { again }))
+      if (res.saved === 'cancelled') return
       refreshAdoption()
-    } catch (e) { alert('Release failed: ' + e.message) }
+    } catch (e) {
+      if (e.code === 'already_synced') alert('The venue has already imported the earlier file and synced with the cloud — a new file cannot be issued. Return the meet from the venue instead.')
+      else if (e.code === 'already_adopted') alert('This meet is already adopted by a venue server.')
+      else alert('Adoption file failed: ' + e.message)
+      refreshAdoption()
+    }
   }
 
   const handleUnrelease = async () => {
-    if (!window.confirm('Undo the release? The previously shown code will stop working.')) return
+    const msg = fileLocked
+      ? 'Undo the release and unlock the cloud copy?\n\nThe adoption file AND the code stop working. If the venue already imported the file, that copy can no longer sync or be returned.'
+      : 'Undo the release? The previously shown code will stop working.'
+    if (!window.confirm(msg)) return
     try {
-      await api.unreleaseMeet(meetId)
+      await api.undoAdoptionRelease(meetId)
       refreshAdoption()
-    } catch (e) { alert('Undo release failed: ' + e.message) }
+    } catch (e) {
+      alert(e.code === 'meet_adopted' ? e.message : 'Undo release failed: ' + e.message)
+      refreshAdoption()
+    }
+  }
+
+  // v2.5.00 — pick a venue return file (offline check-in / handback).
+  const onReturnFilePicked = async (file) => {
+    if (!file) return
+    try {
+      const pkg = JSON.parse(await file.text())
+      if (!pkg || pkg.format !== 'stickit-return-package') {
+        alert('This is not a StickIt return file. Use the "Return file" downloaded from the venue server (not an adoption file or a meet export).')
+        return
+      }
+      setReturnPkg(pkg)
+    } catch (e) { alert('Could not read that file: ' + e.message) }
   }
 
   const reopenMeet = async () => {
@@ -1343,13 +1452,36 @@ export default function MeetDetail() {
         <span className="text-slate-300">{meet.name}</span>
       </div>
 
+      {/* v2.5.00 — locked by a backup adoption file the venue has not used yet */}
+      {adopted && fileLocked && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-700 bg-amber-900/30 text-amber-200" data-testid="adoption-banner-file">
+          <div className="font-semibold">🔒 Locked for the venue — adoption file created, waiting for the venue server.</div>
+          <div className="text-sm text-amber-300/80 mt-1">
+            The venue can import the file or use the release code — whichever reaches the cloud first wins.
+            Editing unlocks after the venue hands back or checks in.
+          </div>
+          {!venue && (
+            <div className="mt-3 flex flex-wrap gap-3 text-sm">
+              <button onClick={() => handleDownloadFile(true)} className="underline hover:text-white">Download adoption file again</button>
+              <button onClick={handleUnrelease} className="underline hover:text-white">Undo &amp; unlock</button>
+              <button onClick={() => returnFileRef.current?.click()} className="underline hover:text-white">Import venue return file…</button>
+            </div>
+          )}
+        </div>
+      )}
       {/* v2.0.00 — read-only mirror banner while the meet runs at the venue */}
-      {adopted && (
-        <div className="mb-6 p-4 rounded-xl border border-amber-700 bg-amber-900/30 text-amber-200">
+      {adopted && !fileLocked && (
+        <div className="mb-6 p-4 rounded-xl border border-amber-700 bg-amber-900/30 text-amber-200" data-testid="adoption-banner">
           <div className="font-semibold">🏔 This meet is running at the venue — this view is live but read-only.</div>
           <div className="text-sm text-amber-300/80 mt-1">
             A venue server adopted this meet{adoption.adopted_at ? ` on ${adoption.adopted_at}` : ''}. Scores sync here automatically
             {adoption.last_sync_at ? ` (last sync ${adoption.last_sync_at})` : ''}. Editing unlocks after the venue hands back or checks in.
+            {!venue && (
+              <>
+                {' '}No internet at the venue?{' '}
+                <button onClick={() => returnFileRef.current?.click()} className="underline hover:text-white">Import the venue's return file…</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1427,7 +1559,7 @@ export default function MeetDetail() {
             {showMore && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowMore(false)} />
-                <div className="absolute right-0 mt-1 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20 py-1">
+                <div className="absolute right-0 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-20 py-1">
                   <button
                     onClick={() => { setShowMore(false); downloadTdReport() }}
                     className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
@@ -1461,15 +1593,40 @@ export default function MeetDetail() {
                       onClick={() => { setShowMore(false); handleRelease() }}
                       className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
                     >
-                      {adoption?.released ? 'New Release Code' : 'Release for Adoption'}
+                      {adoption?.released ? 'New Release Code…' : 'Release for Adoption…'}
                     </button>
                   )}
-                  {!venue && !adopted && adoption?.released && (
+                  {/* v2.5.00 — backup adoption file (locks now) / re-issue / return-file import */}
+                  {!venue && !adopted && !adoption?.remote_judging && (
+                    <button
+                      onClick={() => { setShowMore(false); handleDownloadFile(false) }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Download adoption file
+                    </button>
+                  )}
+                  {!venue && fileLocked && (
+                    <button
+                      onClick={() => { setShowMore(false); handleDownloadFile(true) }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Download adoption file again
+                    </button>
+                  )}
+                  {!venue && ((!adopted && adoption?.released) || fileLocked) && (
                     <button
                       onClick={() => { setShowMore(false); handleUnrelease() }}
                       className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
                     >
                       Undo Release
+                    </button>
+                  )}
+                  {!venue && adopted && (
+                    <button
+                      onClick={() => { setShowMore(false); returnFileRef.current?.click() }}
+                      className="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Import venue return file…
                     </button>
                   )}
                   {/* v2.4.00 (T-5/T-7) — venue server: the end-of-day actions
@@ -1597,9 +1754,46 @@ export default function MeetDetail() {
             <p className="text-slate-400 text-sm mb-4">Give this code to the venue volunteer. It works once and cannot be shown again — write it down now.</p>
             <div className="font-mono text-4xl tracking-[0.3em] text-mountain-300 bg-slate-800 rounded-xl py-4 mb-4 select-all">{releaseInfo.code}</div>
             <p className="text-slate-500 text-xs mb-4">Expires {releaseInfo.expires_at}</p>
+            {/* v2.5.00 — outcome of the backup adoption file */}
+            {releaseInfo.fileNote && (
+              <div
+                className={`mb-4 p-3 rounded-lg border text-sm text-left ${releaseInfo.fileNote.ok ? 'border-green-800 bg-green-900/20 text-green-300' : 'border-amber-800 bg-amber-900/20 text-amber-300'}`}
+                data-testid={releaseInfo.fileNote.ok ? 'release-file-note' : 'release-file-warning'}
+              >
+                {releaseInfo.fileNote.ok ? '💾 ' : '⚠️ '}{releaseInfo.fileNote.text}
+              </div>
+            )}
             <button onClick={() => setReleaseInfo(null)} className="btn-primary w-full">Done — I wrote it down</button>
           </div>
         </div>
+      )}
+
+      {/* v2.5.00 — release dialog with the recommended backup adoption file */}
+      {showRelease && (
+        <ReleaseDialog
+          meetName={meet.name}
+          renew={!!adoption?.released}
+          onClose={() => setShowRelease(false)}
+          onConfirm={doRelease}
+        />
+      )}
+
+      {/* v2.5.00 — venue return file (offline check-in / handback) */}
+      <input
+        ref={returnFileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        data-testid="return-file-input"
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; onReturnFilePicked(f) }}
+      />
+      {returnPkg && (
+        <ReturnImportDialog
+          pkg={returnPkg}
+          expectedMeetId={meetId}
+          onDone={() => { refreshAdoption(); refreshMeet() }}
+          onClose={() => setReturnPkg(null)}
+        />
       )}
 
       {showEditMeet && (

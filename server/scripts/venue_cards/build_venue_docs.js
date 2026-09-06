@@ -134,7 +134,7 @@ function adoption() {
   step(doc, 5, 'The Chief of Scoring starts the FIRST run of each event from the Scoring Computer.',
     'Check the run order, judge panel and course specs first, then press Start Run on the Scoring tab. That first start puts the event in front of every tablet; after it, the Head Judge can start runs from the tablet.');
   callout(doc, 'The code works exactly once. If adoption fails partway, call the official to release a new code — nothing is harmed.');
-  callout(doc, 'No internet right now? Plan B: the official can hand you the meet on a USB stick as a file — use "Import from file" on the same screen.', RED);
+  callout(doc, 'No internet right now? Plan B: the official saved a backup adoption file when releasing the meet (it is on the scoring laptop’s USB drive). Plug that drive into the SCORING LAPTOP (not the box), open the venue menu, and use "Import from file". The meet loads exactly as it would by code.', RED);
   footer(doc);
   doc.end();
 }
@@ -194,7 +194,17 @@ function endOfDay() {
   doc.moveDown(0.3);
   step(doc, 4, 'On the menu, tap "Check In Meet" (Control PIN).',
     'Same verification; the results become the permanent record on stickitski.com. When it shows "checked in", power everything down and pack the kit.');
-  callout(doc, 'Both need internet. If it says the cloud is unreachable, scoring data is safe on the box — leave it powered, get the internet back (or move the box somewhere with internet), and tap the button again.', RED);
+  doc.moveDown(0.4);
+  doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('No internet? Return via file (either ending)');
+  doc.fill('#000000');
+  doc.moveDown(0.3);
+  step(doc, 5, 'If the button says the cloud is unreachable, tap "Return via file instead" (Control PIN).',
+    'Scoring stops on the box exactly as with a normal Hand Back / Check In — this is final. The box writes a return file and shows a "Return file" card on the menu.');
+  step(doc, 6, 'On the SCORING LAPTOP, tap "Download return file" and copy it onto the USB drive.',
+    'The file goes to the laptop’s Downloads folder first — copy it onto the stick. Do not use the STICKITSNAP backup stick; that one stays in the box.');
+  step(doc, 7, 'From any computer with internet, open the meet on stickitski.com → More → "Import venue return file".',
+    'It asks Hand Back or Check In (pre-set to what you chose), then imports and verifies every score. For a two-day meet do this BEFORE the official releases the meet again in the morning.');
+  callout(doc, 'Scoring data is never at risk: it stays on the box, in the return file, and on the backup stick. If the box gets internet back before you have carried the file anywhere, the card offers "Send to cloud now".', RED);
   footer(doc);
   doc.end();
 }
@@ -209,6 +219,7 @@ function preEvent() {
   item('StickIt box software updated at home: plug in, open stickit.local:3001, click Update StickIt (only shows when no meet is loaded).');
   item('Meet fully built on stickitski.com: events, registrations, judges, run orders, course specs.');
   item('Plan for the release code: who releases the meet, and how the code reaches the venue (phone / written down).');
+  item('When releasing, tick "Also save a backup adoption file" and put the file on the USB drive that travels with the SCORING LAPTOP (a different stick from STICKITSNAP). It is the no-internet plan for both adopting the meet and returning it at the end of the day.');
   doc.moveDown(0.4);
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Backup stick (one-time, on a Mac)');
   doc.fill('#000000'); doc.moveDown(0.3);

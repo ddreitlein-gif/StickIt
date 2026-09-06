@@ -16,7 +16,10 @@ const crypto = require('crypto');
 const os = require('os');
 const { queryOne, queryAll, execute } = require('../db/schema');
 const protocol = require('../sync/protocol');
+const fs = require('fs');
+const path = require('path');
 const { executeAdoptionImport } = require('../sync/adoptionImport');
+const { buildReturnPackage } = require('../sync/package');
 const { getVenueState, setVenueState, getSetting, setSetting } = require('../venue/state');
 const { hashToken } = require('../sync/adoption');
 const { getActiveEventId } = require('../venue/active');
@@ -43,6 +46,9 @@ async function clearOutboxForNewAdoption() {
   await execute('DELETE FROM sync_outbox');
   await ensureVenueTables();
   await execute('DELETE FROM venue_seats');
+  // v2.5.00: a fresh adoption must not show the previous meet's return-file
+  // metadata. The file itself is never deleted (see returnFileSummary).
+  for (const k of RETURN_KEYS) await setSetting(k, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -876,5 +882,293 @@ router.get('/capture-stats', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ---------------------------------------------------------------------------
+// v2.5.00 — offline return (file). When the cloud is unreachable at end of day
+// the venue writes a RETURN package (sync/package.js buildReturnPackage: full
+// self-verifying snapshot) to disk and archives exactly as a successful online
+// check-in / handback would (ruling: file export is final). The Scoring
+// Computer downloads it through the browser onto a USB stick; an official
+// imports it on the cloud meet page (POST /api/adoption/:id/import-return).
+// The file stays downloadable while the venue is archived and is never
+// auto-deleted — a file the cloud has not received must not be destroyable by
+// a click. Once the uplink is back, /return-status reports whether the cloud
+// has it and /return-file/send can deliver it directly.
+// ---------------------------------------------------------------------------
+
+const RETURN_DIR = path.join(__dirname, '..', 'data', 'return');
+const RETURN_KEYS = ['venue_return_mode', 'venue_return_at', 'venue_return_bytes', 'venue_return_sent_at', 'venue_return_received_at'];
+
+function returnFilePath(meetId) {
+  return path.join(RETURN_DIR, `${String(meetId).replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
+
+/** Summary for the home screen / status endpoint. null when no meet is known. */
+async function returnFileSummary(state) {
+  if (!state || !state.meet_id) return null;
+  const archived = state.meet_state === 'checked_in' || state.meet_state === 'handed_back';
+  if (!archived || !fs.existsSync(returnFilePath(state.meet_id))) return { available: false };
+  return {
+    available: true,
+    mode: (await getSetting('venue_return_mode')) || null,
+    exported_at: (await getSetting('venue_return_at')) || null,
+    bytes: parseInt(await getSetting('venue_return_bytes')) || null,
+    sent_at: (await getSetting('venue_return_sent_at')) || null,
+    received_at: (await getSetting('venue_return_received_at')) || null,
+  };
+}
+
+// M-9 (shared with the online path's closure): the Control token stops
+// mattering once the meet is finally checked in — rotate it. Handback keeps it.
+async function rotateControlTokenAfter(mode) {
+  if (mode !== 'checkin') return;
+  if (await getSetting('venue_control_token')) {
+    await setSetting('venue_control_token', crypto.randomBytes(24).toString('hex'));
+  }
+}
+
+/**
+ * Has the cloud received the return? Reads the PUBLIC adoption endpoint (the
+ * H-1 probe) — 'received' | 'pending' | 'unlocked' | 'unknown' (unreachable).
+ * A cloud re-adopted AFTER our export (adopted_at newer) counts as received:
+ * the file was imported and the meet went out again (day two).
+ */
+async function probeReturnReceived(state, exportedAt) {
+  try {
+    const r = await fetch(`${state.cloud_url}/api/meets/${state.meet_id}/adoption`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return 'unknown';
+    const a = await r.json();
+    if (a.adoption_status === 'checked_in') return 'received';
+    if (a.adoption_status === 'adopted') {
+      if (a.adopted_at && exportedAt && new Date(a.adopted_at.replace(' ', 'T') + (a.adopted_at.includes('Z') ? '' : 'Z')).getTime() > new Date(exportedAt).getTime()) return 'received';
+      return 'pending';
+    }
+    return 'unlocked'; // NULL: handback imported — or the lock was undone / force-unlocked
+  } catch (_) { return 'unknown'; }
+}
+
+let returnProbeCache = { at: 0, meetId: null, cloud: 'unknown' };
+
+router.post('/return-file', async (req, res) => {
+  const { setMeetState } = require('../venue/state');
+  let archived = false;
+  try {
+    if (!(await requireControlToken(req, res))) return;
+    const { mode } = req.body || {};
+    if (mode !== 'checkin' && mode !== 'handback') {
+      return res.status(400).json({ error: 'mode must be checkin or handback' });
+    }
+    const state = await getVenueState();
+    if (!state) return res.status(409).json({ error: 'not_adopted', message: 'No meet is adopted on this server.' });
+    if (state.meet_state === 'checked_in' || state.meet_state === 'handed_back') {
+      if (fs.existsSync(returnFilePath(state.meet_id))) {
+        return res.status(409).json({ error: 'already_archived', message: 'This meet was already returned — download the existing return file instead.' });
+      }
+      return res.status(409).json({ error: 'not_adopted', message: `Venue meet state is ${state.meet_state}.` });
+    }
+    if (state.meet_state !== 'adopted' && state.meet_state !== 'checking_in') {
+      return res.status(409).json({ error: 'not_adopted', message: `Venue meet state is ${state.meet_state}.` });
+    }
+
+    // 1. Freeze (FR-10) — identical to the online path.
+    await setMeetState('checking_in');
+    const revert = async (httpCode, body) => {
+      await setMeetState('adopted');
+      res.status(httpCode).json(body);
+    };
+
+    // 2. Write barrier (M-6 analogue, no flush): build the package with no
+    //    outbox append landing across the read. Capture stays active during
+    //    'checking_in', so MAX(seq) moving means a write slipped through.
+    const maxSeq = async () => {
+      try {
+        const r = await queryOne('SELECT MAX(seq) AS m FROM sync_outbox WHERE meet_id=?', [state.meet_id]);
+        return Number(r && r.m) || 0;
+      } catch (_) { return 0; }
+    };
+    let pkg = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const before = await maxSeq();
+      await require('../utils/inflight').waitForMutationIdle();
+      const built = await buildReturnPackage(state.meet_id, { mode, sync_token: state.sync_token });
+      if ((await maxSeq()) === before) { pkg = built; break; }
+    }
+    if (!pkg) {
+      return revert(502, {
+        error: 'flush_failed',
+        reason: 'writes_during_checkin',
+        message: 'Writes kept arriving while the return file was being written. Make sure every tablet has stopped, then try again.',
+      });
+    }
+
+    // 3. Write atomically (tmp → rename).
+    const json = JSON.stringify(pkg);
+    const finalPath = returnFilePath(state.meet_id);
+    try {
+      fs.mkdirSync(RETURN_DIR, { recursive: true });
+      fs.writeFileSync(finalPath + '.tmp', json);
+      fs.renameSync(finalPath + '.tmp', finalPath);
+    } catch (e) {
+      try { fs.rmSync(finalPath + '.tmp', { force: true }); } catch (_) {}
+      return revert(500, { error: 'return_file_write_failed', message: `Could not write the return file (${e.message}). Scoring stays available; try again.` });
+    }
+
+    // 4. Best-effort copy onto the STICKITSNAP stick (R11) when it is mounted.
+    let snapshotCopy = null;
+    try {
+      const dir = require('../venue/snapshot').getSnapshotDirIfAvailable();
+      if (dir) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const p = path.join(dir, `stickit_return_${String(state.meet_id).replace(/[^A-Za-z0-9_-]/g, '_')}_${mode}_${stamp}.json`);
+        fs.copyFileSync(finalPath, p);
+        snapshotCopy = p;
+      }
+    } catch (_) {}
+
+    // 5. Archive — the file supersedes the queue; capture goes inactive with
+    //    the state change and the worker loop exits on its state check.
+    await execute('DELETE FROM sync_outbox WHERE meet_id=?', [state.meet_id]);
+    await setMeetState(mode === 'checkin' ? 'checked_in' : 'handed_back');
+    archived = true;
+    await setSetting('venue_return_mode', mode);
+    await setSetting('venue_return_at', pkg.exported_at);
+    await setSetting('venue_return_bytes', String(Buffer.byteLength(json)));
+    await setSetting('venue_return_sent_at', '');
+    await setSetting('venue_return_received_at', '');
+    returnProbeCache = { at: 0, meetId: null, cloud: 'unknown' };
+    await rotateControlTokenAfter(mode);
+    try {
+      const { logAudit } = require('./audit');
+      await logAudit(mode === 'checkin' ? 'meet_checked_in' : 'meet_handed_back', 'meet', state.meet_id, null, {
+        via: 'return_file', bytes: Buffer.byteLength(json), snapshot_copy: !!snapshotCopy,
+      });
+    } catch (_) {}
+    // L-3: one journal line.
+    console.log(`[venue] return file written (${mode}): ${path.basename(finalPath)}, ${Buffer.byteLength(json)} bytes, copy on stick: ${snapshotCopy ? 'yes' : 'no'}`);
+
+    const meet = await queryOne('SELECT name FROM meets WHERE id=?', [state.meet_id]);
+    res.json({
+      ok: true,
+      mode,
+      file: {
+        name: returnDownloadName(meet ? meet.name : state.meet_id, mode),
+        bytes: Buffer.byteLength(json),
+        exported_at: pkg.exported_at,
+        snapshot_copy: snapshotCopy,
+      },
+      verified_tables: protocol.CHECKSUM_TABLES.length,
+    });
+  } catch (e) {
+    if (!archived) { try { await setMeetState('adopted'); } catch (_) {} }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function returnDownloadName(meetName, mode) {
+  return `StickIt_Return_${String(meetName || 'meet').replace(/[^A-Za-z0-9]+/g, '_')}_${mode === 'handback' ? 'HandBack' : 'CheckIn'}.json`;
+}
+
+// Download the stored return file (Control token via Authorization header —
+// after a final check-in the token has rotated, so the client re-asks the PIN).
+router.get('/return-file', async (req, res) => {
+  try {
+    if (!(await requireControlToken(req, res))) return;
+    const state = await getVenueState();
+    const summary = await returnFileSummary(state);
+    if (!summary || !summary.available) {
+      return res.status(404).json({ error: 'no_return_file', message: 'No return file is stored on this server.' });
+    }
+    const meet = await queryOne('SELECT name FROM meets WHERE id=?', [state.meet_id]);
+    res.setHeader('Content-Disposition', `attachment; filename="${returnDownloadName(meet ? meet.name : state.meet_id, summary.mode)}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    fs.createReadStream(returnFilePath(state.meet_id)).pipe(res);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Home-screen line: is there a file, and has the cloud received it?
+router.get('/return-status', async (req, res) => {
+  try {
+    const state = await getVenueState();
+    const summary = await returnFileSummary(state);
+    if (!summary || !summary.available) return res.json({ available: false });
+    let cloud;
+    if (summary.received_at) {
+      cloud = 'received';
+    } else if (!req.query.fresh && returnProbeCache.meetId === state.meet_id && Date.now() - returnProbeCache.at < 5000) {
+      // Several tablets poll this; one cloud probe per 5 s is plenty. An
+      // 'unknown' (unreachable) verdict is never cached — the uplink may be
+      // back on the very next poll.
+      cloud = returnProbeCache.cloud;
+    } else {
+      cloud = await probeReturnReceived(state, summary.exported_at);
+      returnProbeCache = cloud === 'unknown' ? { at: 0, meetId: null, cloud } : { at: Date.now(), meetId: state.meet_id, cloud };
+      if (cloud === 'received') {
+        summary.received_at = new Date().toISOString();
+        await setSetting('venue_return_received_at', summary.received_at);
+      }
+    }
+    res.json({ ...summary, cloud });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Deliver the stored return file to the cloud directly (uplink is back).
+router.post('/return-file/send', async (req, res) => {
+  try {
+    if (!(await requireControlToken(req, res))) return;
+    const state = await getVenueState();
+    const summary = await returnFileSummary(state);
+    if (!summary || !summary.available) {
+      return res.status(404).json({ error: 'no_return_file', message: 'No return file is stored on this server.' });
+    }
+    let pkg;
+    try {
+      pkg = JSON.parse(fs.readFileSync(returnFilePath(state.meet_id), 'utf8'));
+    } catch (e) {
+      return res.status(500).json({ error: 'return_file_unreadable', message: `The stored return file could not be read (${e.message}).` });
+    }
+    const { mode } = req.body || {};
+    let r, data;
+    try {
+      r = await fetch(`${state.cloud_url}/api/sync/meets/${state.meet_id}/return`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pkg.sync_token}` },
+        body: JSON.stringify({ protocol_version: protocol.SYNC_PROTOCOL_VERSION, package: pkg, mode: mode || undefined }),
+        signal: AbortSignal.timeout(120000),
+      });
+      data = await r.json().catch(() => ({}));
+    } catch (e) {
+      return res.status(502).json({ error: 'cloud_unreachable', message: 'Could not reach the cloud. The return file is still stored here — try again when the internet is back, or carry the downloaded file to a computer with internet.' });
+    }
+    const markReceived = async () => {
+      const now = new Date().toISOString();
+      await setSetting('venue_return_sent_at', now);
+      await setSetting('venue_return_received_at', now);
+      returnProbeCache = { at: 0, meetId: null, cloud: 'unknown' };
+    };
+    if (r.ok) {
+      await markReceived();
+      console.log(`[venue] return file delivered to the cloud (${data.mode || mode || summary.mode})`);
+      return res.json({ ok: true, mode: data.mode || null, cloud: data });
+    }
+    if (r.status === 410 || (r.status === 409 && data.error === 'not_adopted')) {
+      const probe = await probeReturnReceived(state, summary.exported_at);
+      if (probe === 'received') {
+        await markReceived();
+        return res.json({ ok: true, already_received: true, message: 'The cloud already has this meet — nothing more to send.' });
+      }
+      return res.status(409).json({ error: data.error || 'not_adopted', message: data.message || 'The cloud no longer expects this meet from this server. Call the office.' });
+    }
+    if (r.status === 401) {
+      return res.status(409).json({ error: 'stale_return_file', message: 'The cloud adopted this meet again under a different venue server after this file was written. Call the office — the file is still stored here.' });
+    }
+    return res.status(r.status === 409 || r.status === 400 ? r.status : 502).json({
+      error: data.error || 'cloud_error',
+      message: data.message || `The cloud refused the return file (HTTP ${r.status}).`,
+      ...(data.mismatched ? { mismatched: data.mismatched } : {}),
+      ...(data.tables ? { tables: data.tables } : {}),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
 module.exports.ensureVenueTables = ensureVenueTables;
+module.exports.returnFileSummary = returnFileSummary;

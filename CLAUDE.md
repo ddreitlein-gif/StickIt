@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.4.02
+**Current version:** v2.5.00
 
 ## Commands
 
@@ -228,6 +228,153 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.00 Feature Notes
+
+### Offline Adoption Backup File + Offline Return via the Scoring Laptop (v2.5.00)
+
+Per David's 09-06-26 request: when a venue has no internet (or loses it), both handing a meet
+to the venue AND returning it at end of day must work by file, carried on a USB drive that is
+plugged into the **scoring laptop — never the Pi** (sidesteps Pi drive formatting/recognition
+issues). Every transfer is a browser download/upload on the laptop: cloud → laptop → Pi
+(adoption), Pi → laptop → cloud (return). This USB drive is a different stick from the
+STICKITSNAP backup stick. Three rulings recorded from the chat: **(1) the backup adoption file
+locks the cloud copy immediately** (today's export semantics) and the release code keeps
+working — *first to talk to the cloud wins*; **(2) writing the return file on the Pi is final**
+(freeze + archive exactly like a successful online return; the Pi later reports whether the
+cloud has the file); **(3) the cloud import shows the mode the venue chose (Check In / Hand
+Back) and lets the importer change it.** No scoring math, no manifest column, no
+canonicalization change → **`SYNC_PROTOCOL_VERSION` stays 3** (additive messages only; a bump
+would strand the fielded v2.4.02 Pi image — a v2.4.02 Pi still adopts by code/file from a
+v2.5.00 cloud, it just lacks the return-file buttons until it updates). One additive NON_SYNC
+column: `meets.adopted_via TEXT` ('code' | 'file').
+
+**Cloud, release side (`server/sync/adoptionFile.js`, new).** `exportAdoptionFile(meetId,
+{remint})` is the shared body of the legacy `POST /api/meets/:id/export-for-adoption` and the
+new `POST /api/adoption/:meetId/export-file`: lock-drain-snapshot as before, but the release
+code is **kept** and `adopted_via='file'` recorded; `{again:true}` re-mints the token of a
+never-synced file lock (409 `already_synced` once the venue synced). `undoFileLock` backs both
+unrelease routes: a never-synced file lock is fully undone (status, token, code); refused (423)
+once synced. `POST /api/sync/adopt` now succeeds on a never-synced file lock (re-mints the
+token, `adopted_via='code'`, M-1 revert restores the FILE's token) and answers 409 with a
+file-specific message once the file's venue synced. **`last_sync_at` is reset to NULL whenever a
+new adoption starts** (file export, remint, code) — found by the harness: a re-exported
+`checked_in` meet inherited the previous adoption's timestamp and wrongly blocked undo.
+
+**New router `/api/adoption` (`server/routes/adoption.js`, cloud only, requireAuth).** The
+adoption-lock middleware 423s every mutation under `/api/meets/:meetId`, so anything that must
+run on an ADOPTED meet lives here (like `/api/admin/adoption`): `export-file`, `unrelease`,
+`import-return`. Added to the FR-20 gate's `EXEMPT_PREFIXES` (step1) and the 64 MB JSON limit
+list in `index.js`. `GET /api/meets/:id/adoption` + the admin adoption list carry
+`adopted_via`; force-unlock clears it.
+
+**Return package (`buildReturnPackage`, `server/sync/package.js`).** `{ format:
+'stickit-return-package', protocol_version, meet_id, meet_name, mode, exported_at, sync_token,
+checksums, tables, logo, bottom_logo }` — every CHECKSUM table's full meet-scoped row set
+(repush-shaped) + `audit_log` (venue_all scope, upsert-only on the cloud), with **checksums
+computed from the very rows in the file** so the cloud can prove the file intact before writing.
+`buildAdoptionPackage` was factored into `snapshotTables()` + `readLogos()` (byte-identical
+output). `hashesEqual`/`upsertSql`/`clearUniqueKeyConflicts`/`cloudChecksums`/`compareChecksums`
+moved verbatim from `routes/sync.js` into `server/sync/cloudApply.js` (+ `replaceTableStatements`,
+the repush algorithm as batchable statements); `writeLogo` + `IMPORT_ORDER` exported from
+`adoptionImport.js`.
+
+**Cloud import (`server/sync/returnImport.js`, new — `applyReturnPackage`).** Shared by
+`POST /api/adoption/:meetId/import-return { package, mode? }` (official upload) and
+`POST /api/sync/meets/:meetId/return` (the venue's own "Send to cloud now", bearer token).
+Pre-write checks in order: format (400 `bad_package`) → protocol (409) → meet identity (400
+`wrong_meet`) → mode → state/token: `checked_in`+no token → 410 `already_returned` (idempotent
+second import), not adopted → 409 `not_adopted`, token ≠ hash → 401 `stale_return_file` (a file
+from an OLDER adoption can never overwrite) → self-consistency (every table present, no null PKs,
+meet-keyed rows name this meet, file checksums reproduce → else 400 `file_corrupt {tables}`).
+Then ONE atomic batch (M-5) replacing every checksum table with repush semantics (master tables
+upsert-only, H-3) + audit_log upserts, logos through the L-4 guard, independent
+`cloudChecksums()` verify (409 `checksum_mismatch`, meet stays adopted, re-import idempotent),
+unlock guarded by the token hash read at the start (409 `state_changed` on a race), audit
+`meet_checked_in`/`meet_handed_back` with `via: official_upload | venue_direct`,
+`recorded_mode`, `applied_mode`; FR-19 `sync_applied` nudge per event.
+
+**Venue (`server/routes/venue.js`).** `POST /return-file {mode}` (Control PIN): freeze
+(`checking_in`) → write barrier (rebuild the package until `MAX(seq)` of the outbox is unchanged
+across the read; 3 tries → `writes_during_checkin`) → atomic write to
+`server/data/return/<meet_id>.json` (+ best-effort copy on the STICKITSNAP stick via new
+`snapshot.getSnapshotDirIfAvailable()`) → outbox cleared → archive (`checked_in`/`handed_back`,
+Control token rotated on check-in) → one L-3 journal line. Any failure before the archive reverts
+to `adopted`. `GET /return-file` (Control PIN; available while archived, **never auto-deleted**),
+`GET /return-status` (public LAN; probes the cloud's public adoption endpoint — the H-1 probe —
+→ `received | pending | unlocked | unknown`; 5 s cache, 'unknown' never cached; a cloud
+re-adopted AFTER our export counts as received), `POST /return-file/send` (Control PIN; 410/409
+→ re-probe → `already_received`; 401 → `stale_return_file`). `GET /api/venue/status` gains
+`return_file: {available, mode, exported_at}`; `clearOutboxForNewAdoption` clears the
+`venue_return_*` settings (not the files).
+
+**Client.** `api.js`: `saveFile(fileName, getBlob)` opens the File System Access picker FIRST
+(so the USB drive can be chosen directly on https and a cancel never triggers the side effect —
+e.g. locking the meet), else a plain download (the venue is http → Downloads folder);
+`fetchAuthedBlob` (optional explicit bearer). **MeetDetail:** `ReleaseDialog` with the
+recommended, default-on "Also save a backup adoption file" checkbox (release → code → file →
+note in the code modal, incl. the "skipped/failed — NOT locked" outcomes); three-way banner
+(amber `adoption-banner-file` "adoption file created, waiting for the venue" with *Download
+adoption file again* / *Undo & unlock* / *Import venue return file…*; the existing adopted banner
++ import link; released); More ▾ (now w-64) gains *Download adoption file*, *Download adoption
+file again*, *Import venue return file…*; Undo Release calls `/api/adoption/:id/unrelease`.
+**`ReturnImportDialog.jsx`** (new, shared): meet/time/recorded-mode/contents, "Apply as" radio
+preset from the file with an amber note when changed, wrong-meet block, per-code error copy.
+**AdminAdoption:** header *Import venue return file…* (routes by the file's meet), "Locked —
+file, waiting for venue" badge, per-row import shortcut. **VenueHome:** Check In / Hand Back
+first try online; on `flush_failed/offline` or `cloud_unreachable` an amber box offers **Return
+via file instead** (`return-file-offer`, same Control token — nothing rotated yet); a small "No
+internet? Return via file instead…" link opens the two-button chooser any time; archived state
+shows a **Return file** card (`return-file-card`): mode + time, cloud line from `/return-status`
+(30 s poll), **Download return file** (PIN → `saveFile`) and **Send to cloud now**.
+
+**Docs.** `docs/SYNC_PROTOCOL.md` §3 (file lock, first-to-talk-wins, `adopted_via`,
+`last_sync_at` reset), §4 endpoint table + new §4.4 Return package (shape, venue order, the
+pre-write check table), §6/§9 (no-bump rationale for additive messages). `docs/VENUE_OPS.md`
+new "Offline adoption file + offline return" section (the lossy export/import/force-unlock
+procedure is now last resort). Help `venue-server.md` (adoption checkbox / stale file / end-of-day
+file path) + `meets-edit.md` More-menu line; guide PDFs regenerated (66 topics, 157 pages). Printed
+material: adoption sheet plan-B callout (drive into the SCORING LAPTOP), end-of-day sheet steps
+5–7 "No internet? Return via file", pre-event checklist item; `server/public/docs/venue/*.pdf`
+regenerated.
+
+**Verification.** New `harness/tests/v250.test.js` (cloud + two venues; sections A–I HTTP:
+file lock keeps the code + locks + `adopted_via`; code over a never-synced file lock re-mints
+and the stale file's venue goes terminal on its first push; undo of a file lock; code/undo/
+re-issue refused once synced; legacy export path + re-mint; offline return end-to-end with the
+cloud STOPPED (online check-in 502 offline → return file → freeze 423 → stick copy → download →
+status unknown/pending → wrong-meet/tampered/protocol/adoption-file/bad-mode refusals leave
+cloud checksums unchanged → import → cloud == venue incl. the offline run → checked_in +
+editable → audit → second import 410 → status received → send harmless); handback delivered by
+the venue's own send + mode override on upload; stale return file 401 pre-write; force-unlock
+while pending → 409 both ways, file kept. Playwright J/K: release dialog checkbox → lock → code
+modal file note → amber banner → More menu items; venue archived card + received line; offline
+Check In → "Return via file instead" → archived. **140 checks green.** `verify_v16.js` 123/123.
+`step1` `EXEMPT_PREFIXES` + `zz-gates` `V2_ONLY_KEYS` updated. **Full harness: 711 green** (review 56 +
+review-ui 6 + step0 87 + step1 52 + step2 58 + step3 55 + step4 52 + step5 40 + step6 30 + v240 104 +
+v250 140 + release-gates 31; step4 crashed once in the all-suites run when its cloud instance
+restarted under load — the known timing flake from v2.1.00 — and passed clean alone).
+**Cloud ultra review (09-06-26) — passed, ZERO findings** on the source-only diff (19 files /
+1,737 insertions; run from the temporary branch `review/v2.5.00-source` with docs, PDFs, build
+assets, harness, and version bumps parked in a git stash — the same source-only recipe as prior
+releases).
+Harness gotcha: 127.0.0.1 is a secure context, so headless Chromium opens the native save
+dialog and hangs — the suite stubs `showSaveFilePicker` in its browser context.
+
+**Files created:** `server/sync/cloudApply.js`, `server/sync/adoptionFile.js`,
+`server/sync/returnImport.js`, `server/routes/adoption.js`,
+`client/src/components/ReturnImportDialog.jsx`, `harness/tests/v250.test.js`
+**Files modified:** `server/sync/{package,adoptionImport,protocol}.js`,
+`server/routes/{sync,meets,venue,admin}.js`, `server/venue/snapshot.js`, `server/db/schema.js`,
+`server/index.js`, `client/src/utils/api.js`,
+`client/src/pages/{MeetDetail.jsx,admin/AdminAdoption.jsx,venue/VenueHome.jsx}`,
+`client/src/help/topics/{venue-server,meets-edit}.md`, `docs/{SYNC_PROTOCOL,VENUE_OPS}.md`,
+`server/scripts/venue_cards/build_venue_docs.js`, `harness/tests/{step1,zz-gates}.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 
