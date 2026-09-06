@@ -101,7 +101,11 @@ PHASE=fetch
 write_status running fetch "Looking up the latest release"
 if curl -fsSL -H 'User-Agent: stickit-venue' \
      "https://api.github.com/repos/$REPO/releases/latest" -o "$TMP/release.json"; then
-  TAG=$(grep -m1 '"tag_name"' "$TMP/release.json" | cut -d'"' -f4 || true)
+  # v2.5.02: the API answers compact (one-line) JSON as often as pretty-printed;
+  # the old `grep -m1 '"tag_name"' | cut -d'"' -f4` then returned the release
+  # URL (4th quoted field of the whole document) as the "tag" — a 404 tarball
+  # and a one-second silent death. That was David's first press on 09-06-26.
+  TAG=$(grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' "$TMP/release.json" | head -1 | sed 's/.*"\([^"]*\)"$/\1/' || true)
 else
   echo "GitHub API lookup failed (offline, or the unauthenticated 60/hour limit) — trying the release page"
 fi

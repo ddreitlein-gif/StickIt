@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.01
+**Current version:** v2.5.02
 
 ## Commands
 
@@ -234,6 +234,33 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
+## v2.5.02 Feature Notes
+
+### Release Tag Parse Broke on Compact JSON (v2.5.02, hotfix)
+
+Caught minutes after v2.5.01 by the new update-status reporting, on the first real button-path
+run from the Mac (`POST /api/venue/update`, no PIN): *failed | fetch | Could not determine the
+latest release*, in one second, with both `curl`s returning 200/302. The debug run showed why:
+the GitHub API answers `releases/latest` with **compact one-line JSON** (2,539 bytes, no
+newlines) as often as pretty-printed, and the script's `grep -m1 '"tag_name"' | cut -d'"' -f4`
+then yields the 4th quoted field of the whole document — the release **URL**. The v2.5.01
+script's tag validation refused it cleanly; **the pre-v2.5.01 script had the same parse and no
+validation**, took the URL as the tag, got a 404 on the tarball, and died silently — which is
+exactly David's "first press did nothing" on 09-06-26 (and the 09-03-26 SSH updates only ever
+worked because those responses happened to be pretty-printed). Fix: `grep -o
+'"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed …` — shape-independent, no new
+dependency; verified on compact, pretty, and the live response (compact from the Mac too). The
+v2.5.01 image build was stopped before it could bake the bad parse in; the published Pi image is
+v2.5.02. Test Pi: fixed script installed by hand, then the button path from the Mac took it
+v2.5.01 → v2.5.02 (detached unit, progress polled: fetch → download → install → restart → done),
+and a second button run reinstalled v2.5.02 with the tree's own script.
+
+**Files modified:** `server/scripts/build_pi_image/update-stickit.sh`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `server/public/docs/venue/*.pdf` (regenerated footer), `CLAUDE.md`
+
+---
+
 ## v2.5.01 Feature Notes
 
 ### Update Button Killed Its Own Script; Update Needs No PIN; Live Update Progress (v2.5.01, hotfix)
@@ -256,10 +283,10 @@ detects `stickit-venue.service` in `/proc/self/cgroup` and re-launches itself wi
 sudoers entry — unchanged), then returns. Verified on the test Pi by moving a shell into the
 service cgroup and running the script: the old script died at the stop; the new one completes.
 
-**Root cause (2) — silent first failure.** The script ran with `stdio: 'ignore'`, wrote nothing
-anywhere, and the first press exited within a second (the sudo session closed at 07:29:52;
-`curl` of the GitHub API is the only step that fast — an unauthenticated-API hiccup or the
-60/hour limit). The client showed an alert and re-fetched the card. Now the script writes
+**Root cause (2) — silent first failure.** The script ran with `stdio: 'ignore'` and wrote
+nothing anywhere; the first press exited within a second (sudo session closed at 07:29:52).
+The v2.5.01 status reporting caught it on the very first button run after release — see the
+v2.5.02 notes (the GitHub API's compact JSON defeated the `grep | cut` tag parse). Now the script writes
 `/opt/stickit/data/update-status.json` (`state: running|done|failed`, `step`, `message`, `tag`,
 `at`) at every step and a per-run `/opt/stickit/data/update.log`; new public LAN endpoint
 `GET /api/venue/update-status` returns it (+ the last 40 log lines on failure; a `launched`
