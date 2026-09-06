@@ -75,7 +75,7 @@ Then create the zip directly from the `StickIt/` parent (never use a staging fol
 ```bash
 cd /Users/daviddreitlein/Desktop/StickIt
 zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
-  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*" "harness/*" "* [0-9].*"
+  --exclude "*/node_modules/*" "*/.claude/*" "*/data/*" "client/dist/*" "harness/*" "* [0-9].*" "*/.work/*"
 
 # Why each exclusion:
 #   */node_modules/*  → installed deps (~100MB)
@@ -86,6 +86,9 @@ zip -r "/tmp/StickIt_X_X_XX.zip" server/ client/ CLAUDE.md \
 #   "* [0-9].*"       → macOS/iCloud duplicate copies ("index-abc 3.css", "foo 2.woff2") that
 #                       appear untracked in server/public/assets + client/dist (gitignored via
 #                       the same pattern, but zip would sweep them in — v2.3.00 hit 9.2MB)
+#   */.work/*         → the Pi image build's scratch tree (server/scripts/build_pi_image/.work:
+#                       pi-gen checkout + the ~560MB .img.xz). Gitignored, but zip swept it in —
+#                       v2.5.00's first zip came out at 550MB before this exclusion was added
 
 # Verify root contents — must ONLY show server, client, CLAUDE.md
 unzip -l /tmp/StickIt_X_X_XX.zip | awk '{print $4}' | awk -F'/' '{print $1}' | sort -u
