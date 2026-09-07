@@ -819,7 +819,12 @@ router.get('/update-check', async (req, res) => {
     const apiUrl = process.env.STICKIT_UPDATE_URL || `https://api.github.com/repos/${repo}/releases/latest`;
     let latest = null;
     try {
-      const r = await fetch(apiUrl, { headers: { 'User-Agent': 'stickit-venue' } });
+      // v2.5.05: a hard deadline on the GitHub call. Node's fetch has no default
+      // one (undici waits up to 300 s for headers), so on a flaky venue uplink
+      // every home-screen load could leave a request hanging for minutes and
+      // pile up idle connections on the Pi. A slow link now simply reports
+      // "could not check" (internet:false) after 8 s.
+      const r = await fetch(apiUrl, { headers: { 'User-Agent': 'stickit-venue' }, signal: AbortSignal.timeout(8000) });
       if (r.ok) {
         const data = await r.json();
         latest = data.tag_name || null;

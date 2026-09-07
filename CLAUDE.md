@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.04
+**Current version:** v2.5.05
 
 ## Commands
 
@@ -234,6 +234,28 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
+## v2.5.05 Feature Notes
+
+### Update Check Gets a Deadline (v2.5.05, hotfix)
+
+Found during the 09-07-26 test review, fixed at David's request: the venue home screen's
+`GET /api/venue/update-check` called the GitHub releases API with a plain `fetch()` and no
+deadline. Node's fetch has none by default (undici waits up to 300 s for response headers), so
+on a flaky venue uplink every home-screen load could leave one request hanging for minutes and
+pile up idle connections on the Pi. Never visible — the menu renders before the check answers
+(the Update card just appears late or not at all) and nothing in scoring or sync touches this
+path. Now `signal: AbortSignal.timeout(8000)`: a slow link reports `internet:false` after 8 s,
+exactly the existing offline outcome. Server-only; no schema, scoring, or sync-protocol change.
+Verified on a scratch venue server with `STICKIT_UPDATE_URL` pointed at a local endpoint that
+never answers: the check returned in ~8 s with `internet:false`, `update_available:false`, and
+the server stayed responsive; harness step6 (the update-check/update tests) green.
+
+**Files modified:** `server/routes/venue.js`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `server/public/docs/venue/*.pdf` (regenerated footer), `CLAUDE.md`
+
+---
+
 ## v2.5.04 Feature Notes
 
 ### Dual Run Order Follows the Pairing Numbers; Venue PINs Last One Day (v2.5.04)
@@ -300,8 +322,7 @@ minutes-long page loads at the test were iOS mDNS resolution of `stickit.local` 
 <60 ms); later in the day the name resolved normally. **David's ruling: `stickit.local` stays
 the primary address everywhere — the numeric address is only the documented BACKUP** for a
 slow first load (help `venue-tablets.md` + tablets run sheet step 1; he will cover it in the
-training video). The `/api/venue/update-check` GitHub fetch has no timeout (undici default
-300 s) — latent, does not block rendering.
+training video). The `/api/venue/update-check` GitHub fetch had no timeout — fixed in v2.5.05.
 
 **Docs.** Help `events-dual.md` new "Run order and pairing numbers" section; `venue-server.md`
 "PINs last one calendar day" paragraph; `venue-tablets.md` "If a tablet's first load is slow"
