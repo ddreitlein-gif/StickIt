@@ -234,10 +234,14 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
         .filter(m => m.status === 'pending'
                   && m.registration_id_blue && m.registration_id_red
                   && !m.is_bye)
-        // Earliest round first (bracket_round descending = earlier rounds first
-        // in this schema where higher round = earlier -- match the existing UI's
-        // activeRoundNum logic by sorting high-round then low-position).
-        .sort((a, b) => (b.bracket_round - a.bracket_round) || (a.bracket_position - b.bracket_position))
+        // v2.5.04: RUN ORDER = the server's pairing number (qualifying rounds
+        // top-down, semifinal round last-to-first with the 5-8 semis before the
+        // 1-4 semis, then 7/8 -> 5/6 -> 3/4 -> championship final). The old
+        // round/position sort offered the championship final BEFORE the 3/4,
+        // 5/6 and 7/8 finals (seen at the 09-07-26 test). Round/position stays
+        // only as the fallback for a server that sends no pairing_number.
+        .sort((a, b) => ((a.pairing_number ?? 1e9) - (b.pairing_number ?? 1e9))
+                     || (b.bracket_round - a.bracket_round) || (a.bracket_position - b.bracket_position))
       setNextMatch(ready[0] || null)
     } catch {}
   }

@@ -48,7 +48,7 @@ async function main() {
 
     // ---- PINs (R3) -------------------------------------------------------
     let r = await vApi.get('/api/venue/pins/status');
-    c.deepEq(r.data, { control_set: false, crew_set: false }, 'PINs unset after adoption');
+    c.ok(r.data.control_set === false && r.data.crew_set === false && r.data.expired === false, 'PINs unset after adoption');   // v2.5.04: + expired/set_date/today fields
     r = await vApi.post('/api/venue/pins', { control_pin: '12', crew_pin: '3456' });
     c.eq(r.status, 400, 'non-4-digit PIN rejected');
     r = await vApi.post('/api/venue/pins', { control_pin: '4321', crew_pin: '1111' });

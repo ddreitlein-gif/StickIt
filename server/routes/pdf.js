@@ -16,6 +16,7 @@ const PDFDocument = require('pdfkit');
 const { normalizeGender } = require('../utils/gender');
 const { computeDualFfsp } = require('../dual/ffsp');
 const { rankDualPlacements } = require('../dual/placement_ranking');
+const { pairingNumbers: pairingNumbersForRun } = require('../dual/runOrder');
 
 // Logo paths
 const USSS_LOGO = path.join(__dirname, '..', 'public', 'logos', 'usss.png');
@@ -2796,37 +2797,12 @@ function consolSemisInOrder(consolMatches) {
 }
 
 function buildBracketPairings(event, mainMatches, consolMatches, qualRounds, finalsRounds, runoffOption) {
+  // v2.5.04: numbering comes from the shared run-order module (server/dual/
+  // runOrder.js) so the printed bracket, the tablets, and the Scoring tab can
+  // never disagree: qualifying rounds top to bottom, semifinal round last to
+  // first (5–8 semis before 1–4 semis), then 7/8 → 5/6 → 3/4 → championship.
   const genderPrefix = normalizeGender(event.gender) === 'F' ? 'W' : 'M';
-  const pairingNums = new Map();
-  let pNum = 0;
-  function addMainRoundPairings(round) {
-    const rm = mainMatches
-      .filter(m => m.bracket_round === round && !m.is_bye)
-      .sort((a, b) => a.bracket_position - b.bracket_position);
-    for (const m of rm) { pNum++; pairingNums.set(m.id, pNum); }
-  }
-  // F-2: assign consolation pairing numbers by (round, position) so the new
-  // 5-8 mini-bracket (semis + 5/6 + 7/8 finals) and legacy structures both work.
-  const addSmall = (round, pos) => {
-    const m = consolMatches.find(s => s.bracket_round === round && s.bracket_position === pos && !s.is_bye);
-    if (m) { pNum++; pairingNums.set(m.id, pNum); }
-  };
-  for (const r of qualRounds) addMainRoundPairings(r);
-  if (runoffOption === 'runoff_to_8th' && finalsRounds.includes(3)) {
-    addMainRoundPairings(3);   // QF
-    addSmall(2, 3);            // consolation semi A (legacy: terminal 5/6)
-    addSmall(2, 4);            // consolation semi B (legacy: terminal 7/8)
-    addMainRoundPairings(2);   // SF
-    addSmall(1, 4);            // 7/8 final (new structure only)
-    addSmall(1, 3);            // 5/6 final (new structure only)
-    addSmall(1, 2);            // 3/4 final
-    addMainRoundPairings(1);   // Championship final
-  } else {
-    for (const r of finalsRounds) {
-      addMainRoundPairings(r);
-      if (r === 2) addSmall(1, 2); // 3/4 final
-    }
-  }
+  const pairingNums = pairingNumbersForRun([...mainMatches, ...consolMatches], runoffOption);
   function pairingLabel(match) {
     const n = pairingNums.get(match.id);
     if (n == null) return null;

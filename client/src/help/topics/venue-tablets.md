@@ -2,6 +2,8 @@
 
 At a venue every tablet opens the same address, `http://stickit.local:3001`, and picks a role from the **venue menu**. Nobody types a per-judge URL, and every role screen follows the competition by itself: when a run starts in the other event, every tablet, the Scoreboard and the livestream overlay switch on their own.
 
+**If a tablet's first load is slow.** Once in a while a tablet's very first visit to `stickit.local` takes a few minutes: the name is resolved over Wi-Fi multicast (Bonjour), and some Wi-Fi setups deliver those answers slowly the first time. The box is not the problem — after that first load the name works normally. Rather than wait, type the box's **numeric address** from **Connection Info** on the venue menu (for example `http://192.168.2.93:3001`); it opens at once and everything works the same. `stickit.local` stays the normal address to teach and print — the numeric one is the backup.
+
 ### Picking a role
 
 | Tile | PIN | What it opens |

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.03
+**Current version:** v2.5.04
 
 ## Commands
 
@@ -231,6 +231,102 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.04 Feature Notes
+
+### Dual Run Order Follows the Pairing Numbers; Venue PINs Last One Day (v2.5.04)
+
+Two items from David's first full test event on the Pi (09-07-26, "REMOTE SERVER TEST",
+Telluride — meet adopted, scored, and checked in cleanly; the Pi's service journal for the
+whole window had zero errors). No scoring math, no schema change, no sync-protocol change.
+
+**Dual run order — the bug.** The pairing numbers were already right: the server numbered a
+runoff-to-8th finals block QF → both 5–8 consolation semis → both 1–4 semis → 7/8 → 5/6 →
+3/4 → 1/2, and the bracket PDF used the same numbering. But the two "what runs next" pickers
+ignored them: the HJ tablet's *Next Pairing* sorted ready matches by `bracket_round DESC,
+bracket_position`, which offers the championship final (round 1 pos 1) BEFORE the 3/4, 5/6
+and 7/8 finals, and the Scoring tab's dual panel played every main-bracket round to the end
+before touching any consolation match. The Pi's database shows today's men's dual ran exactly
+that wrong order (semis 1–4, then 5–8 semis, then the final, then 3/4, 5/6, 7/8).
+
+**The rule (Winfree "Championship Duals Run-order", confirmed against the RMF Divisional
+Champs at Telluride result sheets David supplied):** rounds before the semifinals run top to
+bottom; the **semifinal round runs last to first** (5.4, 5.3, 5.2, 5.1 — both 5–8 semis before
+both 1–4 semis, each pair bottom-up); the **finals run lowest places first** — 7/8, 5/6, 3/4,
+then the 1/2 championship with the highest pairing number, ending the day. Men and women are
+numbered separately (Winfree interleaves genders; StickIt does not).
+
+- **`server/dual/runOrder.js` (new)** — single source of truth: `runOrder(matches,
+  runoffOption)` → non-bye matches in run order; `pairingNumbers()` → Map id→n;
+  `formatPairingLabel()`. `dual.js` `computePairingNumbers` delegates to it (the only
+  numbering CHANGE vs v2.5.03 is the semifinal round: pos 2 before pos 1, cons semi pos 4
+  before pos 3); `pdf.js` `buildBracketPairings` delegates to it (signature unchanged, both
+  bracket PDFs); `viewer.js` `/results` dual rows gain `is_small_final`, `pairing_number`,
+  `pairing_label` (additive — the iOS app ignores unknown keys and can adopt the order later).
+- **`GET /dual` and `/active-match`** carry a numeric **`pairing_number`** beside
+  `pairing_label`.
+- **HJ tablet** `loadNextMatch` sorts ready matches by `pairing_number` (round/position kept
+  only as the fallback for a server without the field). **Scoring tab** dual panel: the
+  current block is the round (main or consolation) of the first PLAYABLE open match in run
+  order — anchored on playable so a 5–8 semi that can never fill (byes in a 6-athlete bracket)
+  cannot pin the console on an empty block; the block's matches list in run order; the active
+  match is looked up in the whole bracket. Labels: "Small Finals (7/8 · 5/6 · 3/4)" when the
+  round-1 consolation block has more than the 3/4, "5th -- 8th Place Semifinals".
+
+**Venue PINs last one calendar day** (David's ruling: set PINs every competition day so a box
+that quietly keeps last weekend's PINs never confuses the crew; the 09-07-26 test box still
+carried the 09-03 PINs). `venue.js`: `venue_pins_set_date` (box-local date; the Pi image runs
+in the venue zone) stored beside the hashes; `pinsExpired()` = hashes present and date ≠ today
+(a pre-v2.5.04 box with PINs but no date expires once, on upgrade). `GET /pins/status` adds
+`expired`, `set_date`, `today` (`control_set`/`crew_set` keep meaning "hashes exist" — harness
+step3 assertion loosened accordingly). `POST /verify-pin` → 400 `pins_expired` for either PIN.
+`POST /pins` needs no Control token while expired (first-set rules; journal line "PINs set for
+a new day"), rotates the Control session token as always (which logs yesterday's Scoring
+Computer out — it just asks for the new PIN). The Control token is NOT rejected by expiry
+alone (remembered HJ / judge / timekeeper tablets keep working; only picking a role asks a
+PIN). `VenueHome.jsx`: the set-PINs card reappears as "New day — set today's two PINs"
+(`data-testid="pin-setup-card"`), PIN-gated tiles / Hand Back / Check In / return-file /
+abandon show "Set today's PINs first" and scroll to the card instead of opening (the pre-PIN
+pass-through `fn(null)` stays only for a never-set box).
+
+**Also found, not changed:** deleting a NON-adopted meet on the Pi while a meet is adopted is
+unsafe — the capture hook stamps every captured row with the adopted meet id and the cloud's
+`changeInMeetScope` refuses out-of-scope rows (worker `stuck`). Previous meets are never
+removed from the Pi (cleanup at adoption is a candidate for a later release). The iPads'
+minutes-long page loads at the test were iOS mDNS resolution of `stickit.local` over Wi-Fi
+(the numeric `http://192.168.2.93:3001/` opened instantly; the Pi answered every request in
+<60 ms); later in the day the name resolved normally. **David's ruling: `stickit.local` stays
+the primary address everywhere — the numeric address is only the documented BACKUP** for a
+slow first load (help `venue-tablets.md` + tablets run sheet step 1; he will cover it in the
+training video). The `/api/venue/update-check` GitHub fetch has no timeout (undici default
+300 s) — latent, does not block rendering.
+
+**Docs.** Help `events-dual.md` new "Run order and pairing numbers" section; `venue-server.md`
+"PINs last one calendar day" paragraph; `venue-tablets.md` "If a tablet's first load is slow"
+(numeric address as the backup); guide PDFs regenerated (66 topics, 159 pages); adoption run
+sheet step 3 notes the daily PINs, tablets run sheet step 1 the numeric fallback;
+`server/public/docs/venue/*.pdf` regenerated.
+
+**Verification.** Scratch two-server test (48 checks): 8/16/6/4-athlete brackets × runoff to
+8th / to 4th / none — pairing numbers gapless and in the Winfree order, byes unnumbered, a
+tablet-style "first ready match by pairing_number" play-through walks every bracket in that
+order with the championship final last (6 athletes: the unfillable 5–8 semis are skipped and
+3/4 still runs between the semis and the final), `/active-match` carries the number, viewer rows
+carry `pairing_number` in the same order with existing fields intact, dual-bracket /
+bracket-keeper / dual-results PDFs render; PIN expiry: current → rolled date → both PINs 400
+`pins_expired` → new PINs without a token → old token 401, new token works → no-date upgrade
+box expires once; no server-side errors. `verify_v16.js` passed. Harness: see chat.
+
+**Files created:** `server/dual/runOrder.js`
+**Files modified:** `server/routes/{dual,pdf,viewer,venue}.js`,
+`client/src/pages/{HeadJudgeTablet,EventDetail}.jsx`, `client/src/pages/venue/VenueHome.jsx`,
+`client/src/help/topics/{events-dual,venue-server,venue-tablets}.md`,
+`server/scripts/venue_cards/build_venue_docs.js`, `harness/tests/step3.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

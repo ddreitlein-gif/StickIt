@@ -2451,8 +2451,8 @@ function DualScoringPanel({ event, registrations }) {
 
   const roundLabel = (n, isConsol = false) => {
     if (isConsol) {
-      if (n === 1) return 'Small Final'
-      if (n === 2) return '5th -- 8th Place'
+      if (n === 1) return (consolRounds[1] || []).length > 1 ? 'Small Finals (7/8 · 5/6 · 3/4)' : 'Small Final'
+      if (n === 2) return '5th -- 8th Place Semifinals'
       return `Consolation Round ${n}`
     }
     if (n === 1) return 'Big Final'
@@ -2461,34 +2461,29 @@ function DualScoringPanel({ event, registrations }) {
     return `Round of ${Math.pow(2, n)}`
   }
 
-  // Determine the current active round: the highest round number that still has pending matches
-  const allMainRoundNums = roundNums
-  let currentRound = null
-  for (const rn of allMainRoundNums) {
-    const matches = mainRounds[rn] || []
-    if (matches.some(m => m.status !== 'complete' && !m.is_bye)) {
-      currentRound = rn
-      break
-    }
-  }
-
-  // If all main rounds done, check consolation
-  let currentConsolRound = null
-  if (!currentRound) {
-    for (const rn of consolRoundNums) {
-      const matches = consolRounds[rn] || []
-      if (matches.some(m => m.status !== 'complete' && !m.is_bye)) {
-        currentConsolRound = rn
-        break
-      }
-    }
-  }
+  // v2.5.04: the day runs in PAIRING-NUMBER order (server/dual/runOrder.js):
+  // qualifying rounds top to bottom, the semifinal round last to first (5-8
+  // consolation semis before the 1-4 semis), then 7/8 -> 5/6 -> 3/4 ->
+  // championship final. The current block is the round (main or consolation)
+  // of the first unfinished match in that order. Previously every main round
+  // ran to the end first, so the championship final came up before the 3/4,
+  // 5/6 and 7/8 finals (seen at the 09-07-26 test meet).
+  const byRunOrder = (a, b) => ((a.pairing_number ?? 1e9) - (b.pairing_number ?? 1e9))
+    || (b.bracket_round - a.bracket_round) || (a.bracket_position - b.bracket_position)
+  // The block is anchored on the first PLAYABLE open match (both sides known);
+  // a consolation match that can never fill (byes in a 6-athlete 5-8 bracket)
+  // must not pin the console on an empty block while the semis wait behind it.
+  const runOrdered = [...bracket].filter(m => !m.is_bye).sort(byRunOrder)
+  const playableOpen = m => m.registration_id_blue && m.registration_id_red && m.status !== 'complete'
+  const firstOpen = runOrdered.find(playableOpen) || runOrdered.find(m => m.status !== 'complete')
+  const currentRound = firstOpen && !firstOpen.is_small_final ? firstOpen.bracket_round : null
+  const currentConsolRound = firstOpen && firstOpen.is_small_final ? firstOpen.bracket_round : null
 
   const isConsol = !currentRound && currentConsolRound !== null
   const activeRoundNum = currentRound || currentConsolRound
-  const activeRoundMatches = isConsol
-    ? (consolRounds[activeRoundNum] || []).sort((a, b) => a.bracket_position - b.bracket_position)
-    : (mainRounds[activeRoundNum] || []).sort((a, b) => a.bracket_position - b.bracket_position)
+  const activeRoundMatches = (isConsol
+    ? (consolRounds[activeRoundNum] || [])
+    : (mainRounds[activeRoundNum] || [])).slice().sort(byRunOrder)
 
   // Filter to playable matches (both athletes present, not bye, not complete)
   const pendingMatches = activeRoundMatches.filter(m =>
@@ -2496,8 +2491,9 @@ function DualScoringPanel({ event, registrations }) {
   )
   const completedMatches = activeRoundMatches.filter(m => m.status === 'complete' || m.is_bye)
 
-  // Active match (currently scoring)
-  const activeMatch = activeMatchId ? activeRoundMatches.find(m => m.id === activeMatchId) : null
+  // Active match (currently scoring) -- looked up in the whole bracket so a
+  // match started out of block order still shows as "Currently Scoring".
+  const activeMatch = activeMatchId ? bracket.find(m => m.id === activeMatchId) : null
 
   // Up next (excluding active match)
   const upNextMatches = pendingMatches.filter(m => m.id !== activeMatchId)

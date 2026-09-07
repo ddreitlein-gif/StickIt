@@ -10,6 +10,7 @@ const {
   mulberry32,
 } = require('../dual/placement');
 const { normalizeGender } = require('../utils/gender');
+const runOrderLib = require('../dual/runOrder');
 const { requireUnlocked } = require('../middleware/lockCheck');
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
@@ -342,9 +343,10 @@ async function clearDualBracketReviewStatus(eventId, app) {
 // ---------------------------------------------------------------------------
 /**
  * Compute a Map of match.id → pairing number for every non-bye match in the
- * event's bracket.  Numbering follows actual run order: qualifying rounds
- * first (top-to-bottom, left-to-right), then finals interleaved with
- * consolation matches per run-order rules.
+ * event's bracket.  v2.5.04: the order itself lives in server/dual/runOrder.js
+ * (shared with the bracket PDFs and the Viewer API): qualifying rounds top to
+ * bottom, the semifinal round LAST to FIRST (5–8 semis before 1–4 semis), then
+ * 7/8 → 5/6 → 3/4 → championship final.
  *
  * Returns { pairingNums: Map<id, number>, genderPrefix: 'M'|'W' }.
  */
@@ -359,64 +361,13 @@ async function computePairingNumbers(eventId) {
        ORDER BY bracket_round DESC, bracket_position`,
     [eventId]
   );
-
-  const mainMatches  = allMatches.filter(m => !m.is_small_final);
-  const consolMatches = allMatches
-    .filter(m => m.is_small_final)
-    .sort((a, b) => b.bracket_round - a.bracket_round || a.bracket_position - b.bracket_position);
-
-  if (!mainMatches.length) return { pairingNums: new Map(), genderPrefix };
-
-  const totalRound = Math.max(...mainMatches.map(m => m.bracket_round));
-  const finalsRound = (runoffOption === 'runoff_to_8th' && totalRound >= 3) ? 3 : 2;
-
-  const qualRounds = [];
-  for (let r = totalRound; r > finalsRound; r--) qualRounds.push(r);
-
-  const pairingNums = new Map();
-  let num = 0;
-
-  function addMainRound(round) {
-    mainMatches
-      .filter(m => m.bracket_round === round && !m.is_bye)
-      .sort((a, b) => a.bracket_position - b.bracket_position)
-      .forEach(m => { num++; pairingNums.set(m.id, num); });
-  }
-
-  // Look up a small-final by (round, position) and assign the next pairing number.
-  const addSmall = (round, pos) => {
-    const m = consolMatches.find(s => s.bracket_round === round && s.bracket_position === pos && !s.is_bye);
-    if (m) { num++; pairingNums.set(m.id, num); }
-  };
-
-  // Qualifying rounds
-  for (const r of qualRounds) addMainRound(r);
-
-  // Finals + consolation interleaved in run order
-  if (runoffOption === 'runoff_to_8th' && totalRound >= 3) {
-    addMainRound(3);            // QF
-    addSmall(2, 3);            // consolation semi A (F-2; legacy: terminal 5/6)
-    addSmall(2, 4);            // consolation semi B (F-2; legacy: terminal 7/8)
-    addMainRound(2);            // SF
-    addSmall(1, 4);            // 7/8 final (F-2 new structure only)
-    addSmall(1, 3);            // 5/6 final (F-2 new structure only)
-    addSmall(1, 2);            // 3/4 final
-    addMainRound(1);            // Championship final
-  } else {
-    addMainRound(2);            // SF
-    addSmall(1, 2);            // 3/4 final
-    addMainRound(1);            // Final
-  }
-
-  return { pairingNums, genderPrefix };
+  return { pairingNums: runOrderLib.pairingNumbers(allMatches, runoffOption), genderPrefix };
 }
 
 /**
  * Format a pairing label string, e.g. "W-01" or "M-17".
  */
-function formatPairingLabel(genderPrefix, num) {
-  return `${genderPrefix}-${String(num).padStart(2, '0')}`;
-}
+const formatPairingLabel = runOrderLib.formatPairingLabel;
 
 // ---------------------------------------------------------------------------
 // Legacy helpers (kept for backwards compatibility with older callers)
@@ -696,6 +647,7 @@ router.get('/', async (req, res) => {
         ...m,
         blue_total,
         red_total,
+        pairing_number: pNum ?? null,   // v2.5.04: run order — clients sort "next match" by this
         pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null,
       };
     });
@@ -1624,7 +1576,7 @@ router.get('/active-match', async (req, res) => {
     // v2.1.00 -- carry the Advanced meet settings so the dual tablets can
     // hide the NJ panel / Air Tied button when the rules are disabled (10a/10b).
     const settings = await getDualMeetSettings(req.params.eventId);
-    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

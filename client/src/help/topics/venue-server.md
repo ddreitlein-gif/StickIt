@@ -23,6 +23,8 @@ The venue server is a small computer (a Raspberry Pi in the kit, or a Mac in an 
 
 The Scoreboard needs no PIN. Write both PINs on the adoption run sheet.
 
+**PINs last one calendar day.** They are good only on the day they were set (the box's local date). The next morning the venue menu shows the *New day — set today's two PINs* card, and the Head Judge, Scoring Computer, Judge and Timekeeper tiles wait until it is filled in; yesterday's PINs are refused. Setting the new day's PINs needs no old PIN, and it logs out yesterday's Scoring Computer session (it simply asks for the new Control PIN). Tablets that remembered a judge seat, the Head Judge or the Timekeeper keep working — they only ask a PIN when a role is picked.
+
 ### End of day
 
 Both actions live on the venue menu, reached from the Scoring Computer's sidebar link **Venue Menu** (or by pressing **Change role** on any tablet). Both need the Control PIN and verify every score against stickitski.com before anything unlocks.

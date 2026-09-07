@@ -14,7 +14,7 @@ import { PinModal, SeatPicker } from './venueWidgets'
 
 const tileStyle = 'w-full text-left p-5 rounded-2xl border border-slate-700 bg-slate-800/60 hover:bg-slate-700/60 transition-colors'
 
-function PinSetupCard({ onDone }) {
+function PinSetupCard({ onDone, expired }) {
   const [control, setControl] = useState('')
   const [crew, setCrew] = useState('')
   const [err, setErr] = useState('')
@@ -26,9 +26,10 @@ function PinSetupCard({ onDone }) {
     } catch (e) { setErr(e.message) }
   }
   return (
-    <div className="card border-amber-800 bg-amber-900/10 mb-6">
-      <h3 className="font-display text-xl text-amber-300 mb-2">Set the two PINs</h3>
+    <div className="card border-amber-800 bg-amber-900/10 mb-6" data-testid="pin-setup-card">
+      <h3 className="font-display text-xl text-amber-300 mb-2">{expired ? "New day — set today's two PINs" : 'Set the two PINs'}</h3>
       <p className="text-sm text-slate-400 mb-3">
+        {expired && <>PINs are good for one calendar day; yesterday's have expired. </>}
         The <b>Control PIN</b> opens the Scoring Computer and Head Judge. The <b>Crew PIN</b> opens Judge seats and the Timekeeper.
         Write both on the run sheet.
       </p>
@@ -60,6 +61,7 @@ export default function VenueHome() {
   const [remembered] = useState(() => getRoleMemory())
   const [status, setStatus] = useState(null)
   const [pins, setPins] = useState(null)
+  const [pinNotice, setPinNotice] = useState(false)   // v2.5.04: "set today's PINs first" hint
   const [code, setCode] = useState('')
   const [adoptErr, setAdoptErr] = useState('')
   const [adoptBusy, setAdoptBusy] = useState(false)
@@ -98,7 +100,17 @@ export default function VenueHome() {
     } finally { setCheckinBusy(null) }
   }
 
+  // v2.5.04: PINs expire at the end of their calendar day. While expired, every
+  // PIN-gated action waits for today's PINs (the amber card above the tiles) —
+  // the pre-PIN pass-through (`fn(null)`) is only for a box whose PINs were
+  // never set. The server refuses verify-pin with `pins_expired` as well.
+  const pinsExpired = !!pins?.expired
+  const needPinsFirst = () => {
+    setPinNotice(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
   const withControl = (fn) => {
+    if (pinsExpired) { needPinsFirst(); return }
     if (pins?.control_set) setPinModal({ kind: 'control', then: (r) => { setPinModal(null); fn(r.token) } })
     else fn(null)
   }
@@ -290,6 +302,7 @@ export default function VenueHome() {
       setRoleMemory(mem)
       navigate(mem.role === 'dashboard' ? '/dashboard' : roleUrl(mem))
     }
+    if (pinKind && pinsExpired) { needPinsFirst(); return }
     if (!pinKind || !pins?.control_set) { go(null); return }
     setPinModal({
       kind: pinKind,
@@ -472,6 +485,7 @@ export default function VenueHome() {
                     try { await api.venueAbandon(token); await refresh() }
                     catch (e) { alert('Could not abandon: ' + e.message) }
                   }
+                  if (pinsExpired) { needPinsFirst(); return }
                   if (pins?.control_set) {
                     setPinModal({ kind: 'control', then: (r) => { setPinModal(null); doAbandon(r.token) } })
                   } else doAbandon(null)
@@ -496,7 +510,16 @@ export default function VenueHome() {
             </div>
           )}
 
-          {pins && !pins.control_set && <PinSetupCard onDone={refresh} />}
+          {pins && (!pins.control_set || pins.expired) && (
+            <>
+              {pinNotice && pins.expired && (
+                <div className="text-amber-300 text-sm mb-2" data-testid="pins-first-notice">
+                  Set today's PINs first — then tap the role again.
+                </div>
+              )}
+              <PinSetupCard expired={!!pins.expired} onDone={() => { setPinNotice(false); refresh() }} />
+            </>
+          )}
 
           {/* v2.4.00 (T-7): reached on purpose with a role remembered — say so,
               offer the way back. Picking any tile below replaces the memory. */}

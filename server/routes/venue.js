@@ -57,11 +57,36 @@ async function clearOutboxForNewAdoption() {
 // venue auth middleware, the officials-mutation endpoints). Crew PIN gates
 // Judge seats + Timekeeper client-side only. Scoreboard is open.
 // ---------------------------------------------------------------------------
+// v2.5.04: PINs are good for ONE CALENDAR DAY (the box's local date — the Pi
+// image runs in the venue time zone). The date they were set is stored beside
+// the hashes; on any later day the PINs are "expired": verify-pin refuses them,
+// the home screen shows the set-PINs card again, and setting the day's PINs
+// needs no Control token (exactly like the first set). The Control session
+// token is NOT rejected by expiry alone — it rotates the moment the new PINs
+// are saved (see POST /pins), which is what logs yesterday's sessions out.
+// Rationale (David, 09-07-26): a box that quietly keeps last weekend's PINs
+// confuses the crew; the run sheet's "set the PINs" step should happen every
+// competition day.
+const PIN_DATE_KEY = 'venue_pins_set_date';
+function localDateString(d = new Date()) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+async function pinsExpired() {
+  const hash = await getSetting('venue_control_pin_hash');
+  if (!hash) return false;                       // never set — not "expired", just unset
+  const setDate = await getSetting(PIN_DATE_KEY);
+  return setDate !== localDateString();          // a pre-v2.5.04 box (no date) expires once, on upgrade
+}
+
 router.get('/pins/status', async (req, res) => {
   try {
     res.json({
       control_set: !!(await getSetting('venue_control_pin_hash')),
       crew_set: !!(await getSetting('venue_crew_pin_hash')),
+      expired: await pinsExpired(),
+      set_date: (await getSetting(PIN_DATE_KEY)) || null,
+      today: localDateString(),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -72,8 +97,11 @@ router.post('/pins', async (req, res) => {
     if (!/^\d{4}$/.test(control_pin || '') || !/^\d{4}$/.test(crew_pin || '')) {
       return res.status(400).json({ error: 'pins_invalid', message: 'Both PINs must be exactly 4 digits.' });
     }
-    // Changing existing PINs requires the current Control session token.
-    const existing = await getSetting('venue_control_pin_hash');
+    // Changing existing PINs requires the current Control session token —
+    // unless yesterday's PINs have expired (v2.5.04): today's PINs are then
+    // set like a first set, per the daily run-sheet step.
+    const expired = await pinsExpired();
+    const existing = expired ? null : await getSetting('venue_control_pin_hash');
     if (existing) {
       const tok = await getSetting('venue_control_token');
       if (!control_token || control_token !== tok) {
@@ -84,10 +112,11 @@ router.post('/pins', async (req, res) => {
     // sets PINs immediately after adoption, per the run sheet) — log it
     // loudly so an unexpected claimant is at least visible.
     if (!existing) {
-      console.log(`[venue] PINs first set from ${req.ip || 'unknown ip'}`);
+      console.log(`[venue] PINs ${expired ? 'set for a new day' : 'first set'} from ${req.ip || 'unknown ip'}`);
     }
     await setSetting('venue_control_pin_hash', hashToken(control_pin));
     await setSetting('venue_crew_pin_hash', hashToken(crew_pin));
+    await setSetting(PIN_DATE_KEY, localDateString());
     // (Re)issue the Control session token — PIN change invalidates old sessions.
     await setSetting('venue_control_token', crypto.randomBytes(24).toString('hex'));
     res.json({ ok: true });
@@ -129,6 +158,9 @@ router.post('/verify-pin', async (req, res) => {
     }
     const hash = await getSetting(kind === 'control' ? 'venue_control_pin_hash' : 'venue_crew_pin_hash');
     if (!hash) return res.status(400).json({ error: 'pins_not_set', message: 'PINs have not been set yet — set them from the adoption flow.' });
+    if (await pinsExpired()) {
+      return res.status(400).json({ error: 'pins_expired', message: "Yesterday's PINs have expired — set today's two PINs on the venue home screen first." });
+    }
     if (hashToken(String(pin || '')) !== hash) {
       pinThrottleFail(ip);
       await new Promise(r => setTimeout(r, 250)); // constant failure delay

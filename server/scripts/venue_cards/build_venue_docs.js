@@ -127,7 +127,7 @@ function adoption() {
     'The official releases the meet on stickitski.com and reads you an 8-character code (letters and numbers) over the phone, or it is written on this sheet:  CODE: ______________');
   step(doc, 2, 'On a tablet, open  http://stickit.local:3001  and type the code into "Adopt Meet".',
     'This needs internet for a moment. If it says a copy already exists (day two of a meet), tap Replace when asked — that is normal.');
-  step(doc, 3, 'Set the two PINs when asked, and write them here.',
+  step(doc, 3, 'Set the two PINs when asked, and write them here. PINs last one day — the box asks for new ones every competition morning.',
     'Control PIN (scoring computer + head judge): ________     Crew PIN (judges + timekeeper): ________');
   step(doc, 4, 'Done. The meet name shows at the top, with "Sync: Up to date".',
     'Hand out tablets — Run Sheet 3 (Tablets) gets each person to their screen.');
@@ -143,7 +143,7 @@ function tablets() {
   const doc = newDoc('runsheet_tablets.pdf');
   header(doc, 'Run Sheet 3 — Tablets', 'One per person. A tablet remembers its job — even after a reboot.');
   step(doc, 1, 'Open Safari on the tablet and go to  http://stickit.local:3001',
-    'Or scan the QR code on the judges’ stand card.');
+    'Or scan the QR code on the judges’ stand card. If the very first load sits for minutes, use the numeric address shown under Connection Info on any tablet that is already in (e.g. http://192.168.x.x:3001) — same thing, opens at once. stickit.local works normally after that.');
   step(doc, 2, 'Tap the person’s role.',
     'Judges: tap Judge, enter the Crew PIN, then tap the seat that matches their role — the picker shows only the seats this event uses, with the role and judge name under each (J1–J3 T&L and J4–J5 Air in a 5-judge event; J6–J7 Air in a 7-judge event). Timekeeper: tap Timekeeper, Crew PIN. Head Judge / Scoring Computer: Control PIN. Scoreboard: no PIN.');
   step(doc, 3, 'That’s it. The screen follows the competition by itself.',

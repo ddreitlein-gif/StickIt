@@ -5,6 +5,8 @@ const cors = require('cors');
 const { queryAll, queryOne } = require('../db/schema');
 const { calcDualMogulPointSplit, effectiveJudgePoints, pickBestRun, assembleTieredResults } = require('../scoring/engine');
 const { rankDualPlacements } = require('../dual/placement_ranking');
+const { pairingNumbers: dualPairingNumbers, formatPairingLabel: dualPairingLabel } = require('../dual/runOrder');
+const { normalizeGender } = require('../utils/gender');
 // v2.2.00 — shared phased-results assembly (same code path as the web
 // Scoreboard's /phases/results) for the new /results/phases endpoint.
 const { buildPhasesResults } = require('./phases');
@@ -366,14 +368,14 @@ router.get('/events/:eventId/results', async (req, res) => {
   try {
     const { eventId } = req.params;
     const event = await queryOne(
-      'SELECT id, status, discipline FROM events WHERE id = ?',
+      'SELECT id, status, discipline, gender, runoff_option FROM events WHERE id = ?',
       [eventId]
     );
     if (!event) return res.status(404).json({ error: 'Event not found' });
 
     if (event.discipline === 'dual_mogul') {
       const bracket = await queryAll(
-        `SELECT db.id AS id, db.bracket_round, db.bracket_position, db.status AS match_status,
+        `SELECT db.id AS id, db.bracket_round, db.bracket_position, db.is_small_final, db.status AS match_status,
                 ab.first_name AS blue_first, ab.last_name AS blue_last, rb.bib_number AS blue_bib,
                 ar.first_name AS red_first, ar.last_name AS red_last, rr.bib_number AS red_bib,
                 db.winner_registration_id,
@@ -404,8 +406,15 @@ router.get('/events/:eventId/results', async (req, res) => {
         if (!rowsByMatch.has(r.match_id)) rowsByMatch.set(r.match_id, []);
         rowsByMatch.get(r.match_id).push(r);
       }
+      // v2.5.04 -- pairing_number / pairing_label (additive): the run order the
+      // web app and the printed bracket use, so the app can list "up next" in
+      // the same order (qualifying rounds top-down, semis last-to-first,
+      // finals 7/8 -> 5/6 -> 3/4 -> 1/2).
+      const pairingNums = dualPairingNumbers(bracket, event.runoff_option || 'runoff_to_4th');
+      const genderPrefix = normalizeGender(event.gender) === 'F' ? 'W' : 'M';
       const enriched = bracket.map(m => {
         const rows = rowsByMatch.get(m.id) || [];
+        const pNum = pairingNums.get(m.id) ?? null;
         let blue_score = null, red_score = null;
         if (rows.length > 0) {
           const split = calcDualMogulPointSplit(viewerMapDjpRows(rows), m.nj_call);
@@ -420,7 +429,7 @@ router.get('/events/:eventId/results', async (req, res) => {
           if (m.winner_registration_id === m.registration_id_blue) winner_side = 'blue';
           else if (m.winner_registration_id === m.registration_id_red) winner_side = 'red';
         }
-        return { ...m, blue_score, red_score, winner_side };
+        return { ...m, blue_score, red_score, winner_side, pairing_number: pNum, pairing_label: pNum != null ? dualPairingLabel(genderPrefix, pNum) : null };
       });
       return res.json({ discipline: 'dual_mogul', bracket: enriched });
     }
