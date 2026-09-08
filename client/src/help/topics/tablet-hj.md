@@ -90,6 +90,8 @@ On a venue server the HJ tablet also carries the role bar with **Change role** a
 
 Dual mogul HJ tablet manages match-by-match approval. After all bracket matches are complete, the bracket-review panel appears with the full bracket tree and the same two buttons.
 
+**Round notation (v2.5.06).** The active match card and the *Next Pairing* card are headed by the round and gender (*Female Round of 16*, *Male 3rd / 4th Place*, …). Once the last match of a round is approved, a large amber **End of Round of 16 for Females** notice sits above *Next Pairing* (through the Round of 8, then **End of Semi-Finals**) until the next match starts. Nothing is shown after the finals.
+
 **Set Match Status (Blue/Red DNS · DNF · DSQ).** Each button opens a confirmation first — "Record Blue DNF for [Name]? Red advances." When judge points already exist on the match, the confirmation escalates and shows the points state (e.g. "5 judges have scored this match (Red leads 18–7)"), with the strongest red warning when the ruling contradicts the points winner. The Head Judge's ruling has final say and stays possible even with all five judges scored; every manual ruling is audit-logged with the points state at the time. Once a match is complete and the bracket has advanced, the tablet can no longer change it — post-completion changes go through the operator's **Edit Scores** path on the Scoring tab.
 
 For the FS-18 landing zone (chop) rule (only when the meet's Advanced settings enable it — off by default), the dual HJ view adds:

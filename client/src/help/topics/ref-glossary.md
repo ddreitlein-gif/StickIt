@@ -66,7 +66,7 @@ A quick reference for the acronyms and terms that show up throughout StickIt.
 
 **SCR** — Scratched. Registration status, not run status.
 
-**NJ (dual mogul)** — No Jump on the bottom air: the competitor landed past the Landing Zone ("chop", max 20 m from takeoff) per FS-18. Called by the Air Judge (HJ can set/clear). One NJ = 0 speed points to the violator / 5 to the opponent; both NJ = speed tied at 3 / 3. Distinct from the mogul jump code `NJ` (DD 0.00) used on the air-judge tablet. See [Dual mogul setup](./events-dual).
+**NJ (dual mogul)** — No Jump on the bottom air: the competitor's boots landed past the Landing Zone ("chop", 20 m from takeoff, marked by control gates) per FS-18 — a FIS rule that is not adopted for U.S. domestic events and is off by default in StickIt. Called by the Air Judge (HJ can set/clear). One NJ = 0 speed points to the violator / 5 to the opponent; both NJ = speed tied at 3 / 3. Distinct from the mogul jump code `NJ` (DD 0.00) used on the air-judge tablet. See [Dual mogul setup](./events-dual).
 
 **Time Tied / Air Tied (dual mogul)** — tied comparisons declared by the Time Judge (J4) and Air Judge (J3). A speed tie is credited 3 / 3 (five-judge panel); an air tie withholds the votes at 0 / 0. Each tie drops the Overall Judge's split by one point (5 → 4 → 3).
 

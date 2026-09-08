@@ -7,6 +7,7 @@ import StatusSquare from '../components/tablet/StatusSquare'
 import AthleteBar from '../components/tablet/AthleteBar'
 import CalculatedScorePanel from '../components/tablet/CalculatedScorePanel'
 import RunStatusGrid from '../components/tablet/RunStatusGrid'
+import { DualRoundLabel, DualRoundEndedPanel } from '../components/tablet/DualRoundNotice'  // v2.5.06
 
 const ROLE_DISPLAY_HJ = {
   TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3', TL4: 'T&L 4', TL5: 'T&L 5',
@@ -224,6 +225,17 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
   }
 
   // v1.5 F4: load the next pending match (ready-to-start) from the bracket
+  // v2.5.06 -- round notation + end-of-round notice (display only)
+  const [roundState, setRoundState] = useState(null)
+  const loadRoundState = async () => {
+    try {
+      const r = await fetch(`${API}/events/${eventId}/dual/round-state`)
+      if (!r.ok) return
+      const d = await r.json()
+      if (d && typeof d === 'object') setRoundState(d)
+    } catch {}
+  }
+
   const loadNextMatch = async () => {
     try {
       const r = await fetch(`${API}/events/${eventId}/dual`)
@@ -291,7 +303,8 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
     loadMatch()
     loadNextMatch()
     loadReviewState()
-    pollRef.current = setInterval(() => { loadMatch(); loadNextMatch(); loadReviewState() }, 3000)
+    loadRoundState()
+    pollRef.current = setInterval(() => { loadMatch(); loadNextMatch(); loadReviewState(); loadRoundState() }, 3000)
     return () => clearInterval(pollRef.current)
   }, [eventId])
 
@@ -306,6 +319,7 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
           loadMatch()
           loadNextMatch()
           loadReviewState()
+          loadRoundState()
         }
         if (['dual_bracket_review', 'dual_bracket_sent_back'].includes(msg.type)) {
           loadReviewState()
@@ -560,6 +574,12 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
           </div>
         )}
 
+        {/* v2.5.06 -- end-of-round notice: shown wherever the HJ is between
+            matches (waiting card or Next Pairing), never during bracket review */}
+        {((!activeMatch) || matchComplete) && !reviewStatus && (
+          <DualRoundEndedPanel label={roundState?.ended_round_label} />
+        )}
+
         {/* No active match */}
         {!activeMatch && !nextMatch && !reviewStatus && (
           <div className="bg-slate-800 rounded-2xl p-8 text-center border border-slate-700">
@@ -574,6 +594,8 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
             <div className="text-xs text-green-400 uppercase tracking-wide mb-3 font-semibold">
               Next Pairing{nextMatch.pairing_label ? ` — ${nextMatch.pairing_label}` : ''}
             </div>
+            {/* v2.5.06 -- the round the next match belongs to */}
+            <DualRoundLabel label={nextMatch.round_label} size="sm" />
             <div className="grid grid-cols-5 gap-2 items-center mb-4">
               <div className="col-span-2 p-3 rounded-lg bg-blue-900/30 border border-blue-800">
                 <div className="text-xs text-blue-400 font-bold mb-0.5">Blue</div>
@@ -611,6 +633,8 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
         {/* Active match — landscape two-column layout */}
         {activeMatch && (
           <>
+            {/* v2.5.06 -- "Female Round of 32" / "Male 7th / 8th Place" at the top */}
+            <DualRoundLabel label={activeMatch.round_label || roundState?.active_round_label} />
             {/* Full-width athlete bar */}
             <div className="bg-slate-800 rounded-2xl px-5 py-3 border border-slate-700 mb-4">
               <div className="flex items-center justify-between">

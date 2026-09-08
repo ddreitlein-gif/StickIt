@@ -23,6 +23,8 @@ Every match carries a **pairing number** (`M-01`, `W-12`, …) and the day runs 
 - the **finals run lowest places first**: 7/8, then 5/6, then 3rd/4th, and the **1st/2nd championship final ends the day** with the highest pairing number.
 
 Men's and women's brackets are numbered separately. Byes carry no pairing number.
+
+**Round notation on the tablets (v2.5.06).** Every match card on the judge and Head Judge tablets is headed by the round it belongs to, with the gender — *Female Round of 64* … *Female Round of 8*, *Female Semifinal*, *Female 5th – 8th Place Semifinal* (Runoff to 8th), then *Female 7th / 8th Place*, *5th / 6th Place*, *3rd / 4th Place* and *1st / 2nd Place* (Male likewise). When the last match of a round is approved, the tablets' waiting screens show a large amber **End of Round of 64 for Females** notice (through the Round of 8, then **End of Semi-Finals**) until the next match starts — including when that next match belongs to the other gender's event. Nothing is shown after the finals; the Event Completed screen covers the end of the day. Display only — it has no effect on scoring, the run order, or the bracket.
 - **Random seed (optional)** — used by the **Random Seed** seeding button to make seedings reproducible. Leave blank for true randomness; set a value if you want to be able to re-seed identically later.
 
 ### Seeding the bracket
@@ -57,7 +59,7 @@ While a tablet-scored match is in progress, the operator can intercept with **Ma
 
 **This rule is off by default.** It is enabled per meet in the meet page's **Advanced** panel ("Landing Past the Lower Chop (NJ) rule") — the decision for the domestic season is not to use it, so unless a meet turns it on, every NJ control described below is hidden and the server refuses NJ calls. Historical matches that carry an NJ finding still display it everywhere.
 
-Per the Spring 2026 FIS rule (FS-18), each competitor must land the **bottom air within the Landing Zone** (maximum 20 meters from the takeoff, control gates at 20.5 meters). A competitor whose boots or body land past the mark receives **No Jump (NJ) on the bottom air and zero speed points**. If **both** competitors land past, they are tied for speed and both receive NJ.
+Per the FIS rule (FS-18; not adopted for U.S. domestic events — see the draft USSS 4311.6), each competitor must land the **bottom air within the Landing Zone** (20 meters from the takeoff, marked by control gates at that distance). A competitor whose **boots land past the zone** receives **No Jump (NJ) on the bottom air and zero speed points**. If **both** competitors land past, they are tied for speed and both receive NJ.
 
 **Who makes the call:** the **Air Judge (J3)** — their dual tablet has an **NJ (Past Chop)** panel with independent Blue/Red toggles (each with a confirmation, on set and on clear). The **Head Judge** can also set or clear the call from the HJ tablet, and the flags are editable on the operator's Scoring tab and in the paper-score modal. The finding is locked once the HJ approves the match. The NJ call is independent of the air split — the Air Judge still submits a normal 5-point air comparison.
 

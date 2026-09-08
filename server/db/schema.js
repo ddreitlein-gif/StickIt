@@ -665,9 +665,14 @@ async function seedJumpDDs() {
         console.log('DD migration: added ST/STS/TTT/DD combos + re-valued stand-alone Grab (F-6)');
       }
 
-      // v1.26.00 (FS-13, FIS JH 6204.3.7) -- basic vs advanced grabs.
+      // v1.26.00 (FS-13, Big G / Little G rule) -- basic vs advanced grabs.
       // Advanced grab 'G' modifier drops +0.14 -> +0.12 (every G code -0.02);
       // new lowercase 'g' codes are added at +0.05 (= new G value - 0.07).
+      // v2.5.06 note: these modifier values are PROVISIONAL (early draft). The
+      // FIS JH 6204.3.7 citation formerly given here does not define them and
+      // the Nov-2023 FIS chart still lists G = +0.14. Confirmed values are
+      // applied through Admin -> Jump DDs (this migration is idempotent and
+      // gated on 3G = 0.82, so a hand edit is never overwritten).
       // MAG will conduct a full DD chart review at the start of the quad; a
       // further re-seed may follow when the official 2026-27 chart publishes.
       // Sentinels: 3G at 0.82 (pre-1.26 value) gates the UPDATEs; a missing
@@ -771,9 +776,10 @@ async function seedJumpDDs() {
     { code: 'DD',   ddM: 0.55, ddF: 0.65, notes: 'Double Daffy' },
     // Jump Multipliers
     { code: 'p',    ddM: 0.03, ddF: 0.03, notes: 'Position (multiplier)' },
-    // v1.26.00 (FS-13, FIS JH 6204.3.7): basic grab 'g' = +0.05, advanced
-    // grab 'G' = +0.12 (was +0.14). Codes are case-exact — bg and bG are
-    // different jumps with different DDs.
+    // v1.26.00 (FS-13, Big G / Little G rule): basic grab 'g' = +0.05, advanced
+    // grab 'G' = +0.12 (was +0.14) — PROVISIONAL values, see the migration note
+    // above. Codes are case-exact — bg and bG are different jumps with
+    // different DDs.
     { code: 'G',    ddM: 0.52, ddF: 0.62, notes: 'Advanced Grab (Single + G)' },
     { code: 'g',    ddM: 0.45, ddF: 0.55, notes: 'Basic Grab (Single + g)' },
     // Rotational Jumps

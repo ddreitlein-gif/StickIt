@@ -13,7 +13,7 @@ Two places in the app:
 
 The chart is based on:
 
-- **Base value** by spin family (Single 0.40/0.50, Double 0.53/0.63, Triple 0.66/0.76, Quad 0.79/0.89, Quint 0.92/1.02 — men/women).
+- **Base value** by spin family (Single 0.40/0.50, Double 0.53/0.63, Triple 0.65/0.75, Quad 0.76/0.86, Quint 0.86/0.96 — men/women), per the FIS *Mogul Basic Degree of Difficulty and Common Combinations* chart (November 2023) that USSS Appendix D references.
 - **Modifiers per letter** added to the base:
   - `T` (twist) → -0.02
   - `S` (spread) → -0.02
@@ -25,9 +25,11 @@ The chart is based on:
   - `g` (basic grab) → +0.05
   - `G` (advanced grab) → +0.12
 
-### Basic vs advanced grabs (v1.26.00, FIS JH 6204.3.7)
+### Basic vs advanced grabs (v1.26.00 — Big G / Little G rule)
 
-Since the Spring 2026 FIS rule change, moguls distinguishes a **basic grab** (lowercase `g`, modifier +0.05) from an **advanced grab** (uppercase `G`, modifier +0.12 — previously +0.14). `bg` and `bG` are **different jumps with different DDs**, so jump-code entry is case-exact. Examples (men / women):
+The Moguls Sub-Committee adopted the **Big G / Little G** grab-scoring rule for domestic events (August 20, 2026 minutes). StickIt distinguishes a **basic grab** (lowercase `g`) from an **advanced grab** (uppercase `G`). `bg` and `bG` are **different jumps with different DDs**, so jump-code entry is case-exact.
+
+**The modifier values are provisional.** StickIt carries `g` = +0.05 and `G` = +0.12 (previously +0.14) from an early draft; the referenced FIS chart (November 2023) still lists a single grab modifier of +0.14 and no lowercase `g` codes, and the FIS Judging Handbook (November 2025, section 6204.3.7) lists `G` as a single modifier without defining basic and advanced grabs. When USSS publishes the confirmed values, update the table through **Admin → Jump DDs** — no code change is needed if only the numbers change. Examples at the current provisional values (men / women):
 
 | Code | DD (M / F) | What it is |
 |---|---|---|

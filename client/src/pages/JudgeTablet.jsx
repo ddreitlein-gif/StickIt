@@ -8,6 +8,7 @@ import ScoreButtonGrid, { ZONES_AIR, ZONES_TL, ZONES_COMP_5, VALUES_AIR_15 } fro
 import FineTuneRow from '../components/tablet/FineTuneRow'
 import DeductionPad from '../components/tablet/DeductionPad'
 import JumpCodeGrid from '../components/tablet/JumpCodeGrid'
+import { DualRoundLabel, DualRoundEndedPanel } from '../components/tablet/DualRoundNotice'  // v2.5.06
 import ReferencePanel, { RefPillRow } from '../components/tablet/ReferencePanel'
 
 const API = '/api'
@@ -67,6 +68,8 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const [status, setStatus] = useState('Waiting for match...')
   const [eventCompleted, setEventCompleted] = useState(false)
   const [manualEntryActive, setManualEntryActive] = useState(false)
+  // v2.5.06 -- round notation: { active_round_label, ended_round_label }
+  const [roundState, setRoundState] = useState(null)
   const pollRef = useRef(null)
   const lastMatchIdRef = useRef(null)
   const submittedRef = useRef(false)
@@ -77,6 +80,12 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
 
   const fetchMatchRef = useRef(null)
   fetchMatchRef.current = async () => {
+    // v2.5.06 -- round notation rides the same poll (display only; a failure
+    // simply leaves the previous notice in place).
+    fetch(`${API}/events/${eventId}/dual/round-state`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d && typeof d === 'object') setRoundState(d) })
+      .catch(() => {})
     try {
       const r = await fetch(`${API}/events/${eventId}/dual/active-match`)
       const data = await r.json()
@@ -265,6 +274,8 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
         {activeMatch ? (
           <>
             <div className="tablet-card" style={{ padding: 18 }}>
+              {/* v2.5.06 -- "Female Round of 32" / "Male 7th / 8th Place" */}
+              <DualRoundLabel label={activeMatch.round_label || roundState?.active_round_label} />
               <div className="text-xs uppercase tracking-wide mb-3" style={{ color: 'var(--tablet-dim)' }}>Current Match</div>
               <div className="grid grid-cols-5 gap-2 items-center">
                 <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(14,144,229,0.18)', border: '1.5px solid #1d4ed8' }}>
@@ -380,6 +391,9 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 {error && <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
               </div>
             ) : (
+              <>
+              {/* v2.5.06 -- the round just ended (last match approved, next not started) */}
+              <DualRoundEndedPanel label={roundState?.ended_round_label} />
               <div className="tablet-card" style={{ padding: 32, textAlign: 'center', borderColor: 'var(--tablet-green2)', borderWidth: 2 }}>
                 <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-green2)' }}>&#10003;</div>
                 <div className="text-xl font-bold mt-2" style={{ color: 'var(--tablet-green2)' }}>Score Submitted</div>
@@ -399,6 +413,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 )}
                 <div className="text-sm mt-4" style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
               </div>
+              </>
             )}
 
             {/* v1.29.00 (FS-18) -- NJ (Past Chop) panel: Air Judge only.
@@ -483,10 +498,14 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
             )}
           </>
         ) : (
-          <div className="tablet-card" style={{ padding: 32, textAlign: 'center' }}>
-            <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
-            <div style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
-          </div>
+          <>
+            {/* v2.5.06 -- end-of-round notice on the waiting screen */}
+            <DualRoundEndedPanel label={roundState?.ended_round_label} />
+            <div className="tablet-card" style={{ padding: 32, textAlign: 'center' }}>
+              <div className="tablet-display" style={{ fontSize: 64, color: 'var(--tablet-muted)' }}>&#9203;</div>
+              <div style={{ color: 'var(--tablet-dim)' }}>Waiting for next match...</div>
+            </div>
+          </>
         )}
       </div>
     </div>

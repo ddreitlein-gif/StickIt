@@ -18,7 +18,7 @@ Beyond a numeric score, every run can have a **status** indicating something did
 ### Where to set each
 
 - **DNS** — yellow "DNS" button on the Up Next athlete row (Scoring tab, HJ tablet, Timekeeper tablet). Confirmation modal appears. Or the Manual Entry modal's "Status Override" picker.
-- **DNF** — HJ tablet has a DNF button. Used when the athlete started but didn't finish (fell, missed gate, equipment failure). Confirmation required. **Gate fault is formally a DNF** (Spring 2026 FIS rule), and a competitor who intentionally re-enters the course after any DNF receives a **DSQ**.
+- **DNF** — HJ tablet has a DNF button. Used when the athlete started but didn't finish (fell, missed gate, equipment failure). Confirmation required. **Gate fault is a DNF.** Under the domestic rules (USSS 4210.4.3 and the Moguls Sub-Committee exception to FIS 4210.3.4), a competitor who re-enters the course and continues after a DNF is **not disqualified** — the run stays a DNF. (FIS World Cup rules treat intentional re-entry as a DSQ; that rule is not adopted for U.S. domestic events.)
 - **DSQ** — HJ tablet has a DSQ button. Used when the athlete is disqualified per TD ruling.
 - **NT** — Timekeeper tablet has a red **No Time** button. Confirmation modal appears. Used when no valid time could be recorded but the athlete did finish.
 

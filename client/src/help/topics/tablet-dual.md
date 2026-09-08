@@ -32,6 +32,8 @@ The tablet locks; the score is sent to the server. When all 5 judges have submit
 
 The tablet shows the **current active match only**. Use the Scoring tab's bracket view to see upcoming matches. Once the current match is approved, the tablet auto-advances to the next match.
 
+**Round notation (v2.5.06).** The top of every match card names the round and gender — *Female Round of 32*, *Male Semifinal*, *Female 7th / 8th Place*, and so on. After the last match of a round is approved, the *Score Submitted* / *Waiting for next match* screen shows a large amber **End of Round of 32 for Females** notice (through the Round of 8, then **End of Semi-Finals for Females**). It disappears when the next match starts — on a venue box that may be the other gender's event, which the tablet follows automatically. No notice follows the finals.
+
 ### Judge role differences
 
 In dual mogul, the five judge roles are nominally:

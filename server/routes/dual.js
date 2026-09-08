@@ -361,7 +361,23 @@ async function computePairingNumbers(eventId) {
        ORDER BY bracket_round DESC, bracket_position`,
     [eventId]
   );
-  return { pairingNums: runOrderLib.pairingNumbers(allMatches, runoffOption), genderPrefix };
+  return {
+    pairingNums: runOrderLib.pairingNumbers(allMatches, runoffOption),
+    genderPrefix,
+    // v2.5.06 -- for the dual tablets' round notation ("Female Round of 32")
+    genderWord: runOrderLib.genderWord(event?.gender),
+    runoffOption,
+    allMatches,
+  };
+}
+
+/**
+ * v2.5.06 -- "Female Round of 32" / "Male 7th / 8th Place" for one match.
+ * Display only (see server/dual/runOrder.js roundLabel).
+ */
+function matchRoundLabel(match, ctx) {
+  const bare = runOrderLib.roundLabel(match, ctx.allMatches);
+  return bare ? `${ctx.genderWord} ${bare}` : null;
 }
 
 /**
@@ -633,7 +649,8 @@ router.get('/', async (req, res) => {
       rowsByMatch.get(r.match_id).push(r);
     }
     // Attach pairing labels
-    const { pairingNums, genderPrefix } = await computePairingNumbers(req.params.eventId);
+    const pairingCtx = await computePairingNumbers(req.params.eventId);
+    const { pairingNums, genderPrefix } = pairingCtx;
     const enriched = bracket.map(m => {
       const pNum = pairingNums.get(m.id);
       const rows = rowsByMatch.get(m.id) || [];
@@ -649,6 +666,7 @@ router.get('/', async (req, res) => {
         red_total,
         pairing_number: pNum ?? null,   // v2.5.04: run order — clients sort "next match" by this
         pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null,
+        round_label: matchRoundLabel(m, pairingCtx),   // v2.5.06: "Female Round of 32" (tablet notation)
       };
     });
     res.json(enriched);
@@ -1539,6 +1557,43 @@ router.delete('/reset', requireAuth, async (req, res) => {
 // Active match management (for judge tablet polling)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// v2.5.06 -- GET /round-state -- the dual tablets' round notation + the
+// end-of-round notice. PUBLIC (tablet rule, read-only, display only).
+//   {
+//     gender_word:        'Female' | 'Male',
+//     active_round_label: 'Female Round of 32' | null   (the active match's round),
+//     ended_round:        'Round of 32' | 'Semi-Finals' | null,
+//     ended_round_label:  'End of Round of 32 for Females' | null
+//   }
+// ended_round is set once every playable match of a block is complete and no
+// match of a later block has started (server/dual/runOrder.js endedBlock);
+// it clears the moment the next match starts. Nothing after the finals.
+// ---------------------------------------------------------------------------
+router.get('/round-state', async (req, res) => {
+  try {
+    const event = await queryOne('SELECT gender, runoff_option, active_dual_match_id FROM events WHERE id=?', [req.params.eventId]);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    const matches = await queryAll(
+      `SELECT id, bracket_round, bracket_position, is_small_final, is_bye, status,
+              registration_id_blue, registration_id_red
+         FROM dual_bracket WHERE event_id = ?`,
+      [req.params.eventId]
+    );
+    const genderWord = runOrderLib.genderWord(event.gender);
+    const runoffOption = event.runoff_option || 'runoff_to_4th';
+    const active = event.active_dual_match_id ? matches.find(m => m.id === event.active_dual_match_id) : null;
+    const activeBare = active ? runOrderLib.roundLabel(active, matches) : null;
+    const ended = runOrderLib.endedBlock(matches, runoffOption, event.active_dual_match_id);
+    res.json({
+      gender_word: genderWord,
+      active_round_label: activeBare ? `${genderWord} ${activeBare}` : null,
+      ended_round: ended ? ended.label : null,
+      ended_round_label: ended ? `End of ${ended.label} for ${genderWord}s` : null,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /active-match -- get the currently active dual match for this event
 router.get('/active-match', async (req, res) => {
   try {
@@ -1569,14 +1624,16 @@ router.get('/active-match', async (req, res) => {
     const result = calcDualMogulPointSplit(judgeScores, match.nj_call);
 
     // Attach pairing label
-    const { pairingNums, genderPrefix } = await computePairingNumbers(req.params.eventId);
+    const pairingCtx = await computePairingNumbers(req.params.eventId);
+    const { pairingNums, genderPrefix } = pairingCtx;
     const pNum = pairingNums.get(match.id);
     const pairing_label = pNum != null ? formatPairingLabel(genderPrefix, pNum) : null;
+    const round_label = matchRoundLabel(match, pairingCtx);   // v2.5.06
 
     // v2.1.00 -- carry the Advanced meet settings so the dual tablets can
     // hide the NJ panel / Air Tied button when the rules are disabled (10a/10b).
     const settings = await getDualMeetSettings(req.params.eventId);
-    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, round_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

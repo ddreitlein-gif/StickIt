@@ -532,7 +532,9 @@ group is now labeled "DSQ" (only DSQs land there).
 
 ### Spring 2026 FIS Rule Changes (v1.26.00, Part B)
 
-**FS-13 — basic vs advanced grabs.** Per FIS JH 6204.3.7, lowercase `g` = basic grab (+0.05),
+**FS-13 — basic vs advanced grabs.** Per the Big G / Little G rule (values PROVISIONAL — taken from an
+early draft; the FIS JH 6204.3.7 citation originally given here does not define them, see the 09-08-26
+rules compliance review / v2.5.06 notes), lowercase `g` = basic grab (+0.05),
 uppercase `G` = advanced grab (+0.12, was +0.14). All 12 existing G codes re-valued −0.02 (3G
 0.82→0.80/0.90 M/F etc.) and 12 lowercase-g siblings added at newG−0.07 (bg 0.73/0.83, 7og 0.92/1.02 —
 David ruled the uniform rule over the spec's inconsistent 0.94 example); dual mogul ×1.25. Fresh seed
@@ -574,7 +576,8 @@ carries the column. Format presets documented in the events-phases help topic (W
 pass 6 / limit 18 / F1 12 / F2 6).
 
 **FS-10 — gate fault:** documentation only (gate fault = DNF; intentional re-entry after any DNF =
-DSQ) — one line in scoring-statuses. **Verified no-change:** FS-1 (Chief of Course already in role
+DSQ) — one line in scoring-statuses. *(Corrected in v2.5.06: the DSQ-on-re-entry rule is FIS-only and
+not adopted domestically — USSS 4210.4.3 keeps re-entry a DNF.)* **Verified no-change:** FS-1 (Chief of Course already in role
 list), FS-3 (Major Competitions only), FS-8 (course_specs stores no bump distances), FS-9 (USA repeat
 exemption — existing USSS first-counts / RQS higher-counts logic unchanged), FS-14/15/16/20
 (administrative).

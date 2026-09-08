@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.05
+**Current version:** v2.5.06
 
 ## Commands
 
@@ -231,6 +231,85 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.06 Feature Notes
+
+### Dual Round Notation + End-of-Round Notice; 2026-27 Rules Compliance Doc Fixes (v2.5.06)
+
+Per David's 09-08-26 request, from the *StickIt Rules Compliance Review for the 2026-27
+Season* (Claude Output, 09-08-26). **No scoring math, no schema change, no sync-protocol change
+(still v3), no change to the run order, placement, or bracket logic** — the feature is display
+only and the review's action items were documentation.
+
+**Dual mogul round notation (judge tablets + Head Judge tablet).** Rulings from the chat:
+both tablets (not the Scoring tab); wording `Female` / `Male` + `Round of 64` … `Round of 8`,
+`Semifinal`, `5th – 8th Place Semifinal` (Runoff to 8th), `7th / 8th Place`, `5th / 6th Place`,
+`3rd / 4th Place`, `1st / 2nd Place`; the end-of-round notice shows **until the next run
+starts** (David: the next run is usually the OTHER gender's event — on the venue box the
+tablets auto-follow it, so the notice gives way naturally and every label carries the gender).
+
+- **`server/dual/runOrder.js`** gained `genderWord()`, `roundLabel(match, matches)` (bare
+  label; legacy pre-F-2 round-2 small finals keep their terminal 5/6 and 7/8 meaning),
+  `roundBlocks()` (the day's blocks in run order: each qualifying round, the semifinal block =
+  both 5–8 consolation semis + both 1–4 semis, the finals block) and `endedBlock(matches,
+  runoffOption, activeMatchId)` — the block whose PLAYABLE matches (both sides known, not a
+  bye) are all complete while nothing in a later block has started and no open match is
+  active. Unfillable 5–8 semis (byes in a 6-athlete bracket) cannot hold the semifinal block
+  open; the finals block never "ends a round" (the Event Completed screen covers the day).
+- **`dual.js`**: `GET /dual` rows and `GET /active-match` carry **`round_label`** ("Female
+  Round of 32"); new **public** (tablet rule, read-only) **`GET /dual/round-state`** →
+  `{ gender_word, active_round_label, ended_round, ended_round_label }` with
+  `ended_round_label` = "End of Round of 16 for Females" / "End of Semi-Finals for Females" /
+  null. `computePairingNumbers` now also returns `genderWord`, `runoffOption`, `allMatches`.
+- **Client** — new `client/src/components/tablet/DualRoundNotice.jsx` (`DualRoundLabel` strip,
+  `DualRoundEndedPanel` large amber notice, tablet CSS vars so both tablets + HC mode match).
+  **Judge tablet** `DualJudgeView`: label at the top of the Current Match card; the panel on the
+  Score Submitted / waiting card AND the no-match waiting card; `/round-state` rides the
+  existing 3 s poll + WS refresh. **HJ tablet** `DualHeadJudgeView`: label above the athlete
+  bar and (small) on the Next Pairing card; the panel above Next Pairing / the waiting card
+  whenever the HJ is between matches (never during bracket review). `data-testid`s
+  `dual-round-label` / `dual-round-ended`.
+
+**Rules-compliance documentation fixes (review items 2–5).** Item 1 (confirm the provisional
+Big G / Little G DD values through Admin → Jump DDs when USSS publishes them) and item 6
+(two wording points in the RMF draft guide) are David's, outside the code.
+- `ref-jump-dds.md`: FIS-chart base values corrected (Triple 0.65/0.75, Quad 0.76/0.86, Quint
+  0.86/0.96 — the seeded DB was always right, only the help text was wrong); the grab section
+  now cites the MSC 08-20-26 Big G / Little G decision, marks the +0.05 / +0.12 modifiers
+  **provisional**, and says how to update them. The wrong "FIS JH 6204.3.7" citation was
+  corrected in `schema.js` comments and `CHANGELOG.md` (v1.26.00 FS-13) too.
+- `scoring-statuses.md`: gate fault stays a DNF; re-entering and continuing is **not a DSQ**
+  domestically (USSS 4210.4.3 + the ROSC exception to FIS 4210.3.4); CHANGELOG FS-10 note
+  annotated.
+- `events-dual.md` + `ref-glossary.md`: landing-zone wording aligned with the ROSC draft
+  (gates at 20 m, boots landing past the zone, FIS rule not adopted domestically, off by
+  default).
+- Help: `events-dual.md` (run-order section), `tablet-dual.md`, `tablet-hj.md` describe the new
+  notation; guide PDFs regenerated (66 topics, 159 pages); `server/public/docs/venue/*.pdf`
+  regenerated (footer).
+
+**Verification.** New `harness/tests/v2506.test.js` — **42 checks green**: 16-athlete
+runoff-to-8th Female bracket (every row labelled; all 20 matches walked in pairing order —
+active label matches the row on every match, no notice while a match is open or awaiting the
+HJ, notice exactly after pairings 8 / 12 / 16 = "End of Round of 16 / Round of 8 /
+Semi-Finals for Females", none between the 5–8 and 1–4 semis, none after any final);
+6-athlete Male bracket with byes ("End of Semi-Finals for Males" despite unfillable 5–8
+semis); runoff_to_4th / no_runoff labels; 404. Playwright: judge + HJ tablets headed "Female
+Round of 8", no panel while open / awaiting approval, panel on both after approval (HJ Next
+Pairing names "Female Semifinal"), panel stays on the plain waiting screen, gone on both the
+moment the semifinal starts with the label now "Female Semifinal". v240 124/124 (dual HJ
+Playwright regressions), `verify_v16.js` 123/123. Screenshots of both tablets reviewed.
+
+**Files created:** `server/dual/runOrder.js` (extended), `client/src/components/tablet/DualRoundNotice.jsx`,
+`harness/tests/v2506.test.js`
+**Files modified:** `server/routes/dual.js`, `server/dual/runOrder.js`, `server/db/schema.js` (comments),
+`client/src/pages/{JudgeTablet,HeadJudgeTablet}.jsx`,
+`client/src/help/topics/{ref-jump-dds,scoring-statuses,events-dual,ref-glossary,tablet-dual,tablet-hj}.md`,
+`CHANGELOG.md`, `server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 
