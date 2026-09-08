@@ -302,9 +302,23 @@ Pairing names "Female Semifinal"), panel stays on the plain waiting screen, gone
 moment the semifinal starts with the label now "Female Semifinal". v240 124/124 (dual HJ
 Playwright regressions), `verify_v16.js` 123/123. Screenshots of both tablets reviewed.
 
-**Files created:** `server/dual/runOrder.js` (extended), `client/src/components/tablet/DualRoundNotice.jsx`,
+**Pi image rebuilt + published at v2.5.06** (`~/Desktop/Scoring Server/StickIt Pi Image/
+image_2026-09-08-stickit-venue-lite-v2.5.06.img.xz`, 579,728,276 B, sha256 235ae0d9…967c;
+uncompressed 3,221,225,472 B sha256 c9c0853a…41b7; CHECKSUM.txt + .info alongside; the v2.5.02
+files moved to `Old 2026-09-06 v2.5.02/`). Release v2.5.06 carries `stickit-venue.img.xz`,
+`os_list_stickit.json` (sizes + sha filled, committed) and `CHECKSUM.txt`. **Found while
+publishing: the stable Imager URL `releases/latest/download/stickit-venue.img.xz` had returned
+404 since v2.5.03** — the release skill creates a source-only Release per version, and "latest"
+moved off v2.5.02 (the last Release with an image). Rule from now on: every Release must carry
+the image asset — rebuild it, or re-upload the current image if nothing venue-side changed. The
+fielded test Pi does not need the image; its Update button takes it to v2.5.06. Full harness
+this release: **777 green** (review 56 + review-ui 6 + step0 87 + step1 52 + step2 58 + step3
+55 + step4 52 + step5 40 + step6 34 + v240 124 + v250 140 + v2506 42 + release-gates 31).
+
+**Files created:** `client/src/components/tablet/DualRoundNotice.jsx`,
 `harness/tests/v2506.test.js`
 **Files modified:** `server/routes/dual.js`, `server/dual/runOrder.js`, `server/db/schema.js` (comments),
+`server/scripts/build_pi_image/os_list_stickit.json`,
 `client/src/pages/{JudgeTablet,HeadJudgeTablet}.jsx`,
 `client/src/help/topics/{ref-jump-dds,scoring-statuses,events-dual,ref-glossary,tablet-dual,tablet-hj}.md`,
 `CHANGELOG.md`, `server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
