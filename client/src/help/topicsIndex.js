@@ -122,6 +122,7 @@ const RAW_TOPICS = [
   { slug: 'public-livescores',        group: 'public', title: 'Live Scores listing' },
   { slug: 'public-scoreboard',        group: 'public', title: 'Reading a Scoreboard' },
   { slug: 'public-overlay',           group: 'public', title: 'Broadcast Overlay (OBS/YoloBox)' },
+  { slug: 'broadcast-board',          group: 'public', title: 'Broadcast Board (results board for the stream)' },
 
   // Reference
   { slug: 'ref-jump-dds',             group: 'reference', title: 'Jump codes & DDs' },

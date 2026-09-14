@@ -10,7 +10,10 @@ const PDFDocument = require('pdfkit');
 // ── Auth policy (v1.25.00, A-2) ─────────────────────────────────────────────
 // PDF endpoints reachable from the PUBLIC Scoreboard remain public by design:
 //   POST /event-results-detailed, POST /dual-bracket, POST /dual-results,
-//   GET  /logo/:meetId (public image fetch).
+//   GET  /logo/:meetId (public image fetch),
+//   GET  /bottom-logo/:meetId (v2.3.01 status flag),
+//   GET  /logo/:meetId/image and GET /bottom-logo/:meetId/image (v2.6.00 —
+//        the logo FILES, streamed for the public Broadcast Board's logo panel).
 // EVERY other PDF endpoint requires auth. When adding a new endpoint, default
 // to requireAuth unless the public Scoreboard genuinely needs it.
 const { normalizeGender } = require('../utils/gender');
@@ -3672,6 +3675,42 @@ router.delete('/bottom-logo/:meetId', requireAuth, (req, res) => {
 router.get('/bottom-logo/:meetId', (req, res) => {
   const logoPath = getMeetBottomLogoPath(req.params.meetId);
   res.json({ hasLogo: !!logoPath });
+});
+
+// ===========================================================================
+// v2.6.00 — logo IMAGE endpoints for the public Broadcast Board (/broadcast).
+// Read-only, public by the same rule as the status routes above. The helpers
+// build the path from the meet id and a fixed extension list, so no path
+// traversal is possible and no query parameters are read. Cache-Control:
+// no-cache because the operator may replace a logo mid-meet.
+// ===========================================================================
+const LOGO_CONTENT_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
+
+const SAFE_MEET_ID = /^[A-Za-z0-9_-]+$/;
+
+function sendLogoFile(res, meetId, resolvePath) {
+  // Belt-and-suspenders: meet ids are UUIDs; refuse anything that could
+  // carry a decoded path separator or dot segment before touching the disk.
+  if (!SAFE_MEET_ID.test(String(meetId || ''))) return res.status(404).json({ error: 'No logo' });
+  const logoPath = resolvePath(meetId);
+  if (!logoPath) return res.status(404).json({ error: 'No logo' });
+  const type = LOGO_CONTENT_TYPES[path.extname(logoPath).toLowerCase()];
+  if (!type) return res.status(404).json({ error: 'No logo' });
+  res.setHeader('Content-Type', type);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(logoPath, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'No logo' });
+  });
+}
+
+// GET /api/pdf/logo/:meetId/image — the event logo file
+router.get('/logo/:meetId/image', (req, res) => {
+  sendLogoFile(res, req.params.meetId, getMeetLogoPath);
+});
+
+// GET /api/pdf/bottom-logo/:meetId/image — the bottom (sponsor) logo file
+router.get('/bottom-logo/:meetId/image', (req, res) => {
+  sendLogoFile(res, req.params.meetId, getMeetBottomLogoPath);
 });
 
 // ---------------------------------------------------------------------------

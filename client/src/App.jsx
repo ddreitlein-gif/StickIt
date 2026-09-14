@@ -9,6 +9,7 @@ import TimekeeperTablet from './pages/TimekeeperTablet'
 import Scoreboard from './pages/Scoreboard'
 import HeadJudgeTablet from './pages/HeadJudgeTablet'
 import Overlay from './pages/Overlay'
+import BroadcastBoard from './pages/BroadcastBoard'
 import AerialsJudgeTablet from './pages/AerialsJudgeTablet'
 import Home from './pages/Home'
 import LiveScores from './pages/LiveScores'
@@ -73,6 +74,7 @@ export default function App() {
           <Route path="/scoreboard/:eventId" element={<Scoreboard />} />
           <Route path="/headjudge/:meetId/:eventId" element={<HeadJudgeTablet />} />
           <Route path="/overlay/:eventId" element={<Overlay />} />
+          <Route path="/broadcast/:eventId" element={<BroadcastBoard />} />
           <Route path="/dashboard" element={<RequireAuth><Layout /></RequireAuth>}>
             <Route index element={<Dashboard />} />
             <Route path="meets/:meetId" element={<MeetDetail />} />

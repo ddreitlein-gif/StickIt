@@ -13,8 +13,10 @@ Open the event detail page → **Links** tab. You'll see a table with one row pe
 | Air1 | `/judge/<event-short>/<judge-short>` | 📋 |
 | Head Judge | `/headjudge/<meet-short>/<event-short>` | 📋 |
 | Timekeeper | `/timekeeper/<event-short>` | 📋 |
-| Scoreboard (public) | `/scoreboard/<event-short>` | 📋 |
+| Broadcast Board (stream results board) | `/broadcast/<event-short>` | 📋 |
 | Overlay (broadcast) | `/overlay/<event-short>` | 📋 |
+
+The Display card's Broadcast Board row (v2.6.00) is the full-screen 1920x1080 results board the stream crew cuts to between athletes; see [Broadcast Board](./broadcast-board).  The public Scoreboard page still opens from Live Scores.
 
 ### Per-judge short codes
 

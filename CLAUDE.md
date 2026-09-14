@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.07
+**Current version:** v2.6.00
 
 ## Commands
 
@@ -225,12 +225,126 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Public by design (no login, ever):**
 - Judge / Head Judge / Timekeeper / Aerials judge tablets and all their scoring endpoints — secured only by unguessable short-code URLs. Auth work must never lock these out mid-meet. **Enforced end-to-end as of v1.26.02** — every endpoint a tablet calls with a plain fetch is public (see v1.26.02 notes for the full list, incl. `finalize`, `return-to-scoring`, `PUT /runs/:runId`, HJ reject paths, and the dual HJ match flow). **When adding a tablet button, never wire it to a `requireAuth` endpoint** — that bug shipped in v1.25.00 and was fixed in v1.26.02.
 - Public pages: Home (`/`), Live Scores, Scoreboard, Overlay, Help, and the read-only Viewer API (`/api/viewer`).
-- PDF endpoints reachable from the public Scoreboard: `event-results-detailed`, `dual-bracket`, `dual-results`, plus `GET /api/pdf/logo/:meetId`. Every other PDF endpoint requires auth (policy comment at the top of `server/routes/pdf.js`).
+- PDF endpoints reachable from the public Scoreboard: `event-results-detailed`, `dual-bracket`, `dual-results`, plus `GET /api/pdf/logo/:meetId`, `GET /api/pdf/bottom-logo/:meetId` (status flags) and, since v2.6.00, the logo files themselves for the public Broadcast Board: `GET /api/pdf/logo/:meetId/image` and `GET /api/pdf/bottom-logo/:meetId/image`.
+- The Broadcast Board (`/broadcast/:eventId`, v2.6.00) is a public page like the Scoreboard and Overlay: plain fetches of the public event / results / runs / dual / phases endpoints and the public `GET /api/meets/:id` + `GET /api/meets/:meetId/events/:id` reads; it never writes. Every other PDF endpoint requires auth (policy comment at the top of `server/routes/pdf.js`).
 - `/api/jump-dds`, `/api/resolve`, `/api/version`, `/api/auth/status` and login.
 
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.6.00 Feature Notes
+
+### Broadcast Board (v2.6.00)
+
+Implements `Scoring Server/StickIt_Broadcast_Board_Implementation_Plan_09-12-26.md` (Cowork
+session + Claude Design Direction A), per David's 09-14-26 request, reconciled with the v2.5.07
+dual bracket work: the board only READS the bracket the server has built (blue/red slots per
+4310.3.1, mirrored 5–8 consolation, `round_name` labels, `pairing_number` run order) and never
+predicts, re-ranks, or re-seeds anything. **No scoring math, no schema change, no sync-protocol
+change (still v3), no change to scoring / score entry / the dual bracket.** Two rulings recorded
+from the chat: **(1)** a dual pairing whose side the server has not filled yet shows the feeder
+placeholder ("Winner of 11" / "Loser of 12", from the feeder's pairing number) on NO course; the
+athlete appears on blue or red only once the bracket has written them into a slot — a second
+copy of the 4310.3.1 rule on the client was rejected; when one side is already filled the
+placeholder takes the only remaining slot (no prediction involved). **(2)** Final Placings
+(Frame 5) show as soon as every run of the last phase / the championship final is complete,
+badged **UNOFFICIAL**, and flip to **OFFICIAL** when the Head Judge finalizes the event (the
+plan's table only had the OFFICIAL case).
+
+**What it is.** A new public, read-only, non-interactive 1920x1080 results board at
+**`/broadcast/:eventId`** (short code or UUID via `useResolveIds`) for the stream crew's
+YoloBox / OBS browser source, cut to between athletes. Opaque light ground, navy header band
+(148 px + 10 px red stripe: meet name / event name / phase or round label / OFFICIAL badge) and
+footer band (70 px: caption, blue/red legend on duals, one rotation bar per page in the cycle).
+The stage is scaled to the viewport with `transform: scale()` and letterboxed. Root sets
+`pointer-events:none` + `user-select:none`, no buttons / links / inputs / handlers, no
+scrollbars, **no LIVE badge** (replays). Pages rotate every 12 s (`?page=4..30`); a data
+refresh never resets the timer (the index is reset only when the board STATE changes).
+300 ms opacity fade between pages, disabled under `prefers-reduced-motion`. Fonts: Barlow
+Condensed + Inter Tight (already bundled, FR-18) — the Playwright suite asserts no request
+leaves the origin. WebSocket (`/ws`, subscribe by eventId) + a 3 s poll fallback; a
+sequence counter drops a stale poll response that lands after a newer load.
+
+**Board state** (derived from data only): `waiting` (no scored result → Frame 1 headed START
+LIST from `/runs/upcoming`, time/total blank), `moguls_live` (mogul / aerials; Frame 1 pages of
+8 with a Frame 2 Latest Result inserted after each once a published score exists in the current
+round), `dual_round` (Frame 3, the current block's pairings, 8 per page), `dual_finals` (Frame
+4), `placings` (Frame 5 UNOFFICIAL), `complete` (Frame 5 OFFICIAL). Frames: **1** leader rows
+with exactly five fields (rank chip — medal colour for 1–3 only — bib, name at 50 px, time,
+total; DNF/DNS/DSQ rows never on a leader page) + Still To Come (next three of `/runs/upcoming`,
+team from the public meet-scoped event GET's registrations since `/upcoming` carries no club) +
+the meet logo panel (event logo never upscaled; bottom logo beneath at ≤ half the panel; panel
+omitted with no logo). **2** hero (bib, name 92 px, TIME, TOTAL, "NOW 2ND" from the combined
+`/results` rank) over ranks 1–5 with the athlete's row outlined (1–4 + the athlete when outside
+the top five); footer "LATEST RESULT · UNOFFICIAL · RANKS 1–5 OF n". The latest run is
+identified by the `score_update` runId on the socket, by diffing the completed-run ids of the
+active round between polls, and on first load by the newest `updated_at` among that round's
+`/results` rows (no per-run timestamp is exposed publicly and the server was not changed for
+it). **3** pairings numbered from `pairing_number` (two digits), blue left / red right with
+course bars, completed rows with the split chips (engine `blue_total` / `red_total` from
+`GET /dual` — the same values the Scoreboard sums from `judge-points`; a DNF/DNS/DSQ loser
+shows the status), NEXT = the active match if open else the first playable open match in run
+order (navy outline + tab), later rows TO RUN; qualifying rounds with > 4 pairings use 80 px
+rows so 8 + the Coming Up strip fit; the semis block lists both 5–8 semis and both 1–4 semis
+with `round_name` chips; header "Female Round of 16" / "Male Semifinals"; Coming Up strip =
+the next block with feeder placeholders (ruling 1). **4** finals championship first → 7/8 last
+(display order only; `runOrder.js` untouched), each with its pairing number + `round_name`
+chip, gold rule on the championship, NEXT on the pairing about to run (the 7/8 first). **5**
+podium 2/1/3 at 248/340/206 px with medal top rules, place numeral + total inside, name /
+bib / team above; places 4–10 (then 11–17 …) in a rank/bib/name/total table; dual events show
+rank/bib/name only (no totals anywhere); flagged athletes at the bottom with the status;
+footer "PLACES 1–10 OF 24 · TWO RUNS, BEST COUNTS | SINGLE RUN | QUALIFIER + FINALS | DUAL
+BRACKET". Aerials = moguls with the time column blank. No break card (plan 7.6).
+
+**The one server change.** `server/routes/pdf.js`: public `GET /api/pdf/logo/:meetId/image`
+and `GET /api/pdf/bottom-logo/:meetId/image` stream the logo file (PNG/JPEG by extension,
+`Cache-Control: no-cache`, 404 `{error:'No logo'}` when absent; the meet id must match
+`^[A-Za-z0-9_-]+$` before the disk is touched) beside the existing status routes; policy
+comment updated. Nothing else on the server changed (no endpoint, schema, manifest, engine, or
+Viewer API change; iOS unaffected).
+
+**Client.** New `client/src/pages/BroadcastBoard.jsx` + `client/src/components/broadcast/`
+(`BroadcastFrame.jsx`, `LeaderRows.jsx`, `StillToCome.jsx`, `MeetLogoPanel.jsx`,
+`LatestResult.jsx`, `DualPairingRows.jsx`, `Podium.jsx`, `broadcastDual.js` — block / feeder
+helpers mirroring `runOrder.js roundBlocks()` for display, `broadcast.css` scoped under
+`.sk-broadcast`). `App.jsx` route beside `/scoreboard` and `/overlay`. **Links panel** Display
+card: the Scoreboard row is now **Broadcast Board** → `/broadcast/<code>` with note "1920x1080
+browser source · between athletes" (QR / Copy / Open unchanged; the public Scoreboard still
+opens from Live Scores). `Scoreboard.jsx`, `Overlay.jsx`, `LiveScores.jsx`, `Home.jsx`,
+`EventRow.jsx`, `Overlay*.jsx` and `OverlayStandings.jsx` are byte-identical.
+
+**Docs.** New help topic `broadcast-board.md` (Public Surfaces group, after the Overlay topic);
+`judges-urls.md` Display rows updated; guide PDFs regenerated (67 topics); venue PDFs
+regenerated (footer). The Live Stream quick-start PDF still describes the Scoreboard + Overlay
+pair (unchanged; the board is additive).
+
+**Verification.** New `harness/tests/v260.test.js` — **89 checks green**: route by short code
+/ UUID / unknown; 24-athlete Best of 2 with one DNF (five fields per row, pages 1–8 / 9–16 /
+17–23 on the timer, Still To Come = `/runs/upcoming` with team names, "Run 2 of 2", DNF never on
+a leader row, pointer-events none, zero interactive elements, no scroll, no LIVE text, stage
+scale at 1280x720); Latest Result over the socket AND with `WebSocket` stubbed (poll path) —
+athlete, time, total, ordinal, outlined row; logo endpoints (404 → upload → 200 with the exact
+bytes, PNG type, no-cache, traversal-shaped id refused, panel absent / event only / both,
+never upscaled); moguls placings UNOFFICIAL → OFFICIAL after finalize, caption + paging; 16-
+athlete dual runoff-to-8th (rows from `pairing_number`, one NEXT = first playable open, split
+chips equal the engine totals with the winner solid, "Winner of N" placeholders, legend, finals
+block championship-first / 7/8 NEXT with the v2.5.07 labels, podium = bracket placements 1–3,
+no score column, UNOFFICIAL → OFFICIAL); every request on-origin; Scoreboard + Overlay smoke;
+password protection ON → image endpoints still public. Screenshots of every frame at 1920x1080
+and 1280x720 reviewed by eye (scratch demo + harness). Regression: `verify_v16.js` 123/123,
+step0, step1 (route gate — the new GETs are not mutations), review-ui, v2507, release-gates.
+
+**Files created:** `client/src/pages/BroadcastBoard.jsx`, `client/src/components/broadcast/*`
+(9 files), `client/src/help/topics/broadcast-board.md`, `harness/tests/v260.test.js`
+**Files modified:** `server/routes/pdf.js`, `client/src/App.jsx`,
+`client/src/pages/EventDetail.jsx` (Links row), `client/src/help/topicsIndex.js`,
+`client/src/help/topics/judges-urls.md`, `server/public/docs/guides/*.pdf` +
+`server/public/docs/venue/*.pdf` (regenerated), `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

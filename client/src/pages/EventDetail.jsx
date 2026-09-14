@@ -640,7 +640,10 @@ function LinksPanel({ event, judges }) {
   const aerialsJudgeUrl = (j) => `http://${appHost()}/aerials-judge/${ec}/${j.short_code || j.id}`
   const timekeeperUrl = `http://${appHost()}/timekeeper/${ec}`
   const hjUrl         = `http://${appHost()}/headjudge/${mc}/${ec}`
-  const scoreboardUrl = `http://${appHost()}/scoreboard/${ec}`
+  // v2.6.00 -- the Display card's first row is the Broadcast Board (the
+  // full-screen results board for the stream crew). The public Scoreboard
+  // page is unchanged and still opens from Live Scores.
+  const broadcastUrl  = `http://${appHost()}/broadcast/${ec}`
   const overlayUrl    = `http://${appHost()}/overlay/${ec}`
   const hjJudge       = judges.find(j => j.role === 'HJ')
   const [qrUrl, setQrUrl] = useState(null)
@@ -760,7 +763,7 @@ function LinksPanel({ event, judges }) {
       {/* Display */}
       <div className="card">
         <h3 className="font-display text-lg text-white mb-4">Display</h3>
-        <LinkRow label="Scoreboard"      url={scoreboardUrl} path={`/scoreboard/${event.id}`} />
+        <LinkRow label="Broadcast Board" url={broadcastUrl}  path={`/broadcast/${event.id}`} note="1920x1080 browser source · between athletes" />
         <LinkRow label="Overlay (YoloBox)" url={overlayUrl}  path={`/overlay/${event.id}`} note="1920x1080 browser source" />
       </div>
       {qrUrl && <QRModal url={qrUrl} onClose={() => setQrUrl(null)} />}
