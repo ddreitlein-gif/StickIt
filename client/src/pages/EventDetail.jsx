@@ -2452,7 +2452,7 @@ function DualScoringPanel({ event, registrations }) {
   const roundLabel = (n, isConsol = false) => {
     if (isConsol) {
       if (n === 1) return (consolRounds[1] || []).length > 1 ? 'Small Finals (7/8 · 5/6 · 3/4)' : 'Small Final'
-      if (n === 2) return '5th -- 8th Place Semifinals'
+      if (n === 2) return '5th – 8th Place Semifinals'
       return `Consolation Round ${n}`
     }
     if (n === 1) return 'Big Final'
@@ -2563,7 +2563,10 @@ function DualScoringPanel({ event, registrations }) {
     const isDone = m.status === 'complete'
     const isHjPending = m.status === 'hj_pending'
     const isActive = m.id === activeMatchId
-    const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1
+    // v2.5.07 -- USSS/FIS 4310.3.1: the top competitor is RED in an odd round
+    // (Final, Round of 8 / 32 / 128) and BLUE in an even one, consolation
+    // matches included (the result sheets draw them the same way).
+    const redOnTop = m.bracket_round % 2 === 1
 
     const blueBox = (
       <div className={`col-span-2 p-2.5 rounded-lg ${isDone && m.winner_registration_id === m.registration_id_blue ? 'bg-blue-800/40 ring-1 ring-blue-500' : 'bg-slate-800'}`}>
@@ -4208,14 +4211,32 @@ function DualBracketResults({ event }) {
   }
   for (const r in roundMatches) roundMatches[r].sort((a, b) => a.bracket_position - b.bracket_position)
 
-  // Round labels
+  // Round labels (v2.5.07: the finals column stacks the 3/4, 5/6 and 7/8
+  // finals under the championship, so it is headed "Finals" when they exist)
   const roundLabel = (r) => {
-    if (r === 1) return 'Big Final'
+    if (r === 1) return consolMatches.some(m => m.bracket_round === 1) ? 'Finals' : 'Big Final'
     if (r === 2) return 'Semifinals'
     if (r === 3) return 'Quarterfinals'
     const count = Math.pow(2, r)
     return `Round of ${count}`
   }
+
+  // v2.5.07 -- per-match label for the finals / semifinal columns. The server
+  // sends round_name ("3rd / 4th Place", "5th – 8th Place Semifinal"); the
+  // local map is the fallback for a server that predates it.
+  const matchLabel = (m) => {
+    if (m.round_name) return m.round_name
+    if (!m.is_small_final) return m.bracket_round === 1 ? '1st / 2nd Place' : null
+    if (m.bracket_round === 1) return m.bracket_position === 4 ? '7th / 8th Place' : m.bracket_position === 3 ? '5th / 6th Place' : '3rd / 4th Place'
+    if (m.bracket_round === 2) return '5th – 8th Place Semifinal'
+    return 'Consolation'
+  }
+  // Consolation matches that belong in the column of round r: the 3/4, 5/6,
+  // 7/8 finals under the championship final; the 5–8 consolation semis under
+  // the 1–4 semifinals (legacy round-2 terminal 5/6 & 7/8 runoffs likewise).
+  const consolInColumn = (r) => consolMatches
+    .filter(m => m.bracket_round === r)
+    .sort((a, b) => a.bracket_position - b.bracket_position)
 
   // Build score display string for a match
   const getScoreInfo = (m) => {
@@ -4257,7 +4278,8 @@ function DualBracketResults({ event }) {
     const blueLost = isDone && redWon
     const redLost = isDone && blueWon
     const scores = getScoreInfo(m)
-    const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1
+    // v2.5.07 -- 4310.3.1: red on top in odd rounds (see MatchRow)
+    const redOnTop = m.bracket_round % 2 === 1
 
     if (m.is_bye) {
       // Bye athlete is always in blue slot — show them on top regardless
@@ -4361,29 +4383,46 @@ function DualBracketResults({ event }) {
                   {roundLabel(r)}
                 </div>
                 {isFinalCol && consolMatches.length > 0 ? (
-                  /* Finals column: Big Final + consolation matches below, no huge bottom margin */
+                  /* Finals column (v2.5.07): 1st / 2nd, then 3rd / 4th, 5th / 6th, 7th / 8th
+                     reading downward — highest placing on top, as the result sheets draw it.
+                     (The day RUNS the other way, lowest place first; the pairing number carries that.) */
                   <div>
                     <div style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
                       {matches.map(m => (
-                        <MatchCard key={m.id} m={m} />
+                        <div key={m.id}>
+                          <div className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1 text-center">{matchLabel(m)}</div>
+                          <MatchCard m={m} />
+                        </div>
                       ))}
                     </div>
-                    <div className="space-y-4" style={{ marginTop: 40 }}>
-                      {consolMatches.sort((a,b) => {
-                        if (a.bracket_round !== b.bracket_round) return a.bracket_round - b.bracket_round
-                        return a.bracket_position - b.bracket_position
-                      }).map(m => {
-                        const label = m.bracket_round === 1 && m.bracket_position === 2 ? 'Small Final'
-                          : m.bracket_round === 2 && m.bracket_position === 3 ? '5th / 6th Runoff'
-                          : m.bracket_round === 2 && m.bracket_position === 4 ? '7th / 8th Runoff'
-                          : 'Consolation'
-                        return (
-                          <div key={m.id}>
-                            <div className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1 text-center">{label}</div>
-                            <MatchCard m={m} />
-                          </div>
-                        )
-                      })}
+                    <div className="space-y-4" style={{ marginTop: 24 }}>
+                      {consolInColumn(1).map(m => (
+                        <div key={m.id}>
+                          <div className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1 text-center">{matchLabel(m)}</div>
+                          <MatchCard m={m} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : r === 2 && consolInColumn(2).length > 0 ? (
+                  /* Semifinals column (v2.5.07): the 1–4 semifinals, then the 5–8 consolation
+                     semis that the quarterfinal losers feed (they were stacked under the
+                     finals column before, labelled as the 5/6 and 7/8 runoffs). */
+                  <div>
+                    <div className="space-y-2" style={{ paddingTop: (spacingMultiplier - 1) * (CARD_H + GAP) / 2 }}>
+                      {matches.map((m, i) => (
+                        <div key={m.id} style={{ marginBottom: (spacingMultiplier - 1) * (CARD_H + GAP) }}>
+                          <MatchCard m={m} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="space-y-4" style={{ marginTop: 24 }}>
+                      {consolInColumn(2).map(m => (
+                        <div key={m.id}>
+                          <div className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1 text-center">{matchLabel(m)}</div>
+                          <MatchCard m={m} />
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : (
@@ -4758,10 +4797,13 @@ function DualBracketPanel({ event, registrations }) {
     }
   }
   const roundNums  = Object.keys(mainRounds).map(Number).sort((a,b)=>b-a)
+  // v2.5.07: section headers for the consolation groups; each card also
+  // carries its own label (round_name from the server: "3rd / 4th Place" …).
+  const hasNew58 = bracket.some(m => m.is_small_final && m.bracket_round === 1 && m.bracket_position === 3)
   const roundLabel = (n, isConsol=false) => {
     if (isConsol) {
-      if (n === 1) return 'Small Final'
-      if (n === 2) return '5th -- 8th Place'
+      if (n === 1) return (consolRounds[1] || []).length > 1 ? 'Small Finals (3rd / 4th · 5th / 6th · 7th / 8th)' : 'Small Final (3rd / 4th)'
+      if (n === 2) return hasNew58 ? '5th – 8th Place Semifinals' : '5th / 6th & 7th / 8th Place'
       return `Consolation Round ${n}`
     }
     if (n === 1) return 'Big Final'
@@ -4779,7 +4821,9 @@ function DualBracketPanel({ event, registrations }) {
     const isHjPending = m.status === 'hj_pending'
     const blueLost = isDone && redWon
     const redLost  = isDone && blueWon
-    const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1
+    // v2.5.07 -- 4310.3.1: red on top in odd rounds (see MatchRow); a bye row
+    // keeps its athlete in the blue slot, so it always lists the athlete first
+    const redOnTop = !m.is_bye && m.bracket_round % 2 === 1
 
     const blueBox = (
       <div className={`col-span-2 p-2 rounded-lg flex items-center gap-3 ${blueWon ? 'bg-blue-800/40 ring-1 ring-blue-500' : 'bg-slate-800'}`}>
@@ -4820,6 +4864,7 @@ function DualBracketPanel({ event, registrations }) {
       <div className={`rounded-xl border p-3 ${isDone ? 'border-slate-700 bg-slate-800/20' : isHjPending ? 'border-amber-800/50 bg-amber-900/10' : 'border-slate-700 bg-slate-800/30'}`}>
         <div className="flex items-center gap-2 mb-1">
           {m.pairing_label && <span className="text-xs font-bold text-slate-400 bg-slate-700 px-1.5 py-0.5 rounded">{m.pairing_label}</span>}
+          {m.round_name && (m.is_small_final || m.bracket_round === 1) && <span className="text-xs font-semibold text-amber-400 uppercase tracking-wide">{m.round_name}</span>}
           {!!m.is_bye && <span className="bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded text-xs font-semibold">BYE</span>}
         </div>
         <div className="grid grid-cols-5 gap-2 items-center">

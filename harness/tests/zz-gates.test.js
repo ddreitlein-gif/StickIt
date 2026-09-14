@@ -49,6 +49,10 @@ const V2_ONLY_KEYS = [
   'air_codes_reconciled', 'jump_code', 'air_code_mismatch', 'air_codes_by_judge',
   // v2.5.00 — how the adoption lock happened (meets.adopted_via, cloud lock state)
   'adopted_via',
+  // v2.5.04 / v2.5.06 / v2.5.07 — dual bracket run-order + round notation
+  // (GET /dual rows, /active-match): pairing_number, pairing_label,
+  // round_label, round_name are display-only additions
+  'pairing_number', 'pairing_label', 'round_label', 'round_name',
 ];
 // Keep this list current with every release's additive response fields —
 // the gate compares against a frozen v1.30.03 worktree, so any new key

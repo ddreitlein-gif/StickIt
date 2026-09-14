@@ -3302,7 +3302,9 @@ router.post('/dual-bracket', async (req, res) => {
         doc.rect(x, y + ROW_H, w, ROW_H).fillColor('#f1f5f9').fill();
         doc.rect(x, y + ROW_H, w, ROW_H).strokeColor(LGRAY).lineWidth(0.3).stroke();
       } else {
-        const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1;
+        // v2.5.07 -- USSS/FIS 4310.3.1: red on top in odd rounds (Final,
+        // Round of 8 / 32 / 128), blue in even ones; consolation included.
+        const redOnTop = m.bracket_round % 2 === 1;
         const topCourse  = redOnTop ? 'red'  : 'blue';
         const botCourse  = redOnTop ? 'blue' : 'red';
         const topFirst   = redOnTop ? m.red_first  : m.blue_first;
@@ -3429,7 +3431,7 @@ router.post('/bracket-keeper', requireAuth, async (req, res) => {
         doc.rect(x, y + ROW_H, w, ROW_H).fillColor('#ffffff').fill();
         doc.rect(x, y + ROW_H, w, ROW_H).strokeColor(BK_BLACK).lineWidth(0.5).stroke();
       } else {
-        const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1;
+        const redOnTop = m.bracket_round % 2 === 1;   // v2.5.07 -- 4310.3.1 (see drawMatch)
         if (redOnTop) {
           drawBKRow(x, y,         w, 'red',  m.red_first,  m.red_last,  m.red_bib,  redTBD);
           drawBKRow(x, y + ROW_H, w, 'blue', m.blue_first, m.blue_last, m.blue_bib, blueTBD);

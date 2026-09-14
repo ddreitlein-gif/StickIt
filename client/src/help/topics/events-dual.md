@@ -12,7 +12,21 @@ Pick from 4, 8, 16, 32, or 64 athletes. The bracket size must be ≥ the number 
 
 ### Optional fields
 
-- **Runoff to 8th** — if checked, the bracket runs a true 5–8 mini-bracket per USSS 4310.3.2: the four quarterfinal losers meet in two **consolation semifinals**, whose winners play the **5/6 final** and losers the **7/8 final** — in addition to the standard 3rd/4th. Useful when FFSP points need to extend down to 8th place.
+- **Runoff to 8th** — if checked, the bracket runs a true 5–8 mini-bracket (USSS 4310.2.3.3 / 4310.3.2 authorize ranking to 8th place by dualing off): the four quarterfinal losers meet in two **consolation semifinals**, whose winners play the **5/6 final** and losers the **7/8 final** — in addition to the standard 3rd/4th. The 5–8 bracket **mirrors the main draw**: the losers of quarterfinals 1 and 2 meet in one consolation semi and the losers of quarterfinals 3 and 4 in the other (the pairing used on every published RMF result sheet), so the 5–8 seeding stays intact. Useful when FFSP points need to extend down to 8th place.
+- **Random seed (optional)** — used by the **Random Seed** seeding button to make seedings reproducible. Leave blank for true randomness; set a value if you want to be able to re-seed identically later.
+
+### Blue and red courses
+
+Which course each athlete skis is fixed by **USSS 4310.3.1 / FIS 4310.3.1** and assigned automatically as the bracket advances — StickIt follows the rule since v2.5.07:
+
+> Round of 128, top competitor in pairing will be red. Round of 64 … blue. Round of 32 … red. Round of 16 … blue. Round of 8 … red. Round of 4 … blue. Final Rounds … red. The "top competitor" is defined by position in the bracket, not by seed.
+
+- The **top competitor** of a match is the one who comes from the upper of the two matches feeding it. In the **first round** it is the upper slot of the pairing as the bracket is drawn (the #1 seed in the 1-vs-32 pairing, the #4 seed in 4-vs-5). A bye has no course: the athlete simply advances.
+- So the top competitor is **red in the Final, the Round of 8, the Round of 32 and the Round of 128**, and **blue in the Round of 4 (semifinals), the Round of 16 and the Round of 64**. Every bracket view, the printed brackets and the bracket-keeper sheet draw the red athlete on top in those rounds and the blue athlete on top in the others, exactly as the result sheets do.
+- **Consolation matches** (3rd/4th, the 5–8 semifinals, 5th/6th, 7th/8th) are not covered by the rule's single ladder. StickIt uses the convention on the published result sheets: a loser dropping into a consolation match takes the **opposite** course from the one the winner of that same match takes in the next main round. The sides therefore no longer depend on which feeder match the Head Judge decides first.
+- **Manual Bracketing** is the one place the operator chooses the first-round courses by hand; StickIt applies the rule from the second round on.
+
+The judge tablets are unaffected — blue is always on the left and red on the right of a tablet, whatever the round.
 
 ### Run order and pairing numbers
 
@@ -25,7 +39,6 @@ Every match carries a **pairing number** (`M-01`, `W-12`, …) and the day runs 
 Men's and women's brackets are numbered separately. Byes carry no pairing number.
 
 **Round notation on the tablets (v2.5.06).** Every match card on the judge and Head Judge tablets is headed by the round it belongs to, with the gender — *Female Round of 64* … *Female Round of 8*, *Female Semifinal*, *Female 5th – 8th Place Semifinal* (Runoff to 8th), then *Female 7th / 8th Place*, *5th / 6th Place*, *3rd / 4th Place* and *1st / 2nd Place* (Male likewise). When the last match of a round is approved, the tablets' waiting screens show a large amber **End of Round of 64 for Females** notice (through the Round of 8, then **End of Semi-Finals**) until the next match starts — including when that next match belongs to the other gender's event. Nothing is shown after the finals; the Event Completed screen covers the end of the day. Display only — it has no effect on scoring, the run order, or the bracket.
-- **Random seed (optional)** — used by the **Random Seed** seeding button to make seedings reproducible. Leave blank for true randomness; set a value if you want to be able to re-seed identically later.
 
 ### Seeding the bracket
 

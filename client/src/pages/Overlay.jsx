@@ -98,14 +98,29 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-function dualRoundLabel(round, isSmallFinal) {
-  if (round === 1) return isSmallFinal ? 'SMALL FINAL' : 'FINAL';
-  if (round === 2) return 'SEMIFINAL';
-  if (round === 3) return 'QUARTERFINAL';
-  if (round === 4) return 'ROUND OF 16';
-  if (round === 5) return 'ROUND OF 32';
-  if (round === 6) return 'ROUND OF 64';
-  return `ROUND ${round}`;
+// v2.5.07 -- the caption normally comes from the server (active-match
+// round_name: "Round of 8", "5th – 8th Place Semifinal", "7th / 8th Place",
+// "1st / 2nd Place" — the tablets' wording without the gender word, which the
+// ribbon already carries). This is the fallback for a server that predates
+// round_name; it now tells the 3/4, 5/6 and 7/8 finals apart by position.
+function dualRoundLabel(round, isSmallFinal, position) {
+  if (round === 1) {
+    if (!isSmallFinal) return '1ST / 2ND PLACE';
+    if (position === 3) return '5TH / 6TH PLACE';
+    if (position === 4) return '7TH / 8TH PLACE';
+    return '3RD / 4TH PLACE';
+  }
+  if (round === 2) return isSmallFinal ? '5TH – 8TH PLACE SEMIFINAL' : 'SEMIFINAL';
+  return `ROUND OF ${2 ** round}`;
+}
+
+// v2.5.07 -- place captions after a decided match: the 3/4, 5/6 and 7/8
+// finals each hand out their own pair of places (was 3RD/4TH for all three).
+function dualFinalPlaces(isSmallFinal, position) {
+  if (!isSmallFinal) return ['1ST', '2ND'];
+  if (position === 3) return ['5TH', '6TH'];
+  if (position === 4) return ['7TH', '8TH'];
+  return ['3RD', '4TH'];
 }
 
 export default function Overlay() {
@@ -199,6 +214,8 @@ export default function Overlay() {
         winnerSide: null,
         bracketRound: data.bracket_round,
         isSmallFinal: !!data.is_small_final,
+        bracketPosition: data.bracket_position ?? null,   // v2.5.07
+        roundName: data.round_name || null,                // v2.5.07 (server label, no gender word)
         njCall: data.nj_call || null,   // v1.29.00 (FS-18)
       });
     } catch (_) {}
@@ -481,13 +498,9 @@ export default function Overlay() {
   let dualRedLabel = null;
   if (dualState?.scored) {
     if (dualState.bracketRound === 1) {
-      if (dualState.isSmallFinal) {
-        dualBlueLabel = dualState.winnerSide === 'blue' ? '3RD' : '4TH';
-        dualRedLabel = dualState.winnerSide === 'red' ? '3RD' : '4TH';
-      } else {
-        dualBlueLabel = dualState.winnerSide === 'blue' ? '1ST' : '2ND';
-        dualRedLabel = dualState.winnerSide === 'red' ? '1ST' : '2ND';
-      }
+      const [win, lose] = dualFinalPlaces(dualState.isSmallFinal, dualState.bracketPosition);
+      dualBlueLabel = dualState.winnerSide === 'blue' ? win : lose;
+      dualRedLabel = dualState.winnerSide === 'red' ? win : lose;
     } else {
       dualBlueLabel = dualState.winnerSide === 'blue' ? 'WINNER' : null;
       dualRedLabel = dualState.winnerSide === 'red' ? 'WINNER' : null;
@@ -495,7 +508,9 @@ export default function Overlay() {
   }
 
   const showRibbon = !!event;
-  const dualRound = dualState ? dualRoundLabel(dualState.bracketRound, dualState.isSmallFinal) : null;
+  const dualRound = dualState
+    ? (dualState.roundName ? dualState.roundName.toUpperCase() : dualRoundLabel(dualState.bracketRound, dualState.isSmallFinal, dualState.bracketPosition))
+    : null;
 
   return (
     <div

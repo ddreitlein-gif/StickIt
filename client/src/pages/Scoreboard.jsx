@@ -1092,7 +1092,10 @@ function BracketMatchCard({ m, totalRound, expandedMatchId, setExpandedMatchId, 
   const isDone = m.status === 'complete';
   const blueLost = isDone && redWon;
   const redLost = isDone && blueWon;
-  const redOnTop = !m.is_small_final && (totalRound - m.bracket_round) % 2 === 1;
+  // v2.5.07 -- USSS/FIS 4310.3.1: the top competitor is RED in an odd round
+  // (Final, Round of 8 / 32 / 128) and BLUE in an even one; consolation
+  // matches are drawn the same way (as on the result sheets).
+  const redOnTop = m.bracket_round % 2 === 1;
 
   if (m.is_bye) {
     return (

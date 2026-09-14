@@ -919,7 +919,9 @@ net `raw_score` and `tl_deduction`, so per-judge gross = `raw_score + tl_deducti
 sites in `runs.js` thread a `tlDeductions[]` array parallel to `tlScores[]` into `calcMogulScore`.
 
 **F-2 — `runoff_to_8th` real 5-8 bracket (HIGH, structural).** Replaced the two terminal consolation
-matches with a proper 5-8 mini-bracket per USSS 4310.3.2. `buildBracketShell`
+matches with a proper 5-8 mini-bracket (USSS 4310.2.3.3 / 4310.3.2 authorize ranking to 8th by
+dualing off; they do not describe the bracket — the pairing was corrected in v2.5.07 to mirror the
+main draw, per the published RMF result sheets). `buildBracketShell`
 (`server/routes/dual.js`) now creates, for runoff_to_8th: round-2 small finals pos 3/4 =
 **consolation semis** (QF losers), and round-1 small finals pos 3/4 = the **5/6 and 7/8 finals**
 (pos 2 stays the 3/4 final). `advanceWinner` gained a branch: a completed consolation semi (round-2

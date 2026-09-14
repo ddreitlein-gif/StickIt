@@ -73,8 +73,17 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
       .map(([round, ms]) => ({ round: Number(round), matches: ms }))
   }
 
+  // v2.5.07: the consolation groups are named by what they decide (the
+  // round-2 group is the 5–8 consolation semis in a runoff-to-8th bracket,
+  // the terminal 5/6 & 7/8 runoffs in a legacy one); each card also carries
+  // the server's round_name ("3rd / 4th Place" …).
+  const hasNew58 = consolMatches.some(m => m.bracket_round === 1 && m.bracket_position === 3)
   const roundLabel = (round, isConsol = false) => {
-    if (isConsol) return round === 1 ? 'Small Final' : `Consol R${round}`
+    if (isConsol) {
+      if (round === 1) return hasNew58 ? 'Small Finals (3/4 · 5/6 · 7/8)' : 'Small Final (3/4)'
+      if (round === 2) return hasNew58 ? '5th – 8th Place Semifinals' : '5th / 6th & 7th / 8th Place'
+      return `Consol R${round}`
+    }
     if (round === 1) return 'FINAL'
     if (round === 2) return 'Semifinal'
     if (round === 3) return 'Quarterfinal'
@@ -88,6 +97,9 @@ function BracketReviewPanel({ bracket, onApprove, onSendBack, finalizing, sendin
     const redWon  = m.winner_registration_id && m.winner_registration_id === m.registration_id_red
     return (
       <div key={m.id} className="tablet-card text-sm" style={{ padding: 8, minWidth: 180 }}>
+        {m.round_name && (m.is_small_final || m.bracket_round === 1) && (
+          <div className="text-xs mb-1 px-2" style={{ color: 'var(--tablet-muted)' }}>{m.round_name}</div>
+        )}
         <div
           className="flex items-center justify-between px-2 py-1 rounded"
           style={{

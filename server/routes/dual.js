@@ -199,15 +199,41 @@ async function loadCandidateSourceEvents(dualEvent) {
 }
 
 // ---------------------------------------------------------------------------
-// advancementSlot — determine blue/red slot for winner advancing to next round
-// Alternates courses each round: top seed is blue in first round, red next, etc.
+// Blue / red course assignment — USSS 4310.3.1 / FIS 4310.3.1 (v2.5.07).
+//
+//   "Round of 128, top competitor in pairing will be red.  Round of 64 …
+//    blue.  Round of 32 … red.  Round of 16 … blue.  Round of 8 … red.
+//    Round of 4 … blue.  Final Rounds … red.  The 'top competitor' is defined
+//    by position in the bracket, not by seed."
+//
+// In StickIt's numbering (bracket_round 1 = final, 2 = semis, 3 = Round of 8,
+// 4 = Round of 16, …) that reads: ODD round → the top competitor is RED,
+// EVEN round → BLUE.  The top competitor of the match at (round R−1, position
+// ceil(p/2)) is the winner of (round R, position p) with p ODD — the upper
+// feeder.  So the winner of an odd position lands in red exactly when the
+// round it advances INTO is odd, i.e. when R is even.
+//
+// Pre-v2.5.07 the flip was anchored on (totalRound − bracketRound), which
+// agreed with the rule only on a shell of 4 / 16 / 64 and inverted EVERY slot
+// on a shell of 8 / 32 / 128.  totalRound plays no part in the rule.
+//
+// The rule assumes a single ladder.  For a LOSER dropping into a consolation
+// match (3/4 final, 5–8 consolation semis, 7/8 final) the published RMF result
+// sheets (eight brackets from five 2025-26 events, no exception) put the
+// loser in the OPPOSITE slot from the one the winner of the same match takes
+// — consolationSlot().  Before v2.5.07 those matches were filled by arrival
+// order, so the sides depended on which feeder was decided first.
 // ---------------------------------------------------------------------------
-function advancementSlot(bracketPosition, bracketRound, totalRound) {
-  const shouldFlip = (totalRound - bracketRound) % 2 === 0;
-  if (shouldFlip) {
-    return bracketPosition % 2 === 1 ? 'registration_id_red' : 'registration_id_blue';
-  }
-  return bracketPosition % 2 === 1 ? 'registration_id_blue' : 'registration_id_red';
+function advancementSlot(bracketPosition, bracketRound) {
+  const upperFeeder  = Number(bracketPosition) % 2 === 1;
+  const nextRoundOdd = Number(bracketRound) % 2 === 0;   // round R−1 is odd ⇔ R is even
+  return upperFeeder === nextRoundOdd ? 'registration_id_red' : 'registration_id_blue';
+}
+
+function consolationSlot(bracketPosition, bracketRound) {
+  return advancementSlot(bracketPosition, bracketRound) === 'registration_id_red'
+    ? 'registration_id_blue'
+    : 'registration_id_red';
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +243,10 @@ function advancementSlot(bracketPosition, bracketRound, totalRound) {
 async function advanceWinner(eventId, match, winnerId, loserId) {
   // F-2: consolation semifinals (runoff_to_8th 5-8 bracket). The semi winner
   // advances to the 5/6 final (round 1 pos 3); the loser drops to the 7/8 final
-  // (round 1 pos 4). Fill blue slot first, then red, matching the seeding pattern.
+  // (round 1 pos 4). v2.5.07: slots per 4310.3.1 — the winner takes the slot a
+  // main-round-2 winner at the same position takes (pos 3 → red, pos 4 →
+  // blue), the loser the opposite. Deterministic: the order in which the two
+  // semis are decided no longer matters.
   if (match.is_small_final && match.bracket_round === 2) {
     if (winnerId) {
       const final56 = await queryOne(
@@ -225,7 +254,7 @@ async function advanceWinner(eventId, match, winnerId, loserId) {
         [eventId]
       );
       if (final56) {
-        const slot = !final56.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+        const slot = advancementSlot(match.bracket_position, match.bracket_round);
         await execute(`UPDATE dual_bracket SET ${slot}=?, updated_at=datetime('now') WHERE id=?`, [winnerId, final56.id]);
       }
     }
@@ -235,7 +264,7 @@ async function advanceWinner(eventId, match, winnerId, loserId) {
         [eventId]
       );
       if (final78) {
-        const slot = !final78.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+        const slot = consolationSlot(match.bracket_position, match.bracket_round);
         await execute(`UPDATE dual_bracket SET ${slot}=?, updated_at=datetime('now') WHERE id=?`, [loserId, final78.id]);
       }
     }
@@ -250,19 +279,15 @@ async function advanceWinner(eventId, match, winnerId, loserId) {
       [eventId, nextRound, nextPos]
     );
     if (nextMatch) {
-      const trRow = await queryOne(
-        'SELECT MAX(bracket_round) AS total_round FROM dual_bracket WHERE event_id=? AND is_small_final=0',
-        [eventId]
-      );
-      const totalRound = trRow ? trRow.total_round : match.bracket_round;
-      const slot = advancementSlot(match.bracket_position, match.bracket_round, totalRound);
+      const slot = advancementSlot(match.bracket_position, match.bracket_round);
       await execute(
         `UPDATE dual_bracket SET ${slot}=?, updated_at=datetime('now') WHERE id=?`,
         [winnerId, nextMatch.id]
       );
     }
 
-    // Seed loser into consolation bracket
+    // Seed loser into consolation bracket (v2.5.07: rule-based slots, see
+    // consolationSlot — no longer "first empty slot").
     if (loserId) {
       const event     = await queryOne('SELECT runoff_option FROM events WHERE id=?', [eventId]);
       const runoffOpt = (event && event.runoff_option) || 'runoff_to_4th';
@@ -273,18 +298,24 @@ async function advanceWinner(eventId, match, winnerId, loserId) {
           [eventId]
         );
         if (con) {
-          const cSlot = !con.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+          const cSlot = consolationSlot(match.bracket_position, match.bracket_round);
           await execute(`UPDATE dual_bracket SET ${cSlot}=?, updated_at=datetime('now') WHERE id=?`, [loserId, con.id]);
         }
       }
       if (nextRound === 2 && runoffOpt === 'runoff_to_8th') {
-        const consPos = match.bracket_position % 2 === 1 ? 3 : 4;
+        // v2.5.07: the 5–8 bracket mirrors the main draw. Main advancement
+        // pairs QF 1+2 and QF 3+4 (nextPos = ceil(p/2)); the consolation semis
+        // take the SAME halves — QF 1+2 losers meet in cons semi pos 3, QF 3+4
+        // losers in pos 4 — which keeps the 5–8 seeding intact (eight RMF
+        // 2025-26 result sheets, no exception). Pre-v2.5.07 the split was
+        // {QF1, QF3} / {QF2, QF4}, the opposite of the main tree.
+        const consPos = 2 + Math.ceil(match.bracket_position / 2);
         const con = await queryOne(
           'SELECT * FROM dual_bracket WHERE event_id=? AND bracket_round=2 AND bracket_position=? AND is_small_final=1',
           [eventId, consPos]
         );
         if (con) {
-          const cSlot = !con.registration_id_blue ? 'registration_id_blue' : 'registration_id_red';
+          const cSlot = consolationSlot(match.bracket_position, match.bracket_round);
           await execute(`UPDATE dual_bracket SET ${cSlot}=?, updated_at=datetime('now') WHERE id=?`, [loserId, con.id]);
         }
       }
@@ -381,6 +412,15 @@ function matchRoundLabel(match, ctx) {
 }
 
 /**
+ * v2.5.07 -- the same label WITHOUT the gender word ("Round of 32",
+ * "7th / 8th Place") for surfaces that already name the event: the Bracket
+ * and Results tabs, the broadcast overlay.
+ */
+function matchRoundName(match, ctx) {
+  return runOrderLib.roundLabel(match, ctx.allMatches) || null;
+}
+
+/**
  * Format a pairing label string, e.g. "W-01" or "M-17".
  */
 const formatPairingLabel = runOrderLib.formatPairingLabel;
@@ -424,7 +464,9 @@ async function buildBracketShell(eventId, fieldSize, runoffOption) {
   if (runoffOption === 'runoff_to_8th' && totalRound >= 3) {
     // F-2: real 5-8 mini-bracket. Round 2 small finals are CONSOLATION SEMIS
     // (QF losers land here); round 1 small finals pos 3/4 are the 5/6 and 7/8
-    // FINALS (consolation-semi winners/losers land there). Per USSS 4310.3.2.
+    // FINALS (consolation-semi winners/losers land there). USSS 4310.2.3.3 /
+    // 4310.3.2 authorize ranking to 8th by dualing off (they do not describe
+    // the bracket); the pairing follows the published RMF result sheets.
     inserts.push(execute(
       `INSERT INTO dual_bracket (id,event_id,bracket_round,bracket_position,is_small_final)
        VALUES (?,?,2,3,1)`,
@@ -479,6 +521,15 @@ async function populateFirstRoundFromPlacement(eventId, seedList, totalRound, br
 
   const firstRound = totalRound; // "first round played" == largest round number
 
+  // v2.5.07 -- USSS/FIS 4310.3.1: the TOP competitor of a first-round pairing
+  // (the placement's upper slot — seed 1 in the 1-vs-32 pairing, seed 4 in
+  // 4-vs-5) skis RED when the first round is ODD (Round of 8 / 32 / 128) and
+  // BLUE when it is EVEN (Round of 4 / 16 / 64). placement.js keeps naming the
+  // upper slot "blue"; the swap happens here, at the only place its pairs
+  // become bracket rows. Bye rows are never swapped: no course is skied and
+  // the athlete stays in the blue slot every bye renderer draws.
+  const topIsRed = firstRound % 2 === 1;
+
   for (const pair of placement.pairs) {
     const match = await queryOne(
       `SELECT id FROM dual_bracket
@@ -487,8 +538,13 @@ async function populateFirstRoundFromPlacement(eventId, seedList, totalRound, br
     );
     if (!match) continue;
 
-    const blueRegId = pair.blueSeed != null ? seedToReg.get(pair.blueSeed) || null : null;
-    const redRegId  = pair.redSeed  != null ? seedToReg.get(pair.redSeed)  || null : null;
+    const topRegId = pair.blueSeed != null ? seedToReg.get(pair.blueSeed) || null : null;
+    const botRegId = pair.redSeed  != null ? seedToReg.get(pair.redSeed)  || null : null;
+    const swap      = topIsRed && !pair.isByeMatch;
+    const blueRegId = swap ? botRegId : topRegId;
+    const redRegId  = swap ? topRegId : botRegId;
+    const blueSeed  = swap ? pair.redSeed  : pair.blueSeed;
+    const redSeed   = swap ? pair.blueSeed : pair.redSeed;
 
     await execute(
       `UPDATE dual_bracket
@@ -502,14 +558,15 @@ async function populateFirstRoundFromPlacement(eventId, seedList, totalRound, br
       [
         blueRegId,
         redRegId,
-        pair.blueSeed,
-        pair.redSeed,
+        blueSeed,
+        redSeed,
         pair.isByeMatch ? 1 : 0,
         match.id,
       ]
     );
 
-    // Auto-advance bye
+    // Auto-advance bye (a bye row is never swapped, so the athlete is in the
+    // slot placement.js named)
     if (pair.isByeMatch) {
       const winnerId = pair.blueIsBye ? blueRegId : redRegId;
       if (winnerId) {
@@ -530,7 +587,7 @@ async function populateFirstRoundFromPlacement(eventId, seedList, totalRound, br
             [eventId, nextRound, nextPos]
           );
           if (nextMatch) {
-            const slot = advancementSlot(pair.matchIndex, firstRound, totalRound);
+            const slot = advancementSlot(pair.matchIndex, firstRound);
             await execute(
               `UPDATE dual_bracket SET ${slot} = ?, updated_at = datetime('now') WHERE id = ?`,
               [winnerId, nextMatch.id]
@@ -667,6 +724,7 @@ router.get('/', async (req, res) => {
         pairing_number: pNum ?? null,   // v2.5.04: run order — clients sort "next match" by this
         pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null,
         round_label: matchRoundLabel(m, pairingCtx),   // v2.5.06: "Female Round of 32" (tablet notation)
+        round_name: matchRoundName(m, pairingCtx),     // v2.5.07: "Round of 32" (no gender word)
       };
     });
     res.json(enriched);
@@ -927,7 +985,7 @@ router.post('/seed-manual', requireAuth, async (req, res) => {
               [req.params.eventId, nextRound, nextPos]
             );
             if (nextMatch) {
-              const advSlot = advancementSlot(slot.matchIndex, firstRound, totalRound);
+              const advSlot = advancementSlot(slot.matchIndex, firstRound);
               await execute(
                 `UPDATE dual_bracket SET ${advSlot} = ?, updated_at = datetime('now') WHERE id = ?`,
                 [winnerId, nextMatch.id]
@@ -1629,11 +1687,12 @@ router.get('/active-match', async (req, res) => {
     const pNum = pairingNums.get(match.id);
     const pairing_label = pNum != null ? formatPairingLabel(genderPrefix, pNum) : null;
     const round_label = matchRoundLabel(match, pairingCtx);   // v2.5.06
+    const round_name  = matchRoundName(match, pairingCtx);    // v2.5.07
 
     // v2.1.00 -- carry the Advanced meet settings so the dual tablets can
     // hide the NJ panel / Air Tied button when the rules are disabled (10a/10b).
     const settings = await getDualMeetSettings(req.params.eventId);
-    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, round_label, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, round_label, round_name, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

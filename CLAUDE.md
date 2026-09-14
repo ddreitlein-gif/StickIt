@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.5.06
+**Current version:** v2.5.07
 
 ## Commands
 
@@ -231,6 +231,112 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.5.07 Feature Notes
+
+### Dual Bracket — Courses per USSS/FIS 4310.3.1, Mirrored 5–8 Consolation, Correct Labels (v2.5.07)
+
+Per David's 09-14-26 request, from *StickIt Dual Bracket: Identified Errors* (Scoring Server,
+09-13-26, written after the 09-13 test meet). Every finding was re-verified here against the
+Telluride RMF Divisional Champs sheet (Mar 8 2026, men's 64 shell + women's 32 shell): the
+document's rule reproduces every occupant and side from the quarterfinals down on both. **No
+scoring math, no schema change, no sync-protocol change (still v3)**; the run order, pairing
+numbers, `placement_ranking.js`, and the v2.5.06 round labels / End-of-Round notices are
+untouched (re-tested). Rulings from the chat: **(1)** the first round of an odd shell (Round of
+8 / 32 / 128) follows the rule too — the top slot of each pairing skis red; **(2)** the broadcast
+overlay uses the tablets' wording without the gender word; **(3)** the v2.5.06 Pi image is
+re-uploaded on the v2.5.07 Release (boxes reach v2.5.07 through the Update button).
+
+**The rule** (USSS 2026 / FIS 2027 4310.3.1): the *top competitor in pairing* is red in the
+Round of 128, 32, 8 and the Finals, blue in the Round of 64, 16, 4 — "defined by position in the
+bracket, not by seed". In StickIt's numbering (`bracket_round` 1 = final): **odd round → top
+competitor RED, even round → BLUE**; the top competitor of (R−1, ⌈p/2⌉) is the winner of (R, p)
+with p odd. Consolation matches are outside the rule's single ladder; the eight RMF 2025-26 sheets
+fill them one way without exception: **a loser dropping into a consolation match takes the
+opposite slot from the one the winner of that match takes.**
+
+**Server (`server/routes/dual.js`).**
+- `advancementSlot(pos, round)` (the `totalRound` parameter is gone — the rule never used it):
+  red when `(pos odd) === (round even)`. The old `(totalRound − round) % 2` anchor agreed with
+  the rule only on a 4/16/64 shell and inverted EVERY slot on an 8/32/128 shell. New
+  `consolationSlot()` = the opposite. `advanceWinner` uses them everywhere: main advancement,
+  semi loser → 3/4 final, QF loser → 5–8 semi, cons-semi winner → 5/6 final / loser → 7/8 final
+  (all four consolation drops were "first empty slot" before, so the 3/4 and 7/8 sides depended
+  on which feeder the HJ decided first — now deterministic).
+- **5–8 pairing (the one result-changing fix):** QF loser at position q → consolation semi
+  `2 + ⌈q/2⌉` (QF 1+2 losers meet, QF 3+4 losers meet — the mirror of the main draw, seeding
+  of places 5–8 preserved). Was `q odd → 3, even → 4`, i.e. {QF1, QF3} / {QF2, QF4}. Brackets
+  already advanced keep what was written (advancement is recorded when it happens).
+- `populateFirstRoundFromPlacement` (FIS bracketing + Random Seed): when the first round is odd
+  the placement's upper slot (`pair.blueSeed`, the better standard slot) is written to RED,
+  seeds swapped alongside; **bye rows are never swapped** (no course is skied; every bye
+  renderer draws the athlete in blue, and `is_bye` consumers were audited). `placement.js` and
+  `verify_v16.js` (123 checks) are untouched. Manual Bracketing keeps the operator's explicit
+  sides; bye auto-advance on every seeding path uses the rule.
+- `GET /dual` rows and `GET /active-match` gain **`round_name`** — the v2.5.06 label without the
+  gender word ("Round of 32", "7th / 8th Place") for surfaces that already name the event.
+  `round_label` unchanged. Added to the release gate's `V2_ONLY_KEYS` (with the v2.5.04/06
+  fields, which had been missing).
+- `buildBracketShell` comment + `CHANGELOG.md` F-2 note: 4310.2.3.3 / 4310.3.2 *authorize*
+  ranking to 8th by dualing off; they do not describe the bracket (the review's citation fix).
+
+**Display — red on top in odd rounds, everywhere.** The visual formula was also anchored on
+`totalRound` (`redOnTop = (totalRound − round) % 2 === 1`, consolation never), so it matched
+the data on every shell and inverted with it. Now `redOnTop = bracket_round % 2 === 1` for
+main AND consolation matches — the convention the Winfree sheets use — in the Scoring-tab
+`MatchRow`, the Results-tab tree `MatchCard`, the Dual Bracket tab `SimpleBracketCard` (bye
+rows list the athlete first), the Scoreboard `BracketMatchCard`, and both PDFs (`drawMatch`,
+`drawBKMatch`). Judge / HJ tablets unchanged (blue left, red right). *Note:* a bracket built
+before v2.5.07 on an odd shell has its data inverted, so those historical trees now draw with
+crossed feeder lines (display only; no such bracket exists outside test meets).
+
+**Labels.** Results-tab tree: the finals column (headed **Finals** when consolation exists)
+reads 1st / 2nd, 3rd / 4th, 5th / 6th, 7th / 8th Place downward (was: 3/4 labelled "Small
+Final", the 5–8 semis labelled "5th / 6th Runoff" / "7th / 8th Runoff", the real 5/6 and 7/8
+finals "Consolation", sorted finals-above-feeders); the 5–8 consolation semis now sit under the
+1–4 semifinals in the Semifinals column, each card labelled from `round_name` (local fallback
+for an older server). Dual Bracket tab: consolation section headers by what they decide
+("Small Finals (3rd / 4th · 5th / 6th · 7th / 8th)", "5th – 8th Place Semifinals"; legacy
+"5th / 6th & 7th / 8th Place") + a per-card `round_name` chip on finals / consolation cards.
+Scoring tab: the `--` dash normalized to an en dash. HJ tablet bracket-review panel: same
+headers + per-card label (was "Small Final" / "Consol R2"). **Overlay:** the lower third
+captions from `round_name` uppercased ("ROUND OF 8", "SEMIFINAL", "5TH – 8TH PLACE SEMIFINAL",
+"7TH / 8TH PLACE", "3RD / 4TH PLACE", "1ST / 2ND PLACE"; fallback map by position for an older
+server — was "SMALL FINAL" for all three consolation finals and "SEMIFINAL" for the 5–8 semis),
+and the post-match place chips are 5TH/6TH and 7TH/8TH on those finals (were 3RD/4TH).
+
+**Docs.** Help `events-dual.md`: new **Blue and red courses** section (rule text, top
+competitor, consolation convention, manual bracketing, tablets unaffected), Runoff-to-8th
+bullet corrected (citation + mirrored pairing), the orphaned "Random seed" bullet moved back
+under Optional fields; guide PDFs regenerated (66 topics, 160 pages); venue PDFs regenerated
+(footer).
+
+**Verification.** New `harness/tests/v2507.test.js` — **62 checks green**, with the rule
+restated independently of the implementation: A 16-athlete runoff-to-8th (even first round:
+upper slot blue; full day walked in pairing order with alternating winners — every advancement
+and consolation drop checked; cons semis = QF1+QF2 / QF3+QF4 losers with the rule's sides; the
+v2.5.06 End-of-Round notices fire at pairings 8 / 12 / 16 only; places 1–8 from the finals);
+B 28 athletes (shell 32, odd first round: better seed on red in all 12 pairings, 4 byes kept in
+blue, bye winners in the rule's slot, all 32 matches walked clean, "End of Round of 32 / Semi-
+Finals for Males"); C 6 athletes (shell 8; unfillable 5–8 semis; notices intact); **D Telluride
+replay, both genders** — quarterfinals laid out by Manual Bracketing exactly as printed, the
+recorded winners applied: every semifinal, consolation-semifinal and final occupant AND side,
+then places 1–8, match the sheet; E HJ order independence (semi 1 decided before semi 2 → 3/4
+sides per rule); F `round_name`; G Playwright overlay captions. Regression: v2506 42/42, v240
+124/124, step2 58/58, step4 52/52, review 56 + review-ui 6, release-gates 31/31,
+`verify_v16.js` 123/123. Rendered the dual-bracket + bracket-keeper PDFs (28-athlete bracket
+played to the semis) and screenshotted the Results / Dual Bracket / Scoring tabs, Scoreboard
+and overlay from the built bundle — all reviewed.
+
+**Files created:** `harness/tests/v2507.test.js`
+**Files modified:** `server/routes/dual.js`, `server/routes/pdf.js`,
+`client/src/pages/{EventDetail,Scoreboard,Overlay,HeadJudgeTablet}.jsx`,
+`client/src/help/topics/events-dual.md`, `CHANGELOG.md`, `harness/tests/zz-gates.test.js`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated),
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 
