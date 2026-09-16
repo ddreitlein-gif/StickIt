@@ -2406,3 +2406,6 @@ module.exports = router;
 module.exports.buildBracketShell = buildBracketShell;
 module.exports.advanceWinner = advanceWinner;
 module.exports.computePairingNumbers = computePairingNumbers;
+// v2.6.01 — course-slot rule (4310.3.1) reused by the bracket keeper PDF; additive, no behavior change
+module.exports.advancementSlot = advancementSlot;
+module.exports.consolationSlot = consolationSlot;

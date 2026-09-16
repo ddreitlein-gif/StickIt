@@ -2,6 +2,13 @@
 
 For version notes v2.0.00 and later, see CLAUDE.md.
 
+**v2.6.01 (2026-09-15) — Bracket Keeper redesign.** The hand-kept dual bracket PDF was rewritten
+(pointers, origin stubs, bye strips, winners-only connectors, run-order strip, start list, how-to,
+result panel, entry-count-driven page plans). The only changes outside the keeper: the one-line
+`buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
+PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
+`consolationSlot` from `dual.js`. Full notes in CLAUDE.md.
+
 ---
 
 ## v1.30.03 Feature Notes
