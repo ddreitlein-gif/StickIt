@@ -3357,56 +3357,26 @@ router.post('/dual-bracket', async (req, res) => {
 });
 
 // ===========================================================================
-// POST /api/pdf/bracket-keeper  — the hand-kept bracket (v2.6.01 redesign)
+// POST /api/pdf/bracket-keeper  — the hand-kept bracket (v2.6.02)
 // ===========================================================================
 //
-// The keeper is filled in by hand, outdoors, in pencil, by coaches, the
-// starter and volunteers who have never seen it before. Nobody writes scores
-// on it: they record who won and copy the winner's bib and name into the
-// next box. So the sheet's one job is to make "the next box" findable —
-// every header names where its winner and loser go (with the course and,
-// when it is on another page, the page), every empty slot names the match
-// that fills it, byes are one-line strips, connector lines follow WINNERS
-// only, and the page plan is computed before anything is drawn so pointers
-// can print page numbers.
+// A plain line tree, the shape officials know from the Winfree keeper: one
+// line per skier with "bib  LAST, First (seed)" printed above it when known,
+// "Won W-03" / "Lost W-06" on a line still to be filled in, the course word
+// under the right end of every line, the pairing label at each junction, and
+// the placing (1st · 3rd · 5th · 7th) at the end of each deciding line.
+// Nothing else: no scores, no boxes, no instructions. Portrait Letter.
 //
-// The keeper only READS what dual.js built. Destinations are derived with
-// the very advancementSlot / consolationSlot the server advances with
-// (v2.5.07, USSS/FIS 4310.3.1), and wherever a destination slot already
-// holds an athlete the row wins: the structural map only labels empty slots
-// and prints pointers. Labels are the two-digit per-gender pairing labels
-// every other surface uses (runOrder.js via buildBracketPairings); round
-// names come from runOrder.js roundLabel — no second numbering, no new map.
-//
-// Geometry: the Claude Design mockups (09-15-26) are drawn in CSS px at 96
-// per inch; the printed sizes below are those mockups at their physical
-// size (×0.75): 36 pt writing rows = ½ in, 26 pt header strip, 54 pt stub,
-// 34 pt bib cell, boxes ~230 pt wide in a three-column tree. Rows grow to
-// 40 / 44 pt when every page of the plan still fits, and a section whose
-// first column cannot fit at 36 pt spills onto a second page rather than
-// shrinking further. The 64 shell uses the compact four-column variant.
-// Pre-printed type never goes below 8 pt.
+// Everything is derived from the bracket dual.js built. keeperRoutes() maps
+// every match to where its winner and loser go using the very
+// advancementSlot / consolationSlot rule the server advances with (v2.5.07);
+// keeperOrigins() is the inverse and labels the empty lines. Where a line
+// already holds an athlete the row wins over the structure.
 // ---------------------------------------------------------------------------
-
-const KEEPER_COLORS = {
-  blue: '#0B4FA8', red: '#B62025', ink: '#12110F', dark: '#57524A', label: '#2B2822',
-  hdrFill: '#EDEAE4', rule: '#B8B2A8', byeFill: '#F6F4F0', cellRule: '#DCD6CB',
-};
-
-function keeperLayout(compact, rowH) {
-  return compact
-    ? { compact: true,  rowH: rowH || 26, hdrH: 20, stubW: 58, bibW: 26, byeH: 24, gap: 3, colGap: 12, ptrMax: 9,  lblSize: 8,   nameSize: 10, bibSize: 12 }
-    : { compact: false, rowH: rowH || 36, hdrH: 26, stubW: 54, bibW: 34, byeH: 28, gap: 5, colGap: 16, ptrMax: 11, lblSize: 9.5, nameSize: 12, bibSize: 15 };
-}
-const keeperBoxH = (L) => L.hdrH + 2 * L.rowH;
-const keeperItemH = (it, L) => it.type === 'bye' ? L.byeH : keeperBoxH(L);
-const keeperColH = (items, L) => items.reduce((s, it) => s + keeperItemH(it, L), 0) + Math.max(0, items.length - 1) * L.gap;
 
 /**
  * Where every match sends its winner and loser, by bracket structure.
  *   Map<matchId, { win: {id, course}|null, lose: {id, course}|null, place: {win, lose}|null }>
- * Courses come from dual.js advancementSlot / consolationSlot (v2.5.07) —
- * the rule is deliberately NOT copied here.
  */
 function keeperRoutes(matches, runoffOption) {
   const { advancementSlot, consolationSlot } = require('./dual');
@@ -3429,8 +3399,7 @@ function keeperRoutes(matches, runoffOption) {
           const f34 = find(1, 2, true);
           if (f34) lose = { id: f34.id, course: courseOf(consolationSlot(p, R)) };
         } else if (R === 3 && runoff8) {
-          // 5–8 consolation semi (or the legacy pre-F-2 terminal 5/6 · 7/8 match)
-          const cs = find(2, 2 + Math.ceil(p / 2), true);
+          const cs = find(2, 2 + Math.ceil(p / 2), true);   // 5–8 semi (or the legacy terminal 5/6 · 7/8 match)
           if (cs) lose = { id: cs.id, course: courseOf(consolationSlot(p, R)) };
         }
       }
@@ -3449,10 +3418,9 @@ function keeperRoutes(matches, runoffOption) {
 }
 
 /**
- * The inverse of keeperRoutes: what fills each slot.
- *   Map<matchId, { blue: origin|null, red: origin|null }>
+ * The inverse: what fills each slot.
+ *   Map<matchId, { blue: origin|null, red: origin|null }>,
  *   origin = { kind: 'seed'|'bye'|'winner'|'loser'|'none', from?, seed? }
- * 'none' marks a slot whose feeder was a bye (no loser exists).
  */
 function keeperOrigins(matches, routes) {
   const origins = new Map();
@@ -3476,154 +3444,71 @@ function keeperOrigins(matches, routes) {
   return origins;
 }
 
-function keeperColHeading(round) {
-  return round === 1 ? 'CHAMPIONSHIP FINAL' : round === 2 ? 'SEMIFINALS' : round === 3 ? 'QUARTERFINALS' : `ROUND OF ${2 ** round}`;
-}
-
-/** Short location code for the run-order strip ("R16", "QF", "SEMI", "5-8", "3/4", "FINAL"). */
-function keeperLocCode(m, hasNew58) {
-  const R = Number(m.bracket_round), p = Number(m.bracket_position);
-  if (!m.is_small_final) return R === 1 ? 'FINAL' : R === 2 ? 'SEMI' : R === 3 ? 'QF' : `R${2 ** R}`;
-  if (R === 2) return hasNew58 ? '5-8' : (p === 3 ? '5/6' : '7/8');
-  return p === 2 ? '3/4' : p === 3 ? '5/6' : '7/8';
-}
-
 /**
- * Page plan — computed before any drawing so pointers can name pages.
- * Returns { pages, pageOf, hasNew58, has58 }; pages carry columns of
- * { round, heading, items: [{type:'match'|'bye', m}] } plus a `kind` the
- * renderer understands ('tree' | 'finals' | 'runoff' | 'semisFinals').
- * `area` = { first, rest }: usable bracket height on page 1 (which may
- * carry the bottom logo, v2.3.01) and on later pages.
+ * The sections of the keeper, in print order. Each section is a small tree:
+ *   { title, cols: [ [match, …], … ], out: 'place' | 'next' }
+ * cols[0] is drawn on a fixed grid (two lines per match, byes leave their
+ * space blank); every later column sits at the midpoint of its two feeders.
+ * Main-draw sections are cut by first-round positions so each fits a page:
+ * ≤16 shell one tree, 32 shell four quarters + semis/final, 64 shell eight
+ * eighths + quarters/final. Consolation: 3rd/4th, 5th–8th, 7th/8th.
  */
-function planKeeperPages(bk, runoffOption, L, area) {
+function planKeeperSections(bk, runoffOption, routes, maxFirstRows) {
   const { mainMatches, consolMatches, totalRound } = bk;
   const all = [...mainMatches, ...consolMatches];
   const byRP = (r, p, small) => all.find(m => Number(m.bracket_round) === r && Number(m.bracket_position) === p && !!m.is_small_final === !!small) || null;
   const hasNew58 = !!byRP(1, 3, true);
   const consSemis = consolMatches.filter(m => Number(m.bracket_round) === 2).sort((a, b) => a.bracket_position - b.bracket_position);
   const has58 = runoffOption === 'runoff_to_8th' && totalRound >= 3 && consSemis.length > 0;
-  const f34 = runoffOption !== 'no_runoff' ? byRP(1, 2, true) : null;
-  const final = byRP(1, 1, false);
-  const f56 = byRP(1, 3, true), f78 = byRP(1, 4, true);
-  const pages = [];
-  const areaFor = (idx) => (idx === 0 ? area.first : area.rest);
-
-  const mainItems = (round, posMin, posMax) => mainMatches
-    .filter(m => Number(m.bracket_round) === round && m.bracket_position >= posMin && m.bracket_position <= posMax)
-    .sort((a, b) => a.bracket_position - b.bracket_position)
-    .map(m => ({ type: m.is_bye ? 'bye' : 'match', m }));
-  const treeColumns = (R0, a, b, R1) => {
+  const mainAt = (round, a, b) => mainMatches
+    .filter(m => Number(m.bracket_round) === round && m.bracket_position >= a && m.bracket_position <= b)
+    .sort((a1, b1) => a1.bracket_position - b1.bracket_position);
+  const tree = (R0, a, b, R1) => {
     const cols = [];
-    for (let r = R0; r >= R1; r--) {
-      const div = 2 ** (R0 - r);
-      cols.push({ round: r, heading: keeperColHeading(r), items: mainItems(r, Math.ceil(a / div), Math.ceil(b / div)) });
-    }
+    for (let r = R0; r >= R1; r--) { const div = 2 ** (R0 - r); cols.push(mainAt(r, Math.ceil(a / div), Math.ceil(b / div))); }
     return cols;
   };
-  // A section fits when its FIRST column fits the page; otherwise split the
-  // first-round positions in half. The upper half keeps the rounds it
-  // converges within; the lower half carries the merge matches onward.
-  const sectionPages = (R0, a, b, R1, title, decorate) => {
-    const cols = treeColumns(R0, a, b, R1);
-    if (b === a || keeperColH(cols[0].items, L) <= areaFor(pages.length)) {
-      const page = { kind: 'tree', title, columns: cols };
-      if (decorate) decorate(page);
-      pages.push(page);
+  const roundName = (r) => (r === 1 ? 'Final' : r === 2 ? 'Semi-Finals' : r === 3 ? 'Quarter-Finals' : `Round of ${2 ** r}`);
+  const sections = [];
+  // a main section; split by halves while its first column has more rows than a page holds
+  const addMain = (R0, a, b, R1, title) => {
+    const rows = (b - a + 1) * 2;
+    if (rows > maxFirstRows && b > a) {
+      const half = Math.floor((b - a + 1) / 2), mid = a + half - 1;
+      const upperR1 = Math.max(R1, R0 - Math.round(Math.log2(half)));
+      addMain(R0, a, mid, upperR1, title);
+      addMain(R0, mid + 1, b, R1, title);
       return;
     }
-    const half = Math.floor((b - a + 1) / 2);
-    const mid = a + half - 1;
-    const upperR1 = Math.max(R1, R0 - Math.round(Math.log2(half)));
-    sectionPages(R0, a, mid, upperR1, title, null);
-    sectionPages(R0, mid + 1, b, R1, title, decorate);
+    const cols = tree(R0, a, b, R1);
+    sections.push({ kind: 'main', title, cols, out: R1 === 1 ? 'place' : 'next', R0, a, b, R1 });
   };
-  const finalsDecor = (page) => {
-    page.kind = 'finals';
-    page.f34 = f34;
-    page.note = has58 && hasNew58;              // "all four QF losers ski the 5–8 runoff on page n"
-    page.resultPanel = !has58;                  // otherwise the runoff page carries it
-  };
-
-  if (totalRound <= 3) {
-    // 8 / 4 / 2 shell: one section from the first round to the final
-    const title = totalRound === 3 ? ['QUARTERS', { arrow: true }, 'FINAL']
-                : totalRound === 2 ? ['SEMIS', { arrow: true }, 'FINAL'] : ['FINAL'];
-    sectionPages(totalRound, 1, 2 ** (totalRound - 1), 1, title, finalsDecor);
-  } else if (totalRound === 4) {
-    sectionPages(4, 1, 8, 4, ['ROUND OF 16'], null);
-    pages[0].side = true;                       // how-to + start list beside the Round of 16
-    sectionPages(3, 1, 4, 1, ['QUARTERS', { arrow: true }, 'FINAL'], finalsDecor);
+  if (totalRound <= 4) {
+    addMain(totalRound, 1, 2 ** (totalRound - 1), 1, totalRound === 1 ? 'Final' : `${roundName(totalRound)} to Final`);
+  } else if (totalRound === 5) {
+    for (let q = 1; q <= 4; q++) addMain(5, (q - 1) * 4 + 1, q * 4, 3, `Round of 32 to Quarter-Finals — Section ${q} of 4`);
+    addMain(2, 1, 2, 1, 'Semi-Finals and Final');
   } else {
-    const perQuarter = 2 ** (totalRound - 3);
-    for (let q = 1; q <= 4; q++) {
-      const title = [`QUARTER ${q} · ${q <= 2 ? 'UPPER' : 'LOWER'} HALF`];
-      sectionPages(totalRound, (q - 1) * perQuarter + 1, q * perQuarter, 3, title, null);
-    }
-    pages.push({
-      kind: 'semisFinals', title: ['SEMIFINALS & FINALS'],
-      columns: [
-        { round: 2, heading: has58 ? (hasNew58 ? 'SEMIFINALS & 5TH – 8TH SEMIFINALS' : 'SEMIFINALS · 5TH / 6TH · 7TH / 8TH') : 'SEMIFINALS',
-          items: [...mainItems(2, 1, 2), ...consSemis.map(m => ({ type: 'match', m }))] },
-        { round: 1, heading: has58 ? 'WINNERS SKI FOR 1ST AND 5TH' : 'CHAMPIONSHIP FINAL',
-          items: [final && { type: 'match', m: final }, (has58 && hasNew58 && f56) && { type: 'match', m: f56 }].filter(Boolean) },
-      ],
-      f34, f78: has58 && hasNew58 ? f78 : null, resultPanel: true,
-      legacyFinals: has58 && !hasNew58,
-    });
+    const per = 2 ** (totalRound - 4);
+    for (let e = 1; e <= 8; e++) addMain(totalRound, (e - 1) * per + 1, e * per, 4, `${roundName(totalRound)} to Round of 16 — Section ${e} of 8`);
+    addMain(3, 1, 4, 1, 'Quarter-Finals to Final');
   }
-  if (has58 && totalRound <= 4) {
-    pages.push({
-      kind: 'runoff', title: ['5TH – 8TH RUNOFF'],
-      columns: hasNew58
-        ? [{ round: 2, heading: '5TH – 8TH SEMIFINALS', items: consSemis.map(m => ({ type: 'match', m })) },
-           { round: 1, heading: 'WINNERS SKI FOR 5TH', items: f56 ? [{ type: 'match', m: f56 }] : [] }]
-        : [{ round: 2, heading: '5TH / 6TH AND 7TH / 8TH PLACE', items: consSemis.map(m => ({ type: 'match', m })) }],
-      f78: hasNew58 ? f78 : null, resultPanel: true, howTo: 'bottom',
-    });
-  }
-
-  // Does every page fit at this layout? The tree sections spill when they
-  // don't; the finals-type pages cannot, so they must be checked here.
-  const BOX = keeperBoxH(L), PANEL = 64, CAP = 11;
-  let fits = true;
-  pages.forEach((p, i) => {
-    const areaH = areaFor(i);
-    for (const c of p.columns) if (keeperColH(c.items, L) > areaH) fits = false;
-    if (p.kind === 'finals') {
-      // the final sits at the semis' midpoint; the 3/4 box (+ result panel) hangs under it
-      let need = areaH / 2 + BOX / 2;
-      if (p.f34) need += 12 + CAP + BOX;
-      if (need > areaH) fits = false;
-      if (p.resultPanel && (areaH - need - 10 < 60) && (areaH / 2 - BOX / 2 - 8 < 60)) fits = false;
-    } else if (p.kind === 'runoff') {
-      if (keeperColH(p.columns[0].items, L) + 14 + PANEL > areaH) fits = false;
-    } else if (p.kind === 'semisFinals') {
-      let need = 0;
-      if (p.f34) need += CAP + BOX + 10;
-      if (p.f78) need += CAP + BOX + 10;
-      if (p.resultPanel) need += PANEL;
-      if (need > areaH) fits = false;
-    }
-  });
-
-  // " · PART i OF n" on spilled sections; matchIds + pageOf
-  const titleKey = (t) => t.map(s => (typeof s === 'string' ? s : '->')).join('');
+  // number the parts of a split section
   const counts = {};
-  for (const p of pages) counts[titleKey(p.title)] = (counts[titleKey(p.title)] || 0) + 1;
+  for (const s of sections) counts[s.title] = (counts[s.title] || 0) + 1;
   const seen = {};
-  const pageOf = {};
-  pages.forEach((p, i) => {
-    const k = titleKey(p.title);
-    if (counts[k] > 1) { seen[k] = (seen[k] || 0) + 1; p.title = [...p.title, ` · PART ${seen[k]} OF ${counts[k]}`]; }
-    p.index = i;
-    p.matchIds = new Set();
-    for (const c of p.columns) for (const it of c.items) p.matchIds.add(it.m.id);
-    if (p.f34) p.matchIds.add(p.f34.id);
-    if (p.f78) p.matchIds.add(p.f78.id);
-    for (const id of p.matchIds) pageOf[id] = i + 1;
-  });
-  return { pages, pageOf, hasNew58, has58, fits };
+  for (const s of sections) if (counts[s.title] > 1) { seen[s.title] = (seen[s.title] || 0) + 1; s.title += ` (part ${seen[s.title]} of ${counts[s.title]})`; }
+  // consolation
+  const f34 = runoffOption !== 'no_runoff' ? byRP(1, 2, true) : null;
+  if (f34) sections.push({ kind: 'consol', title: '3rd / 4th Place', cols: [[f34]], out: 'place' });
+  if (has58 && hasNew58) {
+    const f56 = byRP(1, 3, true), f78 = byRP(1, 4, true);
+    sections.push({ kind: 'consol', title: '5th – 8th Place', cols: f56 ? [consSemis, [f56]] : [consSemis], out: 'place' });
+    if (f78) sections.push({ kind: 'consol', title: '7th / 8th Place', cols: [[f78]], out: 'place' });
+  } else if (has58) {
+    for (const m of consSemis) sections.push({ kind: 'consol', title: routes.get(m.id)?.place?.win === 5 ? '5th / 6th Place' : '7th / 8th Place', cols: [[m]], out: 'place' });
+  }
+  return sections;
 }
 
 router.post('/bracket-keeper', requireAuth, async (req, res) => {
@@ -3640,666 +3525,182 @@ router.post('/bracket-keeper', requireAuth, async (req, res) => {
     }
 
     const bk = parseBracketData(bracket, runoffOption);
-    const { mainMatches, consolMatches, totalRound, qualRounds, finalsRounds } = bk;
+    const { mainMatches, consolMatches, qualRounds, finalsRounds } = bk;
     const allMatches = [...mainMatches, ...consolMatches];
     const byId = new Map(allMatches.map(m => [m.id, m]));
     const pairingLabel = buildBracketPairings(event, mainMatches, consolMatches, qualRounds, finalsRounds, runoffOption);
     const routes  = keeperRoutes(allMatches, runoffOption);
     const origins = keeperOrigins(allMatches, routes);
-    const pairingNums = pairingNumbersForRun(allMatches, runoffOption);
-    const runOrderMatches = allMatches.filter(m => pairingNums.has(m.id)).sort((a, b) => pairingNums.get(a.id) - pairingNums.get(b.id));
 
-    const C = KEEPER_COLORS;
-    const MARG = 36, PW = 792, PH = 612, UW = PW - 2 * MARG;
-    const TITLE_H = 18, STRIP_H = 28, INSTR_H = 22, HEAD_H = 13;
+    // ---- geometry (portrait Letter)
+    const MARG = 36, PW = 612, PH = 792, UW = PW - 2 * MARG;
+    const PITCH = 30;          // one skier line every 30 pt in the first column
+    const TITLE_H = 22, SEC_GAP = 16, OUT_W = 62;
+    const INK = '#000000', DIM = '#444444', BLUE = '#1d4ed8', RED = '#b91c1c';
+    const F = 'Helvetica', FB = 'Helvetica-Bold';
 
-    // --- measure the page furniture on a scratch document so the plan knows
-    //     the bracket area before anything is drawn (page 1 may carry the
-    //     bottom logo, v2.3.01, which raises its bottom margin)
-    const furnitureH = TITLE_H + STRIP_H + INSTR_H + HEAD_H;
-    let areaTop0, bottomReserve1;
+    // header height measured on a scratch document (page 1 may carry the bottom logo, v2.3.01)
+    let headerBottom, bottom1;
     {
-      const probe = new PDFDocument({ size: 'LETTER', layout: 'landscape', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
+      const probe = new PDFDocument({ size: 'LETTER', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
       probe.y = MARG;
       pdfHeader(probe, meet, event, 'Bracket Keeper');
-      areaTop0 = Math.ceil(probe.y) + furnitureH;
-      bottomReserve1 = probe.page.margins.bottom;   // 36, or raised by the bottom logo
+      headerBottom = Math.ceil(probe.y) + 6;
+      bottom1 = probe.page.margins.bottom;
       probe.end();
     }
-    const area = { first: PH - bottomReserve1 - areaTop0, rest: PH - MARG - areaTop0 };
+    const areaH1 = PH - bottom1 - headerBottom, areaHN = PH - MARG - headerBottom;
+    const secH = (s) => TITLE_H + s.cols[0].length * 2 * PITCH + 6;
+    const maxFirstRows = Math.floor((areaHN - TITLE_H - 6) / PITCH);
+    const sections = planKeeperSections(bk, runoffOption, routes, maxFirstRows);
 
-    // --- plan: mockup size first; grow the rows while the plan keeps its shape
-    const compact = totalRound >= 6;
-    let L = keeperLayout(compact);
-    let plan = planKeeperPages(bk, runoffOption, L, area);
-    if (!compact) {
-      for (const rowH of [44, 40]) {
-        const Lc = keeperLayout(false, rowH);
-        const pc = planKeeperPages(bk, runoffOption, Lc, area);
-        if (pc.fits && pc.pages.length === plan.pages.length) { L = Lc; plan = pc; break; }
-      }
-    }
-    const { pages, pageOf, hasNew58 } = plan;
-    const N = pages.length;
-    const BOX_H = keeperBoxH(L);
-
-    const doc = new PDFDocument({
-      size: 'LETTER',
-      layout: 'landscape',
-      margins: { top: 36, bottom: 36, left: 36, right: 36 }
+    // ---- page flow: sections top to bottom, new page when one does not fit
+    const pages = [[]];
+    let used = 0;
+    sections.forEach((s) => {
+      const areaH = pages.length === 1 ? areaH1 : areaHN;
+      const h = secH(s) + (pages[pages.length - 1].length ? SEC_GAP : 0);
+      if (pages[pages.length - 1].length && used + h > areaH) { pages.push([]); used = 0; }
+      pages[pages.length - 1].push(s);
+      used += h;
     });
+    const N = pages.length;
+    const pageOf = {};
+    pages.forEach((ps, i) => ps.forEach(s => s.cols.forEach(col => col.forEach(m => { pageOf[m.id] = i + 1; }))));
+
+    const doc = new PDFDocument({ size: 'LETTER', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition',
-      `attachment; filename="${safeFilename(event, 'bracket_keeper')}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(event, 'bracket_keeper')}"`);
     doc.pipe(res);
 
-    // ------------------------------------------------------------------ text
-    const F = 'Helvetica', FB = 'Helvetica-Bold';
-    const widthOf = (str, font, size, cs = 0) => { doc.font(font).fontSize(size); return doc.widthOfString(str, { characterSpacing: cs }); };
+    const widthOf = (s, font, size) => { doc.font(font).fontSize(size); return doc.widthOfString(s); };
+    // text that never wraps and never breaks the page: truncate to the width ourselves
     const put = (str, x, y, font, size, color, opts = {}) => {
       if (str == null || str === '') return;
-      if (opts.width != null && opts.width < 6) return;   // pdfkit's ellipsis loop never ends on a negative width
-      doc.font(font).fontSize(size).fillColor(color);
+      let s = String(str);
       if (opts.width != null) {
-        // pdfkit still wraps at spaces with lineBreak:false once a width is set — truncate ourselves
-        const cs = opts.characterSpacing || 0;
-        let s = String(str);
-        if (doc.widthOfString(s, { characterSpacing: cs }) > opts.width) {
-          while (s.length > 1 && doc.widthOfString(s + '\u2026', { characterSpacing: cs }) > opts.width) s = s.slice(0, -1);
-          s = s.trimEnd() + '\u2026';
-        }
-        str = s;
-        opts = { ...opts }; delete opts.ellipsis;
-      }
-      doc.text(str, x, y, { lineBreak: false, ...opts });
-    };
-    // A run of segments: string | {text, color, font} | {arrow: true}. Draws
-    // left to right (or right-aligned when opts.right is the right edge).
-    // The arrow is a vector (Helvetica has no → glyph in WinAnsi).
-    const ARROW_W = (size) => size * 1.1;
-    const segsWidth = (segs, font, size) => segs.reduce((w, s) => w + (s.arrow ? ARROW_W(size) + size * 0.5 : widthOf(typeof s === 'string' ? s : s.text, s.font || font, size)), 0);
-    const drawArrow = (x, yMid, size, color) => {
-      const len = ARROW_W(size);
-      const x0 = x + size * 0.25, x1 = x0 + len - size * 0.1;
-      doc.save().lineWidth(Math.max(0.8, size * 0.09)).strokeColor(color).lineCap('round');
-      doc.moveTo(x0, yMid).lineTo(x1, yMid).stroke();
-      doc.moveTo(x1 - size * 0.3, yMid - size * 0.28).lineTo(x1, yMid).lineTo(x1 - size * 0.3, yMid + size * 0.28).stroke();
-      doc.restore();
-      return x + len + size * 0.5;
-    };
-    const drawSegs = (segs, x, y, font, size, color, opts = {}) => {
-      const total = segsWidth(segs, font, size);
-      let cx = opts.right != null ? opts.right - total : x;
-      for (const s of segs) {
-        if (s.arrow) { cx = drawArrow(cx, y + size * 0.42, size, color); continue; }
-        const text = typeof s === 'string' ? s : s.text;
-        const f = (typeof s === 'string' ? null : s.font) || font;
-        const c = (typeof s === 'string' ? null : s.color) || color;
-        put(text, cx, y, f, size, c);
-        cx += widthOf(text, f, size);
-      }
-      return total;
-    };
-    // Largest size in [min, max] at which the run fits maxW. Never below 8.
-    const fitSize = (segs, font, maxW, max, min = 8) => {
-      for (let s = max; s > min; s -= 0.5) if (segsWidth(segs, font, s) <= maxW) return s;
-      return min;
-    };
-    const courseSeg = (course) => ({ text: course.toUpperCase(), color: course === 'blue' ? C.blue : C.red });
-    const athleteName = (last, first) => (last || first) ? `${(last || '').toUpperCase()}, ${first || ''}`.replace(/, $/, '') : '';
-
-    const roundNameOf = (m) => (roundNameForMatch(m, allMatches) || '').toUpperCase();
-    const placeText = (m) => {
-      const r = routes.get(m.id);
-      if (!r || !r.place) return null;
-      return r.place.win === 1 ? 'CHAMPIONSHIP FINAL · 1ST / 2ND'
-           : r.place.win === 3 ? 'THIRD / FOURTH'
-           : r.place.win === 5 ? 'FIFTH / SIXTH' : 'SEVENTH / EIGHTH';
-    };
-    const destSegs = (dest, curPage) => {
-      const segs = [pairingLabel(byId.get(dest.id)) || '?', ' · ', courseSeg(dest.course)];
-      const pg = pageOf[dest.id];
-      if (pg && pg !== curPage) segs.push(` · PG.${pg}`);
-      return segs;
-    };
-
-    // ---------------------------------------------------------------- pieces
-    function drawBadge(x, y, w, h, course, size) {
-      const word = course === 'blue' ? 'BLUE' : 'RED';
-      if (course === 'blue') {
-        doc.rect(x, y, w, h).fill(C.blue);
-        put(word, x, y + (h - size) / 2 - 0.5, FB, size, '#ffffff', { width: w, align: 'center', characterSpacing: 0.8 });
-      } else {
-        doc.rect(x, y, w, h).lineWidth(1).stroke(C.red);
-        put(word, x, y + (h - size) / 2 - 0.5, FB, size, C.red, { width: w, align: 'center', characterSpacing: 0.8 });
-      }
-    }
-
-    function originLines(origin) {
-      if (!origin) return [];
-      if (origin.kind === 'seed')   return origin.seed != null ? [`SEED ${origin.seed}`] : [];
-      if (origin.kind === 'bye')    return origin.seed != null ? ['BYE', `SEED ${origin.seed}`] : ['BYE'];
-      if (origin.kind === 'winner') return ['WINNER', pairingLabel(byId.get(origin.from)) || ''];
-      if (origin.kind === 'loser')  return ['LOSER', pairingLabel(byId.get(origin.from)) || ''];
-      if (origin.kind === 'none')   return ['NO LOSER', '(BYE)'];
-      return [];
-    }
-
-    // One athlete row of a match box
-    function drawRow(m, side, x, y, w, curPage) {
-      const rowH = L.rowH;
-      const first = side === 'blue' ? m.blue_first : m.red_first;
-      const last  = side === 'blue' ? m.blue_last  : m.red_last;
-      const bib   = side === 'blue' ? m.blue_bib   : m.red_bib;
-      const regId = side === 'blue' ? m.registration_id_blue : m.registration_id_red;
-      const won   = m.status === 'complete' && !m.is_bye && regId && m.winner_registration_id === regId;
-      const origin = (origins.get(m.id) || {})[side];
-
-      // stub: badge over the origin label
-      const badgeW = L.stubW - 12, badgeH = L.compact ? 9 : 11;
-      drawBadge(x + 6, y + 2, badgeW, badgeH, side, L.compact ? 8 : 8.5);
-      let lines = originLines(origin);
-      let ly = y + 2 + badgeH + 1.5;
-      const lineH = L.lblSize + 0.5;
-      const availH = rowH - (ly - y);
-      if (lines.length > 1 && Math.floor(availH / lineH) < lines.length) {
-        // one line: "BYE · SEED 4", "WINNER W-03"; shorter words if that still won't fit
-        const joined = origin.kind === 'bye' ? lines.join(' · ') : lines.join(' ');
-        const alt = origin.kind === 'bye' ? `BYE · S${origin.seed}` : origin.kind === 'winner' ? `WIN ${lines[1]}` : origin.kind === 'loser' ? `LOSS ${lines[1]}` : lines.join(' ');
-        lines = [widthOf(joined, FB, 8) <= L.stubW - 4 ? joined : alt];
-      }
-      for (const ln of lines) {
-        const sz = fitSize([ln], FB, L.stubW - 4, L.lblSize);
-        put(ln, x + 2, ly, FB, sz, C.label, { width: L.stubW - 4, align: 'center' });
-        ly += lineH;
-      }
-      doc.moveTo(x + L.stubW, y).lineTo(x + L.stubW, y + rowH).lineWidth(0.8).stroke(C.ink);
-
-      // bib cell
-      const bx = x + L.stubW;
-      put('BIB', bx + 3, y + 3, FB, 8, C.dark);
-      doc.moveTo(bx + L.bibW, y).lineTo(bx + L.bibW, y + rowH).lineWidth(0.8).stroke(C.ink);
-      if (bib != null && bib !== '') {
-        const bibStr = String(bib);
-        const bsz = fitSize([bibStr], FB, L.bibW - 6, L.bibSize, 9);
-        const by = y + (rowH - bsz) / 2 + 2;
-        put(bibStr, bx, by, FB, bsz, C.ink, { width: L.bibW, align: 'center' });
-        if (won) {
-          const tw = widthOf(bibStr, FB, bsz);
-          doc.save().lineWidth(1).strokeColor(C.ink);
-          doc.ellipse(bx + L.bibW / 2, by + bsz * 0.55, Math.max(tw / 2 + 5, bsz * 0.6), bsz * 0.7).stroke();
-          doc.restore();
+        if (opts.width < 6) return;
+        doc.font(font).fontSize(size);
+        if (doc.widthOfString(s) > opts.width) {
+          while (s.length > 1 && doc.widthOfString(s + '…') > opts.width) s = s.slice(0, -1);
+          s = s.trimEnd() + '…';
         }
       }
-
-      // name field
-      const nx = bx + L.bibW;
-      put('NAME', nx + 4, y + 3, FB, 8, C.dark);
-      const name = athleteName(last, first);
-      if (name) {
-        const nw = w - (nx - x) - 8;
-        put(name, nx + 5, y + (rowH - L.nameSize) / 2 + 2, F, L.nameSize, C.ink, { width: nw, ellipsis: true });
+      doc.font(font).fontSize(size).fillColor(color).text(s, x, y, { lineBreak: false, width: opts.width, align: opts.align });
+    };
+    const athlete = (m, side, withSeed) => {
+      const last = m[`${side}_last`], first = m[`${side}_first`], bib = m[`${side}_bib`];
+      if (!last && !first) return '';
+      const seed = side === 'blue' ? (m.blue_dual_seed ?? m.seed_blue) : (m.red_dual_seed ?? m.seed_red);
+      return `${bib != null ? bib + '  ' : ''}${(last || '').toUpperCase()}, ${first || ''}${withSeed && seed != null ? `  (${seed})` : ''}`;
+    };
+    const feederText = (m, side, curPage) => {
+      const o = (origins.get(m.id) || {})[side];
+      if (!o) return '';
+      if (o.kind === 'winner' || o.kind === 'loser') {
+        const f = byId.get(o.from);
+        const pg = pageOf[o.from];
+        return `${o.kind === 'winner' ? 'Won' : 'Lost'} ${pairingLabel(f) || ''}${pg && pg !== curPage ? `  (p.${pg})` : ''}`;
       }
+      if (o.kind === 'none') return '(bye — no loser)';
+      return '';
+    };
+    const ordinal = (n) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+
+    // one skier line: text above, course word below the right end
+    function drawSlot(m, side, x0, x1, y, curPage, firstCol) {
+      doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.8).strokeColor(INK).stroke();
+      const filled = !!m[`registration_id_${side}`];
+      const text = filled ? athlete(m, side, firstCol) : feederText(m, side, curPage);
+      if (text) put(text, x0 + 1, y - 10.5, filled ? FB : F, filled ? (firstCol ? 8.5 : 8) : 8, filled ? INK : DIM, { width: x1 - x0 - 2 });
+      const course = side === 'blue' ? 'Blue' : 'Red';
+      put(course, x1 - 30, y + 1.5, F, 7.5, side === 'blue' ? BLUE : RED, { width: 30, align: 'right' });
     }
 
-    // A match box: header strip (tick, label, round name, pointers) over two rows
-    function drawKeeperMatch(m, x, y, w, curPage) {
-      const hdrH = L.hdrH, rowH = L.rowH;
-      const r = routes.get(m.id) || {};
-      const isChamp = r.place && r.place.win === 1;
-      doc.rect(x, y, w, hdrH).fill(isChamp ? C.ink : C.hdrFill);
-      doc.rect(x, y, w, hdrH + 2 * rowH).lineWidth(1).stroke(C.ink);
-      doc.moveTo(x, y + hdrH).lineTo(x + w, y + hdrH).lineWidth(1).stroke(C.ink);
-      doc.moveTo(x, y + hdrH + rowH).lineTo(x + w, y + hdrH + rowH).lineWidth(0.8).stroke(C.ink);
-
-      const inkOn = isChamp ? '#ffffff' : C.ink;
-      // tick box + pairing label
-      const tick = L.compact ? 9 : 11;
-      doc.rect(x + 6, y + (hdrH - tick) / 2, tick, tick).fillAndStroke('#ffffff', C.ink);
-      const lbl = pairingLabel(m) || '';
-      const lblSize = L.compact ? 10 : 12;
-      put(lbl, x + 6 + tick + 5, y + (hdrH - lblSize) / 2 + 0.5, FB, lblSize, inkOn);
-      const leftW = 6 + tick + 5 + widthOf(lbl, FB, lblSize) + 6;
-
-      const rightX = x + w - 6;
-      const pt = placeText(m);
-      if (pt) {
-        // place-deciding match: the placing instead of pointers
-        const sz = fitSize([pt], FB, w - leftW - 6, L.compact ? 8.5 : 9.5);
-        drawSegs([pt], 0, y + (hdrH - sz) / 2 + 0.5, FB, sz, isChamp ? '#ffffff' : C.ink, { right: rightX });
-      } else {
-        const winSegs  = r.win  ? ['WINNER ', { arrow: true }, ' ', ...destSegs(r.win, curPage)]  : null;
-        const loseSegs = r.lose ? ['LOSER ',  { arrow: true }, ' ', ...destSegs(r.lose, curPage)] : ['LOSER ', { arrow: true }, ' ELIMINATED'];
-        const maxW = w - leftW - 6;
-        const sz = Math.min(fitSize(winSegs || loseSegs, FB, maxW, L.ptrMax), fitSize(loseSegs, FB, maxW, L.ptrMax));
-        const lineH = sz + 1.5;
-        const top = y + (hdrH - 2 * lineH) / 2 + 0.5;
-        let usedW = 0;
-        if (winSegs) usedW = Math.max(usedW, drawSegs(winSegs, 0, top, FB, sz, C.ink, { right: rightX }));
-        usedW = Math.max(usedW, drawSegs(loseSegs, 0, top + lineH, FB, sz, C.dark, { right: rightX }));
-        // round name after the label, only when it fits beside the pointers
-        const rn = roundNameOf(m);
-        if (rn) {
-          const room = w - leftW - usedW - 10;
-          if (widthOf(rn, FB, 8) <= room) put(rn, x + leftW, y + (hdrH - 8) / 2 + 0.5, FB, 8, C.dark);
-        }
-      }
-
-      // rows: red on top in odd rounds, blue in even (v2.5.07, matches drawMatch)
-      const redOnTop = Number(m.bracket_round) % 2 === 1;
-      drawRow(m, redOnTop ? 'red' : 'blue', x, y + hdrH, w, curPage);
-      drawRow(m, redOnTop ? 'blue' : 'red', x, y + hdrH + rowH, w, curPage);
+    // pairing label in a small oval at the junction (below the bottom line, like Winfree's circled number)
+    function drawLabel(lbl, x, y) {
+      if (!lbl) return;
+      const w = widthOf(lbl, FB, 8) + 8, h = 12;
+      doc.roundedRect(x, y, w, h, 6).lineWidth(0.7).fillAndStroke('#ffffff', INK);
+      put(lbl, x, y + 2.3, FB, 8, INK, { width: w, align: 'center' });
     }
 
-    // A bye: one strip, no tick box, no pairing label
-    function drawKeeperBye(m, x, y, w, curPage) {
-      const h = L.byeH;
-      doc.rect(x, y, w, h).fillAndStroke(C.byeFill, C.rule);
-      put('BYE', x + 6, y + (h - 8) / 2 + 0.5, FB, 8, C.dark, { characterSpacing: 1 });
-      const badgeW = L.compact ? 30 : 36, badgeH = L.compact ? 10 : 12;
-      drawBadge(x + 30, y + (h - badgeH) / 2, badgeW, badgeH, 'blue', L.compact ? 8 : 8.5);
-      const bibX = x + 30 + badgeW + 6, bibW = 26;
-      const bibSize = L.compact ? 10 : 12;
-      if (m.blue_bib != null) put(String(m.blue_bib), bibX, y + (h - bibSize) / 2 + 1, FB, bibSize, C.ink, { width: bibW, align: 'center' });
-      const r = routes.get(m.id) || {};
-      let rightSegs = null, pageLine = null, rightW = 0;
-      if (r.win) {
-        rightSegs = ['DOES NOT SKI ', { arrow: true }, ' ', ...destSegs(r.win, curPage).slice(0, 3)];
-        const pg = pageOf[r.win.id];
-        if (pg && pg !== curPage) pageLine = `ALREADY ON PAGE ${pg}`;
-      }
-      const nameX = bibX + bibW + 6;
-      const nameSize = L.compact ? 9.5 : 11;
-      const wide = w >= 340;
-      const name = athleteName(m.blue_last, m.blue_first);
-      if (wide) {
-        const rsz = rightSegs ? fitSize(rightSegs, FB, w * 0.45, L.compact ? 8 : 8.5) : 0;
-        if (rightSegs) rightW = Math.max(segsWidth(rightSegs, FB, rsz), pageLine ? widthOf(pageLine, FB, 8) : 0);
-        put(name, nameX, y + (h - nameSize) / 2 + 1, F, nameSize, C.ink, { width: w - (nameX - x) - rightW - 12, ellipsis: true });
-        if (rightSegs && pageLine) {
-          drawSegs(rightSegs, 0, y + 3, FB, rsz, C.ink, { right: x + w - 6 });
-          put(pageLine, x + w - 6 - widthOf(pageLine, FB, 8), y + h - 8 - 3, FB, 8, C.dark);
-        } else if (rightSegs) {
-          drawSegs(rightSegs, 0, y + (h - rsz) / 2 + 0.5, FB, rsz, C.ink, { right: x + w - 6 });
-        }
-      } else {
-        // narrow: name on the first line, the pointer right-aligned on the second
-        put(name, nameX, y + 1.5, F, nameSize - 1, C.ink, { width: w - (nameX - x) - 8, ellipsis: true });
-        if (rightSegs) {
-          let segs = pageLine ? [...rightSegs, { text: ` · ${pageLine}`, color: C.dark }] : rightSegs;
-          let rsz = fitSize(segs, FB, w - 12, 8.5);
-          if (segsWidth(segs, FB, rsz) > w - 12) { segs = [...rightSegs, { text: ` · PG.${pageOf[r.win.id]}`, color: C.dark }]; rsz = fitSize(segs, FB, w - 12, 8.5); }
-          drawSegs(segs, 0, y + h - rsz - 2, FB, rsz, C.ink, { right: x + w - 6 });
-        }
-      }
-    }
-
-    // Winners-only connectors between two adjacent columns (positions maps)
-    function drawKeeperConnectors(fromCol, toCol) {
-      doc.save().lineWidth(0.9).strokeColor(C.ink);
-      for (const t of toCol.placed) {
-        const feeders = fromCol.placed.filter(f => (routes.get(f.m.id) || {}).win && routes.get(f.m.id).win.id === t.m.id);
-        if (!feeders.length) continue;
-        const midX = (fromCol.x + fromCol.w + t.x) / 2;
-        for (const f of feeders) {
-          doc.moveTo(fromCol.x + fromCol.w, f.cy).lineTo(midX, f.cy).stroke();
-        }
-        const ys = feeders.map(f => f.cy);
-        const yTop = Math.min(...ys, t.cy), yBot = Math.max(...ys, t.cy);
-        doc.moveTo(midX, yTop).lineTo(midX, yBot).stroke();
-        doc.moveTo(midX, t.cy).lineTo(t.x, t.cy).stroke();
-      }
-      doc.restore();
-    }
-
-    function drawRunOrderStrip(x, y, w, page) {
-      const useAll = totalRound <= 4 && (w - 52) / Math.max(1, runOrderMatches.length) >= 40;
-      const list = useAll ? runOrderMatches : runOrderMatches.filter(m => page.matchIds.has(m.id));
-      const labelW = useAll ? 52 : 64;
-      doc.rect(x, y, w, STRIP_H).lineWidth(1).stroke(C.ink);
-      doc.rect(x, y, labelW, STRIP_H).fill(C.ink);
-      if (useAll) {
-        put('RUN', x, y + 5, FB, 8, '#ffffff', { width: labelW, align: 'center', characterSpacing: 1 });
-        put('ORDER', x, y + 15, FB, 8, '#ffffff', { width: labelW, align: 'center', characterSpacing: 1 });
-      } else {
-        put('MATCHES ON', x, y + 5, FB, 8, '#ffffff', { width: labelW, align: 'center' });
-        put('THIS PAGE', x, y + 15, FB, 8, '#ffffff', { width: labelW, align: 'center' });
-      }
-      const outputCell = !useAll;
-      const n = list.length + (outputCell ? 1 : 0);
-      if (!n) return;
-      const cellW = (w - labelW) / n;
-      const shortCodes = useAll && widthOf('FINAL HERE', FB, 8) > cellW - 8;
-      const codeOf = (m) => { const c = keeperLocCode(m, hasNew58); return shortCodes ? (c === 'FINAL' ? 'FIN' : c === 'SEMI' ? 'SF' : c) : c; };
-      list.forEach((m, i) => {
-        const cx = x + labelW + i * cellW;
-        const here = page.matchIds.has(m.id);
-        if (here) doc.rect(cx, y, cellW, STRIP_H).fill(C.hdrFill);
-        doc.moveTo(cx, y).lineTo(cx, y + STRIP_H).lineWidth(0.6).stroke(C.rule);
-        const tick = 9;
-        put(pairingLabel(m) || '', cx + 4, y + 4, FB, 9, C.ink);
-        doc.rect(cx + cellW - tick - 4, y + 4, tick, tick).fillAndStroke('#ffffff', C.ink);
-        const code = codeOf(m);
-        const loc = useAll ? (here ? `${code} HERE` : `${code} PG${pageOf[m.id] || '?'}`) : code;
-        const lsz = fitSize([loc], FB, cellW - 8, 8, 8);
-        put(loc, cx + 4, y + 16, FB, lsz, C.dark, { width: cellW - 8, ellipsis: true });
+    function drawSection(s, top, curPage) {
+      // title
+      doc.rect(MARG, top, Math.min(UW, widthOf(s.title, FB, 10) + 16), 16).lineWidth(0.7).stroke(INK);
+      put(s.title, MARG + 8, top + 3.5, FB, 10, INK);
+      const gridTop = top + TITLE_H;
+      const ncol = s.cols.length;
+      // the first column (printed names) gets 1.5 shares, later columns 1 share; short sections keep Winfree-length lines
+      const firstW = Math.min(230, (UW - OUT_W) * 1.5 / (ncol + 0.5));
+      const restW = ncol > 1 ? Math.min(210, (UW - OUT_W - firstW) / (ncol - 1)) : 0;
+      const colX = (ci) => MARG + (ci === 0 ? 0 : firstW + (ci - 1) * restW);
+      const colWOf = (ci) => (ci === 0 ? firstW : restW);
+      const slotY = new Map();   // `${matchId}:${side}` -> y ; plus per-match junction mid
+      const midOf = new Map();
+      s.cols.forEach((col, ci) => {
+        const x0 = colX(ci), x1 = x0 + colWOf(ci) - 12;
+        col.forEach((m, i) => {
+          const redOnTop = Number(m.bracket_round) % 2 === 1;
+          const topSide = redOnTop ? 'red' : 'blue', botSide = redOnTop ? 'blue' : 'red';
+          let yTop, yBot;
+          if (ci === 0) {
+            yTop = gridTop + (2 * i) * PITCH + PITCH * 0.6;
+            yBot = yTop + PITCH;
+          } else {
+            // feeders in the previous column, in their column order: upper feeder → top line
+            const feeders = s.cols[ci - 1].filter(f => (routes.get(f.id) || {}).win && routes.get(f.id).win.id === m.id
+              || (routes.get(f.id) || {}).lose && routes.get(f.id).lose.id === m.id);
+            const mids = feeders.map(f => midOf.get(f.id)).filter(v => v != null);
+            if (mids.length >= 2) { yTop = mids[0]; yBot = mids[1]; }
+            else if (mids.length === 1) { yTop = mids[0] - PITCH / 2; yBot = mids[0] + PITCH / 2; }
+            else { yTop = gridTop + (2 * i) * PITCH + PITCH * 0.6; yBot = yTop + PITCH; }
+          }
+          if (m.is_bye) { midOf.set(m.id, (yTop + yBot) / 2); return; }   // a bye leaves its space blank
+          drawSlot(m, topSide, x0, x1, yTop, curPage, ci === 0);
+          drawSlot(m, botSide, x0, x1, yBot, curPage, ci === 0);
+          const mid = (yTop + yBot) / 2;
+          midOf.set(m.id, mid);
+          slotY.set(`${m.id}:${topSide}`, yTop); slotY.set(`${m.id}:${botSide}`, yBot);
+          // bracket: vertical joining the two lines, then the winner's line onward
+          doc.moveTo(x1, yTop).lineTo(x1, yBot).lineWidth(0.8).strokeColor(INK).stroke();
+          const r = routes.get(m.id) || {};
+          const nextX = ci + 1 < ncol ? colX(ci + 1) : x1 + 14;
+          doc.moveTo(x1, mid).lineTo(nextX, mid).stroke();
+          drawLabel(pairingLabel(m), x1 + 3, yBot + 3);
+          if (ci + 1 === ncol) {
+            // the section's output: a placing, or the match the winner goes to
+            const ox0 = nextX, ox1 = Math.min(MARG + UW, nextX + 120);
+            doc.moveTo(ox0, mid).lineTo(ox1, mid).stroke();
+            if (r.place) {
+              put(ordinal(r.place.win), ox0 + 2, mid - 11, FB, 9, INK);
+              if (r.lose == null && r.place.lose) put(`(loser ${ordinal(r.place.lose)})`, ox0 + 2, mid + 2, F, 7.5, DIM, { width: ox1 - ox0 - 2 });
+            } else if (r.win) {
+              const d = byId.get(r.win.id);
+              const pg = pageOf[r.win.id];
+              put(`to ${pairingLabel(d) || ''}${pg && pg !== curPage ? ` (p.${pg})` : ''}`, ox0 + 2, mid - 11, FB, 8, INK, { width: ox1 - ox0 - 2 });
+              put(r.win.course === 'blue' ? 'Blue' : 'Red', ox1 - 30, mid + 1.5, F, 7.5, r.win.course === 'blue' ? BLUE : RED, { width: 30, align: 'right' });
+            }
+          }
+        });
       });
-      if (outputCell) {
-        // where this page's output goes: the pointers of its last column
-        const cx = x + labelW + list.length * cellW;
-        doc.moveTo(cx, y).lineTo(cx, y + STRIP_H).lineWidth(0.6).stroke(C.rule);
-        const lastCol = page.columns[page.columns.length - 1];
-        const outPages = new Set();
-        for (const it of lastCol.items) {
-          const r = routes.get(it.m.id) || {};
-          for (const d of [r.win, r.lose]) if (d && pageOf[d.id] && pageOf[d.id] !== page.index + 1) outPages.add(pageOf[d.id]);
-        }
-        const txt = outPages.size ? ['ON TO', `PG.${[...outPages].sort().join(', ')}`] : ['RUN IN NUMBER', 'ORDER'];
-        put(txt[0], cx + 4, y + 4, FB, fitSize([txt[0]], FB, cellW - 8, 8, 8), C.ink, { width: cellW - 8, ellipsis: true });
-        put(txt[1], cx + 4, y + 16, FB, fitSize([txt[1]], FB, cellW - 8, 8, 8), C.dark, { width: cellW - 8, ellipsis: true });
-      }
+      return gridTop + s.cols[0].length * 2 * PITCH + 6;
     }
 
-    function drawHowTo(x, y, w) {
-      const first = runOrderMatches[0] ? pairingLabel(runOrderMatches[0]) : '', last = runOrderMatches.length ? pairingLabel(runOrderMatches[runOrderMatches.length - 1]) : '';
-      const steps = [
-        `Matches ski in number order, ${first} through ${last}. The run-order strip at the top of every page says which page each match is on.`,
-        'When a match is called, write each skier\'s bib, then their name, on their course line. BLUE is the filled badge, RED the outlined badge.',
-        'Circle the winner\'s bib.',
-        'Copy the winner into the match named at the right of the header, and the loser into the match named under it. The header always says where both skiers go next.',
-        'Tick the box beside the match number once both destinations are written.',
-        'Solid lines follow winners only. Losers are never drawn with a line — they are named in words.',
-      ];
-      doc.rect(x, y, w, 14).fill(C.ink);
-      put('HOW TO KEEP THIS BRACKET', x + 6, y + 3.5, FB, 8, '#ffffff', { characterSpacing: 1 });
-      let cy = y + 20;
-      steps.forEach((s, i) => {
-        put(String(i + 1), x + 4, cy, FB, 9, C.ink);
-        doc.font(F).fontSize(8).fillColor(C.ink);
-        const h = doc.heightOfString(s, { width: w - 22 });
-        doc.text(s, x + 16, cy + 0.5, { width: w - 22, lineGap: 0.5 });
-        cy += h + 5;
-      });
-      return cy - y;
-    }
-
-    function drawStartList(x, y, w, maxH) {
-      const entrants = [];
-      for (const m of mainMatches.filter(mm => Number(mm.bracket_round) === totalRound)) {
-        const r = routes.get(m.id) || {};
-        for (const side of ['blue', 'red']) {
-          const reg = m[`registration_id_${side}`];
-          if (!reg) continue;
-          const seed = side === 'blue' ? (m.blue_dual_seed ?? m.seed_blue) : (m.red_dual_seed ?? m.seed_red);
-          let firstMatch;
-          if (m.is_bye) firstMatch = r.win ? [pairingLabel(byId.get(r.win.id)) || '', ' ', courseSeg(r.win.course)] : ['BYE'];
-          else firstMatch = [pairingLabel(m) || '', ' ', courseSeg(side)];
-          entrants.push({ seed, bib: m[`${side}_bib`], name: athleteName(m[`${side}_last`], m[`${side}_first`]), firstMatch });
-        }
-      }
-      entrants.sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999) || String(a.name).localeCompare(String(b.name)));
-      const byes = mainMatches.filter(mm => Number(mm.bracket_round) === totalRound && mm.is_bye).length;
-      doc.rect(x, y, w, 14).fill(C.ink);
-      put('START LIST', x + 6, y + 3.5, FB, 8, '#ffffff', { characterSpacing: 1 });
-      const sub = `${entrants.length} ENTERED${byes ? ` · ${byes} BYE${byes === 1 ? '' : 'S'}` : ''}`;
-      put(sub, x, y + 3.5, FB, 8, '#ffffff', { width: w - 6, align: 'right' });
-      const rowH = Math.max(10, Math.min(14, Math.floor((maxH - 30) / Math.max(1, entrants.length))));
-      let cy = y + 18;
-      put('SEED', x + 4, cy, FB, 8, C.dark); put('BIB', x + 34, cy, FB, 8, C.dark); put('NAME', x + 64, cy, FB, 8, C.dark);
-      put('FIRST MATCH', x, cy, FB, 8, C.dark, { width: w - 4, align: 'right' });
-      cy += 11;
-      doc.moveTo(x, cy - 1).lineTo(x + w, cy - 1).lineWidth(0.8).stroke(C.ink);
-      const fs = rowH >= 12 ? 9 : 8;
-      for (const e of entrants) {
-        doc.moveTo(x, cy + rowH - 1).lineTo(x + w, cy + rowH - 1).lineWidth(0.4).stroke(C.cellRule);
-        const ty = cy + (rowH - fs) / 2;
-        if (e.seed != null) put(String(e.seed), x + 4, ty, FB, fs, C.ink);
-        if (e.bib != null) put(String(e.bib), x + 34, ty, FB, fs, C.ink);
-        put(e.name, x + 64, ty, F, fs, C.ink, { width: w - 64 - 90, ellipsis: true });
-        drawSegs(e.firstMatch, 0, ty, FB, fs, C.ink, { right: x + w - 4 });
-        cy += rowH;
-      }
-      return cy - y;
-    }
-
-    // Final result panel: places 1..n each pre-labelled with its source
-    function resultPlaces() {
-      const places = [];
-      for (const m of allMatches) {
-        const r = routes.get(m.id);
-        if (!r || !r.place) continue;
-        const lbl = pairingLabel(m) || '';
-        const done = m.status === 'complete' && !m.is_bye && m.winner_registration_id;
-        const wSide = done ? (m.winner_registration_id === m.registration_id_blue ? 'blue' : 'red') : null;
-        const lSide = wSide ? (wSide === 'blue' ? 'red' : 'blue') : null;
-        const ath = (side) => side ? { bib: m[`${side}_bib`], name: athleteName(m[`${side}_last`], m[`${side}_first`]) } : {};
-        places.push({ place: r.place.win,  source: `WINNER ${lbl}`, ...ath(wSide) });
-        places.push({ place: r.place.lose, source: `LOSER ${lbl}`,  ...ath(lSide) });
-      }
-      return places.sort((a, b) => a.place - b.place);
-    }
-    function drawResultPanel(x, y, w, h) {
-      const places = resultPlaces();
-      if (!places.length) return 0;
-      const twoCol = w >= 480 && places.length > 4;
-      const rows = twoCol ? Math.ceil(places.length / 2) : places.length;
-      const hdr = 14;
-      const rowH = Math.max(11, Math.min(20, Math.floor((h - hdr - 2) / rows)));
-      const total = hdr + rows * rowH + 1;
-      doc.rect(x, y, w, total).lineWidth(1).stroke(C.ink);
-      doc.rect(x, y, w, hdr).fill(C.ink);
-      if (w >= 420) {
-        put('FINAL RESULT — WRITE THE BIB, THEN THE NAME', x + 6, y + 3.5, FB, 8, '#ffffff', { characterSpacing: 0.8 });
-        put('SIGNED BY THE REFEREE', x, y + 3.5, FB, 8, C.rule, { width: w - 6, align: 'right' });
-      } else {
-        put('FINAL RESULT — BIB, THEN NAME', x + 6, y + 3.5, FB, 8, '#ffffff', { width: w - 12, characterSpacing: 0.8 });
-      }
-      const colW = twoCol ? w / 2 : w;
-      const fs = rowH >= 14 ? 9 : 8;
-      places.forEach((p, i) => {
-        const col = twoCol ? Math.floor(i / rows) : 0;
-        const row = twoCol ? i % rows : i;
-        const cx = x + col * colW, cy = y + hdr + row * rowH;
-        if (col > 0) doc.moveTo(cx, cy).lineTo(cx, cy + rowH).lineWidth(0.8).stroke(C.rule);
-        doc.moveTo(cx, cy + rowH).lineTo(cx + colW, cy + rowH).lineWidth(0.4).stroke(C.cellRule);
-        doc.moveTo(cx + 26, cy).lineTo(cx + 26, cy + rowH).lineWidth(0.4).stroke(C.cellRule);
-        doc.moveTo(cx + 26 + 36, cy).lineTo(cx + 26 + 36, cy + rowH).lineWidth(0.4).stroke(C.cellRule);
-        const srcW = Math.max(60, widthOf(p.source, FB, 8) + 10);
-        doc.moveTo(cx + colW - srcW, cy).lineTo(cx + colW - srcW, cy + rowH).lineWidth(0.4).stroke(C.cellRule);
-        put(String(p.place), cx, cy + (rowH - 10) / 2 + 0.5, FB, 10, C.ink, { width: 26, align: 'center' });
-        put(p.source, cx + colW - srcW, cy + (rowH - 8) / 2 + 0.5, FB, 8, C.dark, { width: srcW, align: 'center' });
-        if (p.bib != null && p.bib !== '') put(String(p.bib), cx + 26, cy + (rowH - fs) / 2 + 0.5, FB, fs, C.ink, { width: 36, align: 'center' });
-        if (p.name) put(p.name, cx + 26 + 36 + 5, cy + (rowH - fs) / 2 + 0.5, F, fs, C.ink, { width: colW - srcW - 26 - 36 - 10, ellipsis: true });
-      });
-      return total;
-    }
-
-    // ------------------------------------------------------------- page shell
-    function drawFurniture(page) {
+    pages.forEach((ps, pi) => {
+      if (pi > 0) doc.addPage();
       doc.y = MARG;
       pdfHeader(doc, meet, event, 'Bracket Keeper');
-      const titleY = doc.y;
-      const titleSize = 13;
-      const tw = drawSegs(page.title, 0, titleY, FB, titleSize, C.ink, { right: MARG + UW });
-      const small = `BRACKET KEEPER · PAGE ${page.index + 1} OF ${N}`;
-      put(small, MARG + UW - tw - 14 - widthOf(small, FB, 8, 1), titleY + (titleSize - 8) / 2 + 1, FB, 8, C.dark, { characterSpacing: 1 });
-      const stripY = titleY + TITLE_H;
-      drawRunOrderStrip(MARG, stripY, UW, page);
-      const instrY = stripY + STRIP_H + 4;
-      doc.font(F).fontSize(8).fillColor(C.dark);
-      doc.text('Circle the winner’s bib, then copy the winner into the match named at the right of that match’s header. Lines are drawn for winners only. Where there is no line, the header names the match to copy from. Starting-round names are printed for you — write only from the second round on.',
-        MARG, instrY, { width: UW, lineGap: 0 });
-      const headingY = instrY + INSTR_H - 3;
-      const areaTop = titleY + furnitureH;
-      const areaBottom = PH - doc.page.margins.bottom;
-      return { headingY, areaTop, areaH: areaBottom - areaTop };
-    }
-    function drawFooter(page) {
-      stampFooter(doc);
-      const saved = doc.page.margins.bottom;
-      doc.page.margins.bottom = 0;
-      const segs = [`PAGE ${page.index + 1} OF ${N} · `, ...page.title];
-      drawSegs(segs, MARG, PH - (doc._baseBottomMargin ?? saved) + 8, FB, 8, C.dark);
-      doc.page.margins.bottom = saved;
-    }
-
-    // Lay a column's items out: spread evenly (gap ≥ L.gap) or, when
-    // `anchors` are given, centre each match on its feeders in the previous column.
-    function placeColumn(col, x, w, areaTop, areaH, prev) {
-      col.x = x; col.w = w; col.placed = [];
-      if (!prev) {
-        const sum = col.items.reduce((s, it) => s + keeperItemH(it, L), 0);
-        const n = col.items.length;
-        const g = n > 0 ? Math.max(L.gap, (areaH - sum) / (n + 1)) : 0;
-        let cy = areaTop + (n > 1 ? g : Math.max(0, Math.min(g, (areaH - sum) / 2)));
-        for (const it of col.items) {
-          const h = keeperItemH(it, L);
-          col.placed.push({ m: it.m, type: it.type, x, y: cy, w, h, cy: cy + h / 2 });
-          cy += h + g;
-        }
-        return;
-      }
-      let lastBottom = -Infinity;
-      for (const it of col.items) {
-        const h = keeperItemH(it, L);
-        const feeders = prev.placed.filter(f => (routes.get(f.m.id) || {}).win && routes.get(f.m.id).win.id === it.m.id);
-        let cy = feeders.length ? feeders.reduce((s, f) => s + f.cy, 0) / feeders.length : areaTop + areaH / 2;
-        let y = cy - h / 2;
-        if (y < lastBottom + L.gap) { y = lastBottom + L.gap; cy = y + h / 2; }
-        if (y < areaTop) { y = areaTop; cy = y + h / 2; }
-        if (y + h > areaTop + areaH) { y = areaTop + areaH - h; cy = y + h / 2; }
-        col.placed.push({ m: it.m, type: it.type, x, y, w, h, cy });
-        lastBottom = y + h;
-      }
-    }
-    function drawPlaced(col, curPage) {
-      for (const p of col.placed) {
-        if (p.type === 'bye') drawKeeperBye(p.m, p.x, p.y, p.w, curPage);
-        else drawKeeperMatch(p.m, p.x, p.y, p.w, curPage);
-      }
-    }
-    function heading(text, x, y, w) {
-      put(text, x, y, FB, 8, C.dark, { width: w, characterSpacing: 1.2, ellipsis: true });
-    }
-    function caption(text, x, y, w) {
-      put(text, x, y, FB, 8, C.dark, { width: w, ellipsis: true });
-    }
-
-    // --------------------------------------------------------------- pages
-    pages.forEach((page, pi) => {
-      if (pi > 0) doc.addPage();
-      const curPage = pi + 1;
-      const { headingY, areaTop, areaH } = drawFurniture(page);
       const savedBottom = doc.page.margins.bottom;
-      doc.page.margins.bottom = 0;
-      const cols = page.columns;
-
-      // column geometry
-      let treeW = UW, x0 = MARG;
-      if (page.kind === 'tree' && page.side) { treeW = 400; }
-      const extraCol = (page.kind === 'runoff' && page.f78) || (page.kind === 'semisFinals') ? 1 : 0;
-      const ncol = cols.length + extraCol;
-      let colW = (treeW - (ncol - 1) * L.colGap) / ncol;
-      if (ncol === 1 && !page.side) colW = Math.min(colW, 420);
-      const boxW = colW;
-
-      // place + draw columns (the runoff page keeps the result panel's room at the bottom)
-      let colAreaH = areaH, panelH = 0;
-      if (page.kind === 'runoff' && page.resultPanel) {
-        const col1H = keeperColH(cols[0].items, L);
-        panelH = Math.max(64, Math.min(100, areaH - col1H - 14));
-        colAreaH = areaH - panelH - 14;
-      }
-      cols.forEach((col, ci) => {
-        placeColumn(col, x0 + ci * (colW + L.colGap), boxW, areaTop, colAreaH, ci ? cols[ci - 1] : null);
-      });
-      for (let ci = 0; ci + 1 < cols.length; ci++) drawKeeperConnectors(cols[ci], cols[ci + 1]);
-      cols.forEach((col, ci) => {
-        heading(col.heading, col.x, headingY, colW);
-        drawPlaced(col, curPage);
-      });
-
-      // ---- side region (16 shell page 1): how-to + start list
-      if (page.kind === 'tree' && page.side) {
-        const sx = x0 + treeW + 24, sw = UW - treeW - 24;
-        const used = drawHowTo(sx, areaTop, sw);
-        drawStartList(sx, areaTop + used + 10, sw, areaH - used - 10);
-      }
-
-      // ---- finals page extras: the 3/4 box under the final, note, result panel
-      if (page.kind === 'finals') {
-        const finalCol = cols[cols.length - 1];
-        const fp = finalCol.placed[0];
-        const fx = finalCol.x, fw = colW;
-        let cy = fp ? fp.y + fp.h : areaTop;
-        if (page.f34) {
-          heading('CHAMPIONSHIP FINAL · 3RD / 4TH', fx, headingY, colW);
-          cy += 12;
-          caption('COPY BOTH SEMIFINAL LOSERS IN BY HAND', fx, cy, fw);
-          cy += 11;
-          if (cy + BOX_H <= areaTop + areaH) { drawKeeperMatch(page.f34, fx, cy, fw, curPage); cy += BOX_H; }
-        }
-        if (page.note && fp && fp.y - areaTop > 34) {
-          const runoffPg = pages.find(p => p.kind === 'runoff');
-          doc.font(FB).fontSize(8).fillColor(C.dark);
-          doc.text(`ALL FOUR QUARTERFINAL LOSERS SKI THE 5TH – 8TH RUNOFF ON PAGE ${runoffPg ? runoffPg.index + 1 : N}. CARRY THEM OVER AS SOON AS EACH QUARTERFINAL IS SCORED.`,
-            fx, areaTop + 2, { width: fw });
-        }
-        if (page.resultPanel) {
-          const below = areaTop + areaH - cy - 10;
-          const above = fp ? fp.y - areaTop - 8 : 0;
-          if (below >= 60) drawResultPanel(fx, cy + 10, fw, Math.min(below, 110));
-          else if (above >= 60) drawResultPanel(fx, areaTop, fw, Math.min(above, 110));
-        }
-      }
-
-      // ---- 5th–8th runoff page: 7/8 beside the 5/6 final, result panel below
-      if (page.kind === 'runoff') {
-        let bottom = Math.max(...cols.map(c => c.placed.length ? Math.max(...c.placed.map(p => p.y + p.h)) : areaTop));
-        if (page.f78) {
-          const ex = x0 + (ncol - 1) * (colW + L.colGap);
-          heading('LOSERS SKI FOR 7TH', ex, headingY, colW);
-          const ref = cols[cols.length - 1].placed[0];
-          const ey = ref ? ref.y : areaTop;
-          caption('COPY BOTH LOSERS FROM THE LEFT IN BY HAND', ex, ey - 11, colW);
-          drawKeeperMatch(page.f78, ex, ey, colW, curPage);
-          bottom = Math.max(bottom, ey + BOX_H);
-        }
-        if (page.resultPanel) {
-          const py = areaTop + colAreaH + 14;
-          const avail = panelH;
-          if (avail > 40) drawResultPanel(MARG, py, UW, avail);
-          // how-to under the finals when there is room
-          if (page.howTo && cols.length > 1) {
-            const c2 = cols[1];
-            const top = (c2.placed[0] ? c2.placed[0].y + c2.placed[0].h : areaTop) + 12;
-            const need = 120;
-            if (py - 8 - top >= need) drawHowTo(c2.x, top, UW - (c2.x - MARG));
-          }
-        }
-      }
-
-      // ---- 32/64 shell finals page: 3/4 on top of column 3, result panel, 7/8 at the bottom
-      if (page.kind === 'semisFinals') {
-        const ex = x0 + (ncol - 1) * (colW + L.colGap);
-        heading(page.f34 && page.f78 ? 'LOSERS SKI FOR 3RD AND 7TH' : page.f34 ? '3RD / 4TH · FINAL RESULT' : 'FINAL RESULT', ex, headingY, colW);
-        let top = areaTop, bottom = areaTop + areaH;
-        if (page.f34) {
-          caption('COPY BOTH SEMIFINAL LOSERS IN BY HAND', ex, top, colW);
-          drawKeeperMatch(page.f34, ex, top + 11, colW, curPage);
-          top += 11 + BOX_H + 10;
-        }
-        if (page.f78) {
-          const ey = bottom - BOX_H;
-          caption('COPY BOTH LOSERS FROM THE LEFT IN BY HAND', ex, ey - 11, colW);
-          drawKeeperMatch(page.f78, ex, ey, colW, curPage);
-          bottom = ey - 11 - 10;
-        }
-        if (page.resultPanel && bottom - top > 40) drawResultPanel(ex, top, colW, bottom - top);
-      }
-
+      doc.page.margins.bottom = 0;      // absolute drawing must never trigger pdfkit's own page break
+      let y = headerBottom;
+      ps.forEach((s, i) => { if (i) y += SEC_GAP; y = drawSection(s, y, pi + 1); });
       doc.page.margins.bottom = savedBottom;
-      drawFooter(page);
+      stampFooter(doc);
+      const fy = PH - (doc._baseBottomMargin ?? savedBottom) + 8;
+      doc.page.margins.bottom = 0;
+      put(`Page ${pi + 1} of ${N}`, MARG, fy, F, 7.5, DIM);
+      doc.page.margins.bottom = savedBottom;
     });
 
     doc.end();
@@ -5041,6 +4442,5 @@ module.exports = router;
 // v2.6.01 — pure bracket-keeper helpers, exported for the harness (additive)
 module.exports.keeperRoutes = keeperRoutes;
 module.exports.keeperOrigins = keeperOrigins;
-module.exports.planKeeperPages = planKeeperPages;
-module.exports.keeperLayout = keeperLayout;
+module.exports.planKeeperSections = planKeeperSections;
 module.exports.buildBracketPositions = buildBracketPositions;

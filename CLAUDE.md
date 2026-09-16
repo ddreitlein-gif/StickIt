@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.6.01
+**Current version:** v2.6.02
 
 ## Commands
 
@@ -235,100 +235,71 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
+## v2.6.02 Feature Notes
+
+### Bracket Keeper — Plain Line Tree (v2.6.02; replaces the v2.6.01 design)
+
+**What happened.** v2.6.01 (same day, 09-15-26) shipped the Claude Design box layout from
+`Claude Output/StickIt_Bracket_Keeper_Implementation_Prompt_09-15-26.md`. David rejected it on
+sight: overcrowded, too much redundant text, unusable next to the Winfree keeper officials know.
+Root causes recorded so they are not repeated: (1) the prompt copied the mockups' CSS-pixel
+measurements as points, so type was a third too large for the boxes; (2) the design itself carried
+far more text than the job needs (two-line pointers in every header, stub labels, badges, a
+run-order strip, an instruction line, a how-to block, a start list, a result panel); (3) the
+64-shell "compact" variant was unreadable; (4) the pages were reviewed as 60 dpi thumbnails, which
+hid every collision. **Ruling (David, 09-15-26): disregard the Claude Design suggestions; functional
+not beautiful; keep it simple and informative like Winfree's, without the redundancy.**
+
+**The keeper now** (`POST /api/pdf/bracket-keeper`, still `requireAuth`, same request body and
+filename; **portrait** Letter). A bare line tree: one line per skier, `bib  LAST, First  (seed)`
+printed above the line when known, `Won W-03` / `Lost W-06` (+ `(p.n)` when that match is on
+another page) on a line still to be filled, the course word (Blue / Red) under the right end of
+every line, the pairing label in a small oval at each junction (Winfree's circled number), the
+placing at the end of each deciding line (`1st` + `(loser 2nd)`, `3rd`, `5th`, `7th`), a boxed
+section title. Byes leave their first-round space blank; the athlete is already printed where they
+enter. A quarter/eighth section ends with `to W-28 (p.3)` + course. No scores, boxes, badges,
+tick boxes, strips, instructions, start list or result panel. Sections (`planKeeperSections`):
+≤16 shell one tree (*Round of 16 to Final*), 32 shell four *Round of 32 to Quarter-Finals —
+Section q of 4* + *Semi-Finals and Final*, 64 shell eight sections to the Round of 16 +
+*Quarter-Finals to Final*; then *3rd / 4th Place*, *5th – 8th Place* (cons semis → 5/6), *7th / 8th
+Place* (legacy pre-F-2: 5th/6th and 7th/8th directly). Sections flow down the page (30 pt per
+line) and start a new page when they do not fit; a main section wider than a page splits by
+first-round positions. Pages: 16 shell 2 (1 without runoff to 8th), 28/32 athletes 3, 8 shell 1,
+64 shell 5 — independent of byes. The routing (`keeperRoutes` / `keeperOrigins`, courses from
+`dual.js advancementSlot / consolationSlot`) and the one-line `buildBracketPositions` fix from
+v2.6.01 are unchanged and remain the only code outside the keeper's own route.
+
+**Verification.** `harness/tests/v2601.test.js` rewritten for the line tree — 72 checks: routing
+vs `advanceWinner` on 16 / 28 / 6-athlete brackets played through; every label printed, two
+digits; page plans 2 / 1 / 1 / 2 / 3 / 3 / 1 / 1 / 5 / 5 / legacy; entrants pre-printed with bib,
+name, seed; bye athletes on the line they enter; exactly one Won/Lost label per empty slot (and
+none once complete); section outputs `to W-nn (p.3)`; placings; no strips/instructions/pointers;
+nothing below 7 pt; mid-day print with identical line geometry and winners on the next lines;
+`/dual-bracket` 32-shell finals page + `buildBracketPositions` old/new equality; `requireAuth`.
+Every shape reviewed at 100 dpi full-page renders (not thumbnails). Regression: v2507, step1,
+`verify_v16.js`.
+
+**Files modified:** `server/routes/pdf.js` (keeper route + planner rewritten; exports
+`keeperRoutes`, `keeperOrigins`, `planKeeperSections`, `buildBracketPositions`),
+`harness/tests/v2601.test.js`, `client/src/help/topics/reports-pdf.md`,
+`server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf` (regenerated), `CHANGELOG.md`,
+`server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
+
+---
+
 ## v2.6.01 Feature Notes
 
-### Bracket Keeper Redesign (v2.6.01)
+### Bracket Keeper Redesign (v2.6.01 — WITHDRAWN the same day, see v2.6.02)
 
-Implements `Claude Output/StickIt_Bracket_Keeper_Implementation_Prompt_09-15-26.md` (Cowork design
-pass → Claude Design review → David's rulings, 09-15-26). **The only changes outside the keeper are
-the one-line `buildBracketPositions` anchor fix (section 6.1 of the prompt) and the additive
-`module.exports` of `advancementSlot` / `consolationSlot` in `server/routes/dual.js`.** No
-scoring math, no schema change, no sync-protocol change (still v3), no client change beyond the
-version default, no change to bracket construction / advancement / run order / pairing numbers
-(`runOrder.js`, `placement*.js` untouched; labels stay two-digit per gender — the review's
-three-digit `W-001` and Winfree's interleaved numbering were rejected per the prompt).
-
-**What the keeper is now** (`POST /api/pdf/bracket-keeper`, still `requireAuth`, landscape Letter,
-same request body and `safeFilename(event, 'bracket_keeper')`). A sheet filled in by hand, in
-pencil, by people who have never seen it: every match box has a header strip (tick box, pairing
-label, round name from `runOrder.js roundLabel`) with the two forward pointers in a fixed place —
-`WINNER → W-10 · BLUE · PG.2` over `LOSER → W-08 · RED · PG.3` (or `LOSER → ELIMINATED`; the
-place-deciding matches print `CHAMPIONSHIP FINAL · 1ST / 2ND`, `THIRD / FOURTH`, `FIFTH / SIXTH`,
-`SEVENTH / EIGHTH` instead); two rows each with a stub (BLUE solid badge / RED outlined badge — the
-shape survives a monochrome copier — over the slot's origin `SEED 5` · `BYE · SEED 1` · `WINNER
-W-03` · `LOSER W-06` · `NO LOSER (BYE)`), a ruled BIB cell and a NAME field; red on top in odd
-rounds (v2.5.07 convention, same as `drawMatch`). Byes are one-line strips (badge, bib, name,
-`DOES NOT SKI → W-03 · RED`, `ALREADY ON PAGE 2`) and the athlete is pre-printed in the slot they
-enter. Seeded names pre-printed everywhere they are known; completed matches print both names with
-a thin printed circle around the winner's bib; DNF/DNS/DSQ losers print plain. Connectors follow
-winners only; boxes with no incoming line carry an action caption (`COPY BOTH SEMIFINAL LOSERS IN
-BY HAND`), never "no line". Every page: `pdfHeader`, page title + `BRACKET KEEPER · PAGE n OF N`, a
-run-order strip (one cell per match in pairing order with `R16 HERE` / `QF PG2` and a tick box,
-shaded for the matches on the page; 32/64 shells list the page's matches + an `ON TO PG.n` cell;
-short codes `SF`/`FIN` when 20 cells must fit), the instruction line, `stampFooter` + `PAGE n OF N ·
-title` at the left of the footer line (the StickIt mark owns the right). Page 1 of a 16 shell
-carries **How to keep this bracket** (six steps) and the **Start list**; the last page the **Final
-result** panel (places 1–8 / 1–4 / 1–2, `WINNER W-14` / `LOSER W-14` sources, names printed once
-decided). Arrows are vectors (Helvetica has no → in WinAnsi). Nothing below 8 pt except the
-untouched 7 pt `stampFooter` line.
-
-**All derived from data.** `keeperRoutes(matches, runoffOption)` → per match `{ win, lose, place }`
-(destinations by structure; courses from `dual.js advancementSlot / consolationSlot` — the parity
-rule is NOT copied into pdf.js), `keeperOrigins()` = the inverse (`seed | bye | winner | loser |
-none`), `planKeeperPages()` computes the page plan before any drawing so pointers know their page
-numbers; the row wins over the structure wherever a slot already holds an athlete. Legacy pre-F-2
-brackets (round-2 small finals terminal) route to places 5–8 directly. All three exported from
-pdf.js (additive) for the harness.
-
-**Geometry ruling (recorded here because the prompt and the mockups disagree).** The Claude Design
-mockups are drawn in CSS px at 96/in; the prompt repeated their numbers as pt (48 pt rows, 306 pt
-boxes, 228 pt compact boxes — three 306 pt columns do not fit a 720 pt page). The keeper is built
-at the mockups' physical size (×0.75): 36 pt (½ in) writing rows, 26 pt header, 54 pt stub, 34 pt
-bib cell, ~230 pt boxes in a three-column tree; rows grow to 40 / 44 pt when every page of the plan
-still fits. A section whose first column cannot fit at 36 pt spills onto a second page
-(`ROUND OF 16 · PART 1 OF 2`) rather than shrinking further — so the page plans are entry-count
-driven: 16 shell with byes (the 09-15 test event, 10 entered) = 3 pages (runoff to 4th / none: 2),
-a full 16 = 4, 28 and 32 athletes = 5, a 64 shell = 5 + one page per quarter that spills (the
-50-entrant harness draw fell 7, near-full 9); compact 64-shell variant 26 pt rows / 20 pt header /
-~171 pt boxes. pdfkit gotchas found: text with a `width` wraps at spaces even with
-`lineBreak:false` (the keeper pre-truncates) and its ellipsis loop never ends on a negative width
-(OOM'd the server on the first 8-shell render — `put()` refuses widths < 6); text with a width
-auto-breaks the page when `y + lineHeight` passes the bottom margin, so the bottom margin is zeroed
-while a page is drawn and restored for the footer.
-
-**6.1 shared fix** (`buildBracketPositions`, one line: `roundOffset = rounds[0] - round`): the
-divisor selecting a later round's matches was anchored to the whole bracket, so on any page whose
-first column is the quarterfinals the second semifinal and the connectors into the final were never
-drawn — visible on the 09-15-26 test keeper (W-09 missing) and on the `/dual-bracket` PDF's
-`[3, 2, 1]` page on 32 and 64 shells, which is now repaired; 16- and 8-shell positions are
-provably identical to the old anchor (harness unit check).
-
-**Docs.** `reports-pdf.md` gained a Bracket Keeper section + the endpoint; `events-dual.md` "sheet"
-→ "pages"; guide PDFs regenerated; venue PDFs regenerated (footer).
-
-**Verification.** New `harness/tests/v2601.test.js` — **85 checks green**: routing map vs
-`advanceWinner` for every played match and bye on 16 / 28 / 6-athlete brackets played to
-completion (+ every filled slot holds the athlete its origin label names); every `pairing_label`
-printed, two digits, byes none; page plans (3 / 2 / 2 / 4 / 5 / 5 / 64-shell / legacy); pre-printing
-of every entrant and every bye in the slot they enter with `BYE · SEED n`; exactly one WINNER /
-LOSER stub per structural slot; every header pointer with course + page; `LOSER → ELIMINATED`,
-placings, action captions, result-panel sources, how-to + start list, strip cells, no "sheet";
-type floor from the content-stream `Tf` ops; mid-day print after the quarterfinals with identical
-`re` geometry, 4 bezier ops per circled winner bib, both names on completed matches, semis filled
-from the rows; champion on result line 1 when complete; `/dual-bracket` 32-shell finals page shows
-both semifinals; `buildBracketPositions` old-vs-new equality on 16/8 shells and the 32-shell
-difference; `NO LOSER (BYE)` on a 6-athlete bracket; `requireAuth` kept (401 with protection on).
-Regression: v2507 62/62, v2506 42/42, v260 89/89, step1 route gate, release gates, `verify_v16.js`
-123/123 (see chat for the run). Every shape rendered to PNG and reviewed against the mockups (16
-shell blank + after the quarterfinals + complete, 28, 32, 6, 4, 50 and 62 in a 64 shell, legacy).
-
-**Files created:** `harness/tests/v2601.test.js`
-**Files modified:** `server/routes/pdf.js` (keeper rewrite + the one-line `buildBracketPositions`
-fix + additive exports), `server/routes/dual.js` (additive exports only),
-`client/src/help/topics/{reports-pdf,events-dual}.md`, `server/public/docs/guides/*.pdf` +
-`server/public/docs/venue/*.pdf` (regenerated), `CHANGELOG.md`, `server/version.js`,
-`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
-`server/public/*` (rebuilt), `CLAUDE.md`
+Shipped the Claude Design box layout (pointers, stubs, badges, run-order strip, how-to, start
+list, result panel; `Claude Output/StickIt_Bracket_Keeper_Implementation_Prompt_09-15-26.md`).
+Rejected by David as overcrowded and unusable; replaced by the v2.6.02 line tree. Two things from
+this release survive: the one-line `buildBracketPositions` anchor fix (`roundOffset = rounds[0] -
+round`) that repairs the missing second semifinal on the `/dual-bracket` PDF's `[3, 2, 1]` page for
+32 and 64 shells (16- and 8-shell output provably unchanged), and the additive
+`module.exports` of `advancementSlot` / `consolationSlot` from `server/routes/dual.js`. Everything
+else from v2.6.01 is gone.
 
 ---
 
