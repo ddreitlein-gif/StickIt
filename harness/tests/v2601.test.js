@@ -12,7 +12,7 @@
  *   2  Pairing labels — every label printed equals pairing_label from GET /dual;
  *      byes print none; two digits per gender (W-01 / M-14).
  *   3  Page plan — 16 shell 2 pages (1 for runoff to 4th / none); 28 and 32
- *      athletes 3; 8 shell 1; 64 shell 5; legacy pre-F-2 bracket renders.
+ *      athletes 3; 8 shell 2 (runoff to 8th); 64 shell 6; legacy pre-F-2 bracket renders.
  *   4  Pre-printing — every entrant with bib, name and seed on their first-round
  *      line; a bye athlete pre-printed on the line they enter.
  *   5  Open lines — exactly one "Won W-nn" / "Lost W-nn" per empty structural
@@ -348,7 +348,7 @@ async function main() {
     const D6 = await makeDual(api, { name: 'Keeper D6', gender: 'M', athletes: 6, runoff: 'runoff_to_8th' });
     const rD = await fetchPdf(cloud.base, 'bracket-keeper', D6.event.id, F('d6.pdf'));
     c.eq(rD.status, 200, 'D: 6-athlete keeper renders');
-    c.eq(pdfInfoPages(rD.file), 1, 'D: 8 shell, runoff to 8th → 1 page');
+    c.eq(pdfInfoPages(rD.file), 2, 'D: 8 shell, runoff to 8th → 2 pages (tree + 3rd/4th, then 5th–8th and 7th/8th)');
     const tD = norm(pdfText(rD.file, ['-layout']));
     c.ok(/\(bye — no loser\)/.test(tD) && /Quarter-Finals to Final/.test(tD), 'D: a 5–8 line fed by a bye quarterfinal reads (bye — no loser)');
     const doneD = await play(api, D6.event.id);
@@ -367,16 +367,16 @@ async function main() {
     const E50 = await makeDual(api, { name: 'Keeper E50', gender: 'M', athletes: 50, runoff: 'runoff_to_8th' });
     const rE = await fetchPdf(cloud.base, 'bracket-keeper', E50.event.id, F('e50.pdf'));
     c.eq(rE.status, 200, 'E: 50-entrant 64 shell renders');
-    c.eq(pdfInfoPages(rE.file), 5, 'E: 64 shell → 5 pages (two eighths per page + quarterfinals to final)');
+    c.eq(pdfInfoPages(rE.file), 6, 'E: 64 shell → 6 pages (two eighths per page, quarterfinals to final + consolation)');
     const pE = pdfPagesText(rE.file, ['-layout']);
-    c.ok(/Section 1 of 8/.test(pE[0]) && /Quarter-Finals to Final/.test(pE[4]) && /7th \/ 8th Place/.test(pE[4]), 'E: Round of 64 sections first, quarterfinals → final + consolation last');
+    c.ok(/Section 1 of 8/.test(pE[0]) && /Quarter-Finals to Final/.test(pE[4]) && /7th \/ 8th Place/.test(pE[5]), 'E: Round of 64 sections first, quarterfinals → final, consolation last');
     const bE = await api.must('GET', `/api/events/${E50.event.id}/dual`);
     const tE = norm(pdfText(rE.file, ['-layout']));
     c.ok(bE.filter(m => !m.is_bye).every(m => tE.includes(m.pairing_label)), 'E: every label printed on the 64 shell');
     c.ok(fontSizes(contentOps(rE.buf)).every(s => s >= 7), 'E: nothing below 7 pt');
     const E62 = await makeDual(api, { name: 'Keeper E62', gender: 'F', athletes: 62, runoff: 'runoff_to_8th' });
     const rE62 = await fetchPdf(cloud.base, 'bracket-keeper', E62.event.id, F('e62.pdf'));
-    c.ok(rE62.status === 200 && pdfInfoPages(rE62.file) === 5, 'E: near-full 64 shell → 5 pages too (the tree does not depend on byes)');
+    c.ok(rE62.status === 200 && pdfInfoPages(rE62.file) === 6, 'E: near-full 64 shell → 6 pages too (the tree does not depend on byes)');
 
     // =====================================================================
     // F. legacy pre-F-2 bracket (round-2 small finals terminal, no round-1 pos 3/4)

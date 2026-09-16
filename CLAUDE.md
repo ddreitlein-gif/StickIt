@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.6.02
+**Current version:** v2.6.03
 
 ## Commands
 
@@ -235,6 +235,23 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ---
 
+## v2.6.03 Feature Notes
+
+### Bracket Keeper — Open-Line Labels Below the Line (v2.6.03)
+
+David's 09-15-26 review of v2.6.02 ("mostly good"): the "Won M-01" / "Lost M-06" label on a
+line still to be filled sat ABOVE the line, in the space the volunteer writes the name into. Now
+it prints below the line, small, at the left, beside the course word — the space above every
+open line is clear for a handwritten name — and the line pitch grew from 30 to 32 pt for the
+same reason. Consequence: a 64 shell's 7th/8th section moves to a 6th page and an 8 shell with runoff to
+8th takes 2 pages (16 shell still 2, 32 shell 3). Keeper only; harness v2601 expectations updated (72 checks).
+
+**Files modified:** `server/routes/pdf.js`, `harness/tests/v2601.test.js`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `server/public/docs/venue/*.pdf` (regenerated footer), `CLAUDE.md`
+
+---
+
 ## v2.6.02 Feature Notes
 
 ### Bracket Keeper — Plain Line Tree (v2.6.02; replaces the v2.6.01 design)
@@ -265,7 +282,7 @@ Section q of 4* + *Semi-Finals and Final*, 64 shell eight sections to the Round 
 Place* (legacy pre-F-2: 5th/6th and 7th/8th directly). Sections flow down the page (30 pt per
 line) and start a new page when they do not fit; a main section wider than a page splits by
 first-round positions. Pages: 16 shell 2 (1 without runoff to 8th), 28/32 athletes 3, 8 shell 1,
-64 shell 5 — independent of byes. The routing (`keeperRoutes` / `keeperOrigins`, courses from
+64 shell 5 (6 from v2.6.03) — independent of byes. The routing (`keeperRoutes` / `keeperOrigins`, courses from
 `dual.js advancementSlot / consolationSlot`) and the one-line `buildBracketPositions` fix from
 v2.6.01 are unchanged and remain the only code outside the keeper's own route.
 

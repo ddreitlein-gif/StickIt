@@ -57,10 +57,10 @@ Each match shows blue/red athlete names, scores split (`2+5+0+4+0=11`), and the 
 
 The hand-kept bracket for the start area, in the plain line-tree form officials know from Winfree (v2.6.02). Portrait Letter; one line per skier. Nothing is written on it but names: the keeper records who won by copying the winner onto the next line.
 
-- Every skier known when the sheet is printed is on their line as **bib  LAST, First  (seed)**. A line still to be filled says who fills it: **Won W-03** or **Lost W-06** (with the page number when that match is on another page). A bye leaves its first-round space blank and the athlete is already printed on the line they enter.
+- Every skier known when the sheet is printed is on their line as **bib  LAST, First  (seed)**. A line still to be filled is left clear for the handwritten name; under it, small, is who fills it: **Won W-03** or **Lost W-06** (with the page number when that match is on another page). A bye leaves its first-round space blank and the athlete is already printed on the line they enter.
 - The pairing label (`W-03`, `M-14`, the same numbers as the tablets, the Scoring tab and the Broadcast Board) sits in a small oval at each junction; the course word (Blue / Red) is under the right end of every line, per USSS/FIS 4310.3.1, red on top in odd rounds as on the other bracket views.
 - The end of each deciding line carries the placing: **1st** (loser 2nd), **3rd**, **5th**, **7th**.
-- Sections: a 16 shell is one tree, *Round of 16 to Final*, followed by *3rd / 4th Place*, *5th – 8th Place* and *7th / 8th Place* (2 pages, 1 without Runoff to 8th). A 32 shell prints four *Round of 32 to Quarter-Finals* sections (two per page, each ending "to W-nn (p.3)") and a *Semi-Finals and Final* page with the consolation trees (3 pages). A 64 shell prints eight sections to the Round of 16 and a *Quarter-Finals to Final* page (5 pages).
+- Sections: a 16 shell is one tree, *Round of 16 to Final*, followed by *3rd / 4th Place*, *5th – 8th Place* and *7th / 8th Place* (2 pages, 1 without Runoff to 8th; an 8 shell likewise). A 32 shell prints four *Round of 32 to Quarter-Finals* sections (two per page, each ending "to W-nn (p.3)") and a *Semi-Finals and Final* page with the consolation trees (3 pages). A 64 shell prints eight sections to the Round of 16 and a *Quarter-Finals to Final* page with the consolation trees (6 pages).
 - Printed mid-day, the same sheet shows the results so far on the lines; the layout never moves.
 
 ### Final Place List (dual mogul)

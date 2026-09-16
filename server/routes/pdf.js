@@ -3534,7 +3534,7 @@ router.post('/bracket-keeper', requireAuth, async (req, res) => {
 
     // ---- geometry (portrait Letter)
     const MARG = 36, PW = 612, PH = 792, UW = PW - 2 * MARG;
-    const PITCH = 30;          // one skier line every 30 pt in the first column
+    const PITCH = 32;          // one skier line every 32 pt in the first column — the space above each line is for a handwritten name
     const TITLE_H = 22, SEC_GAP = 16, OUT_W = 62;
     const INK = '#000000', DIM = '#444444', BLUE = '#1d4ed8', RED = '#b91c1c';
     const F = 'Helvetica', FB = 'Helvetica-Bold';
@@ -3611,8 +3611,12 @@ router.post('/bracket-keeper', requireAuth, async (req, res) => {
     function drawSlot(m, side, x0, x1, y, curPage, firstCol) {
       doc.moveTo(x0, y).lineTo(x1, y).lineWidth(0.8).strokeColor(INK).stroke();
       const filled = !!m[`registration_id_${side}`];
-      const text = filled ? athlete(m, side, firstCol) : feederText(m, side, curPage);
-      if (text) put(text, x0 + 1, y - 10.5, filled ? FB : F, filled ? (firstCol ? 8.5 : 8) : 8, filled ? INK : DIM, { width: x1 - x0 - 2 });
+      if (filled) {
+        put(athlete(m, side, firstCol), x0 + 1, y - 10.5, FB, firstCol ? 8.5 : 8, INK, { width: x1 - x0 - 2 });
+      } else {
+        // an open line: who fills it goes BELOW the line so the space above stays free for the handwritten name
+        put(feederText(m, side, curPage), x0 + 1, y + 1.5, F, 7.5, DIM, { width: x1 - x0 - 34 });
+      }
       const course = side === 'blue' ? 'Blue' : 'Red';
       put(course, x1 - 30, y + 1.5, F, 7.5, side === 'blue' ? BLUE : RED, { width: 30, align: 'right' });
     }
