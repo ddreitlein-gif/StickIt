@@ -4,7 +4,7 @@ import api, { createWebSocket, authHeaders, downloadAuthed } from '../utils/api'
 import { useAuth } from '../auth/AuthContext'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
-import CsvImportModal from '../components/CsvImportModal'
+import RegistrationImportDialog from '../components/RegistrationImportDialog'
 import BibAssignModal from '../components/BibAssignModal'
 import VoiceManualEntryModal from '../components/VoiceManualEntryModal'
 import StatusConfirmDialog from '../components/StatusConfirmDialog'
@@ -578,6 +578,11 @@ function EventSetupPanel({ event, judges, onRefresh }) {
               <option value="paper">Paper</option>
             </select>
           </div>
+        </div>
+        {/* v2.7.00 — Winfree short registration name used by Import Registrations */}
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-sm text-slate-400 whitespace-nowrap" title="Winfree short registration name — what the Events column and tick columns of an RMF Data file resolve against (M, M2, D, A…)">Import code:</span>
+          <UsssCodeField meetId={meetId} eventId={eventId} field="import_code" value={event.import_code} onSave={onRefresh} />
         </div>
         {event.discipline !== 'aerials' && (
           <div className="mt-3 flex items-center gap-6">
@@ -1656,12 +1661,12 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
   return (
     <div className="space-y-6">
       {showCsvImport && (
-        <CsvImportModal
+        <RegistrationImportDialog
           meetId={event.meet_id}
           eventId={event.id}
-          event={event}
-          onClose={() => setShowCsvImport(false)}
-          onImported={() => { setShowCsvImport(false); setRegExpanded(true); onRefresh(); setShowUsssSyncPrompt(true) }}
+          eventName={event.name}
+          onClose={() => { setShowCsvImport(false); onRefresh() }}
+          onImported={() => { setRegExpanded(true); setShowUsssSyncPrompt(true) }}
         />
       )}
       {/* Placement dialog for adding athletes when order is locked */}
@@ -1704,7 +1709,7 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
           <button onClick={() => { setShowNew(!showNew); setShowUsssRegister(false) }} className="btn-ghost text-sm">Manual Entry</button>
           <button onClick={() => { setShowUsssRegister(!showUsssRegister); setShowNew(false); setUsssRegMsg('') }} className="btn-ghost text-sm">Register from USSS Database</button>
           <button onClick={openBrowse} className="btn-ghost text-sm">Browse &amp; Register All</button>
-          <button onClick={() => setShowCsvImport(true)} className="btn-ghost text-sm">Upload Registration CSV</button>
+          <button onClick={() => setShowCsvImport(true)} className="btn-ghost text-sm" data-testid="reg-import-button">Import Registrations…</button>
           <button onClick={handleUsssSync} disabled={usssSyncing} className="btn-ghost text-sm disabled:opacity-50">
             {usssSyncing ? 'Syncing...' : 'Sync with USSS Database'}
           </button>
@@ -1826,6 +1831,11 @@ function RegistrationPanel({ event, registrations, onRefresh }) {
           >
             <span className={`transition-transform text-slate-400 text-xs ${regExpanded ? 'rotate-90' : ''}`}>&#9654;</span>
             Registered Athletes <span className="text-slate-500 font-normal text-base">({registrations.filter(r=>r.status!=='scratched').length})</span>
+            {event.import_code && (
+              <span className="ml-2 text-xs font-mono font-normal text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded" title="Import code (Winfree short name) — see the Details tab to change it" data-testid="reg-import-code">
+                Import code {event.import_code}
+              </span>
+            )}
           </h3>
           <div className="flex gap-2">
             <button onClick={() => setShowBibAssign(true)} className="bg-mountain-600 hover:bg-mountain-500 text-white text-xs px-3 py-1.5 rounded font-semibold">Assign Bibs</button>
@@ -5115,7 +5125,7 @@ function UsssCodeField({ meetId, eventId, field, value, onSave, type = "text" })
   const save = async () => {
     setSaving(true)
     try { await api.updateEvent(meetId, eventId, { [field]: val.trim() || null }); onSave() }
-    catch {} finally { setSaving(false); setEditing(false) }
+    catch (e) { alert(e.message) } finally { setSaving(false); setEditing(false) }
   }
 
   if (editing) {

@@ -203,6 +203,10 @@ async function processUpload(fileText, originalFileName) {
 let lastSyncDay = -1;
 
 function startScheduledSync() {
+  // v2.7.00 — test hook: the harness seeds usss_people with fixtures and
+  // must not have the real People File land on top mid-suite. Never set in
+  // production.
+  if (process.env.STICKIT_DISABLE_USSS_SYNC === '1') return;
   // Run once on startup after 10-second delay
   setTimeout(async () => {
     try {

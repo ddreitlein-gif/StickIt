@@ -16,8 +16,55 @@ const IMPORT_TMP_DIR = path.join(__dirname, '..', 'data', 'tmp');
 try { fs.mkdirSync(MEET_LOGOS_DIR, { recursive: true }); } catch {}
 try { fs.mkdirSync(IMPORT_TMP_DIR, { recursive: true }); } catch {}
 const importUpload = multer({ dest: IMPORT_TMP_DIR, limits: { fileSize: 50 * 1024 * 1024 } });
+// v2.7.00 — registration files (CSV / XLSX) are small; memory storage, 10 MB cap.
+const registrationUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 // recordWrite is not called directly here; the autosave middleware in index.js
 // accounts for all successful write requests automatically.
+
+// ── v2.7.00: unified registration import ─────────────────────────────────────
+// POST /api/meets/:id/registrations/import?mode=preview|commit
+// Multipart: file (CSV/XLSX) + optional form fields event_id, column_overrides
+// (JSON), mapping (JSON), include_flagged (JSON), preview_token. The adoption
+// lock (requireNotAdopted on /api/meets/:meetId) and the venue freeze guard
+// apply through the mount; requireAuth here. Pipeline: server/import/registrationImport.js.
+router.post('/:id/registrations/import', requireAuth, registrationUpload.single('file'), async (req, res) => {
+  const R = require('../import/registrationImport');
+  const { logAudit } = require('./audit');
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no_file', message: 'No file uploaded' });
+    const meet = await queryOne('SELECT * FROM meets WHERE id = ?', [req.params.id]);
+    if (!meet) return res.status(404).json({ error: 'Meet not found' });
+    const mode = req.query.mode === 'commit' ? 'commit' : 'preview';
+    const readJson = (k, fallback) => {
+      const v = req.body && req.body[k];
+      if (v === undefined || v === null || v === '') return fallback;
+      if (typeof v !== 'string') return v;
+      try { return JSON.parse(v); } catch (_) { return fallback; }
+    };
+    const opts = {
+      event_id: (req.body && req.body.event_id) ? String(req.body.event_id) : null,
+      column_overrides: readJson('column_overrides', {}),
+      mapping: readJson('mapping', []),
+      include_flagged: readJson('include_flagged', []),
+      preview_token: (req.body && req.body.preview_token) ? String(req.body.preview_token) : null,
+    };
+    const file = { buffer: req.file.buffer, filename: req.file.originalname || 'upload' };
+    const ctx = await R.loadContext({ queryAll, queryOne }, meet);
+    if (mode === 'preview') {
+      const preview = await R.previewImport(ctx, file, opts);
+      return res.json(R.publicPreview(preview));
+    }
+    const { athleteIdsLockedByAdoption } = require('../sync/adoption');
+    const lockedAthleteIds = new Set(await athleteIdsLockedByAdoption());
+    const result = await R.commitImport({ queryAll, queryOne, execute, uuidv4 }, ctx, file, opts, { logAudit, lockedAthleteIds });
+    res.json(result);
+  } catch (e) {
+    if (e && e.code === 'no_header') return res.status(400).json({ error: 'no_header', message: e.message, first_rows: e.first_rows || [] });
+    if (e && e.code === 'bad_file') return res.status(400).json({ error: 'bad_file', message: e.message });
+    if (e && e.httpCode) return res.status(e.httpCode).json({ error: e.code || 'error', message: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {
@@ -351,6 +398,8 @@ async function deleteMeetCascade(meetId) {
 
   await execute('DELETE FROM officials WHERE meet_id = ?', [meetId]);
   await execute('DELETE FROM course_specs WHERE meet_id = ?', [meetId]);
+  // v2.7.00 — saved registration-import mappings (cloud-only table)
+  try { await execute('DELETE FROM meet_import_map WHERE meet_id = ?', [meetId]); } catch (_) {}
 
   // Training days + per-day exclusions
   const trainingDays = await queryAll('SELECT id FROM training_days WHERE meet_id = ?', [meetId]);
@@ -506,8 +555,8 @@ router.post('/:id/clone', requireAuth, async (req, res) => {
             turns_weight, air_weight, speed_weight,
             pace_time, course_length, bracket_size, has_small_final,
             usss_code, runoff_option, dual_seed_method,
-            event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method)
-         VALUES (?,?,?,?,?,?,  'setup', ?,?,?, ?,?,?, ?,?, ?,?, ?, ?,?, ?,?,?,?)`,
+            event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method, import_code)
+         VALUES (?,?,?,?,?,?,  'setup', ?,?,?, ?,?,?, ?,?, ?,?, ?, ?,?, ?,?,?,?, ?)`,
         [
           newEventId, newMeetId,
           ev.discipline, ev.division, ev.gender, ev.name,
@@ -521,6 +570,7 @@ router.post('/:id/clone', requireAuth, async (req, res) => {
           ev.aerials_panel_size || null,
           ev.aerials_hj_scores || 0,
           ev.aerials_reduction_method || null,
+          ev.import_code || null, // v2.7.00 — clone copies the import code
         ]
       );
       // recordWrite() is intentionally omitted here -- the middleware handles
@@ -1038,8 +1088,9 @@ async function executeImport(data, zipPath, opts = {}) {
         qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
         short_code, pace_time_override, dual_random_seed, order_locked, hide_livescores,
         event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
+        import_code,
         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [eventMap[e.id], newMeetId, e.discipline ?? null, e.division ?? null, e.gender ?? null, e.name ?? 'Unnamed Event', e.status ?? 'setup',
        e.num_tl_judges ?? 3, e.num_air_judges ?? 2, e.has_speed ?? 1,
        e.turns_weight ?? 0.6, e.air_weight ?? 0.2, e.speed_weight ?? 0.2,
@@ -1051,7 +1102,8 @@ async function executeImport(data, zipPath, opts = {}) {
        e.finals_event_id ? (eventMap[e.finals_event_id] ?? null) : null,
        e.event_date ?? null, e.num_jumps ?? 2, e.is_divisional ?? 0, e.locked ?? 0,
        shortCode(), e.pace_time_override ?? null, e.dual_random_seed ?? null, e.order_locked ?? 0, e.hide_livescores ?? 0,
-       e.event_type ?? 'usa_regional', e.aerials_panel_size ?? null, e.aerials_hj_scores ?? 0, e.aerials_reduction_method ?? null]
+       e.event_type ?? 'usa_regional', e.aerials_panel_size ?? null, e.aerials_hj_scores ?? 0, e.aerials_reduction_method ?? null,
+       e.import_code ?? null]
     );
   }
 
@@ -1309,7 +1361,7 @@ async function executeMerge(existingMeetId, data, zipPath) {
             pace_time=?, bracket_size=?, has_small_final=?, usss_code=?, runoff_option=?, dual_seed_method=?,
             score_spread_threshold=?, component_scoring=?, score_entry_mode=?, course_length=?,
             event_date=?, num_jumps=?, is_divisional=?, pace_time_override=?, dual_random_seed=?, order_locked=?,
-            hide_livescores=?,
+            hide_livescores=?, import_code=?,
             updated_at=datetime('now') WHERE id=?`,
           [ie.name ?? match.name, ie.status ?? match.status, ie.division ?? match.division,
            ie.num_tl_judges ?? match.num_tl_judges, ie.num_air_judges ?? match.num_air_judges, ie.has_speed ?? match.has_speed,
@@ -1320,7 +1372,8 @@ async function executeMerge(existingMeetId, data, zipPath) {
            ie.score_entry_mode ?? match.score_entry_mode, ie.course_length ?? match.course_length,
            ie.event_date ?? match.event_date, ie.num_jumps ?? match.num_jumps, ie.is_divisional ?? match.is_divisional,
            ie.pace_time_override ?? match.pace_time_override, ie.dual_random_seed ?? match.dual_random_seed,
-           ie.order_locked ?? match.order_locked, ie.hide_livescores ?? match.hide_livescores, match.id]
+           ie.order_locked ?? match.order_locked, ie.hide_livescores ?? match.hide_livescores,
+           ie.import_code ?? match.import_code ?? null, match.id]
         );
         summary.events_updated++;
       }
@@ -1337,8 +1390,9 @@ async function executeMerge(existingMeetId, data, zipPath) {
           qualifier_event_id, finals_event_id, event_date, num_jumps, is_divisional, locked,
           short_code, pace_time_override, dual_random_seed, order_locked, hide_livescores,
           event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method,
+          import_code,
           created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
         [newId, existingMeetId, ie.discipline ?? null, ie.division ?? null, ie.gender ?? null, ie.name ?? 'Unnamed Event', ie.status ?? 'setup',
          ie.num_tl_judges ?? 3, ie.num_air_judges ?? 2, ie.has_speed ?? 1,
          ie.turns_weight ?? 0.6, ie.air_weight ?? 0.2, ie.speed_weight ?? 0.2,
@@ -1348,7 +1402,8 @@ async function executeMerge(existingMeetId, data, zipPath) {
          ie.course_length ?? null, null, null,
          ie.event_date ?? null, ie.num_jumps ?? 2, ie.is_divisional ?? 0, ie.locked ?? 0,
          shortCode(), ie.pace_time_override ?? null, ie.dual_random_seed ?? null, ie.order_locked ?? 0, ie.hide_livescores ?? 0,
-         ie.event_type ?? 'usa_regional', ie.aerials_panel_size ?? null, ie.aerials_hj_scores ?? 0, ie.aerials_reduction_method ?? null]
+         ie.event_type ?? 'usa_regional', ie.aerials_panel_size ?? null, ie.aerials_hj_scores ?? 0, ie.aerials_reduction_method ?? null,
+         ie.import_code ?? null]
       );
       summary.events_added++;
     }

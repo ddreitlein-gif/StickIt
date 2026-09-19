@@ -66,7 +66,7 @@ const RAW_TOPICS = [
   { slug: 'athletes-db',              group: 'registration', title: 'The Athletes database' },
   { slug: 'reg-register',             group: 'registration', title: 'Registering athletes for an event' },
   { slug: 'reg-usss',                 group: 'registration', title: 'Importing from USSS People database' },
-  { slug: 'reg-skireg',               group: 'registration', title: 'Importing from SkiReg CSV' },
+  { slug: 'reg-skireg',               group: 'registration', title: 'Importing registrations (SkiReg, RMF / Winfree, XLSX)' },
   { slug: 'reg-manual',               group: 'registration', title: 'Manual athlete entry' },
   { slug: 'reg-bibs',                 group: 'registration', title: 'Bib assignment' },
   { slug: 'reg-runorder',             group: 'registration', title: 'Building run order' },

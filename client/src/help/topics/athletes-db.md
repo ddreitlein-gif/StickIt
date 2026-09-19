@@ -25,7 +25,11 @@ Bulk deletes from the [Admin → Athletes management](./admin-athletes) page are
 
 ### Auto-restore
 
-Re-adding a soft-deleted athlete via **Add from USSS Database** or via a SkiReg CSV import restores the existing row by clearing `deleted_at`. No duplicate is created. This is why a CSV import after a bulk delete just brings the right athletes back.
+Re-adding a soft-deleted athlete via **Add from USSS Database** or via a registration import restores the existing row by clearing `deleted_at`. No duplicate is created. This is why an import after a bulk delete just brings the right athletes back.
+
+### Import CSV / XLSX panel
+
+The **Import CSV** button on the Athletes page opens a panel that reads any registration-shaped file — a SkiReg export, an RMF / Winfree Data file, a pasted CSV — and creates or updates rows in the master table only; it never registers anyone for an event (use **Import Registrations** on the meet page for that). It uses the same reader as the registration importer: the header row is found automatically (rows above it are skipped), column names are matched case-insensitively ignoring punctuation (Last Name / Last / Surname, First Name / First, Gender / Sex / Gp, Born / Birth Year / Year of Birth / Date of Birth, ID / USSA# / USSS Member #, FIS, Club / Team / Rep / Representing / From, Bib), a full birth date yields the year, and a row with no USSS number is looked up by name in the synced USSS People File, which also supplies the birth year, club, division and FIS id. Existing athletes are matched by USSS number, then FIS id, then full name; blank fields never overwrite existing values. The **Reconcile** panel reads files the same way.
 
 ### ALL CAPS auto-correct
 

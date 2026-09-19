@@ -53,6 +53,9 @@ const V2_ONLY_KEYS = [
   // (GET /dual rows, /active-match): pairing_number, pairing_label,
   // round_label, round_name are display-only additions
   'pairing_number', 'pairing_label', 'round_label', 'round_name',
+  // v2.7.00 — events.import_code (Winfree short registration name; NON_SYNC,
+  // returned by every event GET / list)
+  'import_code',
 ];
 // Keep this list current with every release's additive response fields —
 // the gate compares against a frozen v1.30.03 worktree, so any new key

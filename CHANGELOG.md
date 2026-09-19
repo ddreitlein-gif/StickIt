@@ -2,6 +2,8 @@
 
 For version notes v2.0.00 and later, see CLAUDE.md.
 
+**v2.7.00 (2026-09-19) — Unified registration import.** One pipeline (`server/import/registrationImport.js`) reads SkiReg exports (CSV / XLSX, no USSS # — recovered by name from the USSS People File), RMF / Winfree Data files (Events codes and M / M2 / D tick columns resolved against the new `events.import_code`) and any Last-Name sheet; meet-level `POST /api/meets/:id/registrations/import` with preview → columns → events mapping (saved per meet in `meet_import_map`) → needs-attention; the per-event `import-csv` route is removed. No scoring, bracket, tablet or venue change; `SYNC_PROTOCOL_VERSION` stays 3 (`import_code` is NON_SYNC). Full notes in CLAUDE.md.
+
 **v2.6.02 (2026-09-15) — Bracket Keeper as a plain Winfree-style line tree** (replaces the v2.6.01
 box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — Bracket Keeper redesign.** The only changes outside the keeper: the one-line
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`

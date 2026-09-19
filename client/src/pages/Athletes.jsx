@@ -19,15 +19,20 @@ function ReconcilePanel({ onDone }) {
   const [acceptedFields, setAcceptedFields] = useState({})   // `${id}:${field}` -> true
 
   const runDiff = async () => {
-    let text = csvText
-    if (mode === 'file' && file) text = await file.text()
-    if (!text.trim()) { setError('No CSV data provided'); return }
+    // v2.7.00 — a chosen file is sent as bytes (CSV or XLSX, named in X-File-Name).
+    let body, fileName = 'pasted.csv'
+    if (mode === 'file' && file) { body = file; fileName = file.name }
+    else {
+      if (!csvText.trim()) { setError('No CSV data provided'); return }
+      body = csvText
+    }
+    if (!body) { setError('No CSV data provided'); return }
     setLoading(true); setError(''); setDiff(null); setResult(null)
     try {
       const r = await fetch('/api/athletes/reconcile', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain', ...authHeaders() },
-        body: text,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(fileName), ...authHeaders() },
+        body,
       })
       const data = await r.json()
       if (!r.ok) throw new Error(data.error)
@@ -105,13 +110,13 @@ function ReconcilePanel({ onDone }) {
           </div>
           {mode === 'file' ? (
             <div>
-              <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
+              <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx" className="hidden"
                 onChange={e => setFile(e.target.files[0])} />
               <div onClick={() => fileRef.current.click()}
                 className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center cursor-pointer hover:border-blue-600 transition-colors">
                 {file
                   ? <div className="text-white">{file.name}</div>
-                  : <div className="text-slate-500">Click to select a CSV file</div>}
+                  : <div className="text-slate-500">Click to select a CSV or XLSX file</div>}
               </div>
             </div>
           ) : (
@@ -235,15 +240,21 @@ function ImportPanel({ onImported }) {
   const fileRef = useRef()
 
   const submit = async () => {
-    let text = csvText
-    if (mode === 'file' && file) text = await file.text()
-    if (!text.trim()) { setError('No CSV data provided'); return }
+    // v2.7.00 — a chosen file is sent as bytes (CSV or XLSX, named in
+    // X-File-Name so the server recognises a workbook); pasted text as before.
+    let body, fileName = 'pasted.csv'
+    if (mode === 'file' && file) { body = file; fileName = file.name }
+    else {
+      if (!csvText.trim()) { setError('No CSV data provided'); return }
+      body = csvText
+    }
+    if (!body) { setError('No CSV data provided'); return }
     setLoading(true); setError(''); setResult(null)
     try {
       const res = await fetch('/api/import/athletes/csv', {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain', ...authHeaders() },
-        body: text,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(fileName), ...authHeaders() },
+        body,
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
@@ -256,13 +267,18 @@ function ImportPanel({ onImported }) {
   return (
     <div className="card space-y-4">
       <div>
-        <h3 className="font-display text-lg text-white mb-1">Import Athletes from CSV</h3>
+        <h3 className="font-display text-lg text-white mb-1">Import Athletes from CSV / XLSX</h3>
         <p className="text-slate-500 text-sm">
-          Accepts Winfree-format and standard CSV files.  Recognized column names include:
-          Last Name, First Name, Gender, Born, USSA#, FIS#, Club, Bib -- and
-          French equivalents.  Column order does not matter.  Existing athletes are matched
-          by USSA number, FIS ID, or full name and updated.  Athletes not in the file are
-          never deleted.  Blank fields in the import preserve existing values.
+          Accepts SkiReg exports, Winfree / RMF Data files and any CSV or XLSX sheet with a Last Name column
+          (rows above the header are skipped).  Column names are matched case-insensitively, ignoring punctuation:
+          Last Name (Last, Surname, Nom), First Name (First, Prénom), Gender (Sex, Gp, Group), Born (Birth Year,
+          Year of Birth, Date of Birth, YOB — a full date works, the year is used), ID (USSA#, USSS Member #,
+          USSS ID), FIS (FIS#, FIS Code), Club (Team, Rep, Representing, From), Nation, Bib (Bib#).
+          Column order does not matter and unknown columns are ignored.  A row without a USSS number is looked up
+          by name in the synced USSS People File, which also supplies the birth year, club and FIS id.
+          Existing athletes are matched by USSS number, FIS ID, or full name and updated; athletes not in the file
+          are never deleted; blank fields preserve existing values.  This updates the master Athletes table only —
+          to register athletes for events, use <strong>Import Registrations</strong> on the meet page.
         </p>
       </div>
       <div className="flex gap-2">
@@ -277,13 +293,13 @@ function ImportPanel({ onImported }) {
       </div>
       {mode === 'file' ? (
         <div>
-          <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden"
+          <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx" className="hidden"
             onChange={e => setFile(e.target.files[0])} />
           <div onClick={() => fileRef.current.click()}
             className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center cursor-pointer hover:border-blue-600 transition-colors">
             {file
               ? <div className="text-white">{file.name} <span className="text-slate-500 text-sm">({(file.size/1024).toFixed(1)} KB)</span></div>
-              : <div className="text-slate-500">Click to select a CSV file</div>
+              : <div className="text-slate-500">Click to select a CSV or XLSX file</div>
             }
           </div>
         </div>

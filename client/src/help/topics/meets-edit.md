@@ -34,6 +34,10 @@ Next to **Edit Meet Settings** is an **Advanced** button, which opens the meet-l
 
 All four settings survive meet export/import and cloning, and (except the adoption flag) ride along when a venue server adopts the meet.
 
+### Import Registrations
+
+The **Import Registrations** button in the meet header (enabled once the meet has events and while the meet is not adopted by a venue server) opens the registration importer for the whole meet: one SkiReg export or RMF Data file registers athletes into every event at once, with the file's categories, Events codes, or tick columns deciding who goes where. See [Importing registrations](./reg-skireg).
+
 ### The More ▾ menu
 
 The meet header groups its less-frequent actions — **TD Report**, **Export Meet**, **Clone Meet**, the venue-adoption actions (**Release for Adoption…** with its recommended backup adoption file, **Download adoption file**, **Undo Release**, and **Import venue return file…** while the meet is at the venue) — under a **More ▾** button to keep the header compact. See [The venue server](./venue-server) for the adoption and offline-return flow.

@@ -356,6 +356,27 @@ async function initSchema() {
     `ALTER TABLE meets ADD COLUMN start_run_timekeeper INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE meets ADD COLUMN start_run_head_judge INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE meets ADD COLUMN start_run_chief INTEGER NOT NULL DEFAULT 1`,
+    // v2.7.00 -- Winfree short registration name ("import code": M, M2, D, A …)
+    // used by the unified registration importer to resolve Events strings and
+    // tick columns. Cloud-side registration aid, NOT meet data the venue needs:
+    // excluded from the sync manifest (NON_SYNC_COLUMNS.events) — the venue's
+    // copy stays NULL and the check-in upsert preserves the cloud value.
+    `ALTER TABLE events ADD COLUMN import_code TEXT`,
+    // v2.7.00 -- confirmed entry-marker → event mappings per meet (SkiReg
+    // category strings etc.). Cloud-only: not in the manifest, not in the
+    // adoption package, never captured by the venue outbox. Deleted with the
+    // meet / the event it points at. Never cloned.
+    `CREATE TABLE IF NOT EXISTS meet_import_map (
+      id TEXT PRIMARY KEY,
+      meet_id TEXT NOT NULL,
+      marker_norm TEXT NOT NULL,
+      marker_display TEXT NOT NULL,
+      gender TEXT,
+      event_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (meet_id, marker_norm, gender)
+    )`,
     // v2.1.00 -- dual forensics: when each judge's point row landed, mirroring
     // judge_scores.submitted_at (set on insert AND refreshed on resubmit).
     // In the sync manifest (dual_judge_points.columns).
@@ -499,9 +520,70 @@ async function initSchema() {
     console.log('[v1.25 migration] event_admin role migration skipped:', e.message);
   }
 
+  // v2.7.00 -- import codes for existing events (cloud only; the venue's copy
+  // stays NULL by design). Idempotent: writes only NULL codes, so it may run
+  // at every boot; the marker records the first pass. FR-9: events of an
+  // adopted meet are skipped and picked up at a later boot once unlocked.
+  await backfillImportCodes();
+
   await seedJumpDDs();
   await seedAerialsDDs();
   await backfillAirScoreNoDd();
+}
+
+// v2.7.00 -- assign events.import_code where NULL: discipline prefix
+// (M mogul / D dual_mogul / A aerials) suffixed 2, 3, … when another event of
+// the same meet, gender and discipline already holds the bare code, in
+// event_date then created_at order. Shared with routes/events.js (POST).
+const IMPORT_CODE_PREFIX = { mogul: 'M', dual_mogul: 'D', aerials: 'A' };
+
+function nextImportCode(discipline, takenCodes) {
+  const prefix = IMPORT_CODE_PREFIX[discipline] || 'X';
+  const taken = new Set([...takenCodes].filter(Boolean).map(c => String(c).toUpperCase()));
+  if (!taken.has(prefix)) return prefix;
+  for (let n = 2; n < 100; n++) {
+    if (!taken.has(`${prefix}${n}`)) return `${prefix}${n}`;
+  }
+  return null;
+}
+
+async function backfillImportCodes() {
+  if (require('../venue/mode').isVenueMode()) return;
+  try {
+    const marker = await queryOne("SELECT value FROM app_settings WHERE key='migration_v27_import_code_done'");
+    const missing = await queryAll(
+      `SELECT e.id, e.meet_id, e.gender, e.discipline FROM events e
+       JOIN meets m ON m.id = e.meet_id
+       WHERE e.import_code IS NULL AND (m.adoption_status IS NULL OR m.adoption_status <> 'adopted')
+       ORDER BY e.meet_id, e.gender, e.discipline, e.event_date, e.created_at`
+    );
+    let assigned = 0;
+    const groups = new Map();
+    for (const e of missing) {
+      const k = `${e.meet_id}|${e.gender}|${e.discipline}`;
+      (groups.get(k) || groups.set(k, []).get(k)).push(e);
+    }
+    for (const [, list] of groups) {
+      const { meet_id, gender, discipline } = list[0];
+      const taken = (await queryAll(
+        'SELECT import_code FROM events WHERE meet_id = ? AND gender = ? AND import_code IS NOT NULL',
+        [meet_id, gender]
+      )).map(r => r.import_code);
+      for (const e of list) {
+        const code = nextImportCode(discipline, taken);
+        if (!code) continue;
+        await execute('UPDATE events SET import_code = ? WHERE id = ? AND import_code IS NULL', [code, e.id]);
+        taken.push(code);
+        assigned++;
+      }
+    }
+    if (assigned > 0) console.log(`[v2.7 migration] events.import_code assigned for ${assigned} events`);
+    if (!marker) {
+      await getClient().execute(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('migration_v27_import_code_done', datetime('now'))`);
+    }
+  } catch (e) {
+    console.log('[v2.7 migration] import_code backfill skipped:', e.message);
+  }
 }
 
 // v1.16.23 / v1.18.01 -- backfill air_score_no_dd on runs that don't have it yet.
@@ -962,4 +1044,4 @@ function shortCode() {
   return code;
 }
 
-module.exports = { getClient, queryAll, queryOne, execute, batch, rawExecute, rawBatch, setWriteHook, initSchema, uuidv4, shortCode, rowToObj };
+module.exports = { getClient, queryAll, queryOne, execute, batch, rawExecute, rawBatch, setWriteHook, initSchema, uuidv4, shortCode, rowToObj, nextImportCode, IMPORT_CODE_PREFIX };

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.6.03
+**Current version:** v2.7.00
 
 ## Commands
 
@@ -232,6 +232,137 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.7.00 Feature Notes
+
+### Unified Registration Import — SkiReg, RMF / Winfree Data files, XLSX (v2.7.00)
+
+Implements `Claude Output/Registration Import Handoff 09-19-26/StickIt_Registration_Import_Implementation_Prompt_09-19-26.md`
+(Cowork compatibility assessment + David's 09-19-26 rulings). Measured before: **0 athletes
+registered from all 55 sample files** — the event importer read fixed SkiReg column names and
+refused every row without a USSS Member # (the 2026 SkiReg export has none), the RMF Data
+files had no category column, and neither importer could tell Copper's Saturday and Sunday
+moguls apart. **No scoring math, no run-order, seeding, phase, bracket, tablet, or
+venue-server change**; nothing under `server/scoring/`, `server/dual/`, `server/venue/`
+touched, `server/sync/` only the two `protocol.js` lines below. **`SYNC_PROTOCOL_VERSION`
+stays 3**: `events.import_code` is a cloud-side registration aid excluded from the manifest
+(`NON_SYNC_COLUMNS.events`; NULL on a venue box, preserved on the cloud through check-in
+because the upsert writes manifest columns only) and `meet_import_map` is a cloud-only table
+outside the manifest (never packaged, never captured by the outbox) — no canonicalisation
+change, so a v2.5.06 Pi and a v2.7.00 cloud agree on every row hash. `registrations` and
+`athletes` gained no columns: imported rows are ordinary rows. **Ruling recorded (David,
+09-19-26):** from an event's own Registration tab, a file with no entry information at all
+(the Devo Data files) registers its matching-gender rows straight into that event (Winfree's
+"default event"); from the Meet-page button the rule-8 prompt still applies. **The 09-19-26
+Claude Output folder note** ("Registration Import Notes" at the bottom of this file) replaces
+the wrong pre-v2.7.00 SkiReg column list.
+
+**Pipeline** — new `server/import/registrationImport.js` (pure stages 1–3, unit-tested
+without a server): `parseFile` (CSV / XLSX, UTF-8 else windows-1252, header = first row
+within 20 holding a Last Name synonym, duplicate / empty headers tolerated), `mapColumns`
+(Winfree synonym table + SkiReg / Winfree-export spellings after NFD-strip + lower + a-z0-9;
+ignore list; entry columns = header equal to an event's import_code / name / usss_code;
+duplicates warned), value rules (`Last, First` split, gender first letter, birth year = first
+1900–now four-digit group — `3/7/1990` is 1990 not 3, USSS # 5–8 digits with `bad_ussa_num`
+for the literal `ID`), markers (`category` string, Events codes tokenised longest-first
+against the meet's import codes — `MDM2` → M, D, M2, `MQ` → M + `bad_events_code`, ticked
+entry columns, else `(no entry information)`), `resolveMarker` (rules 1–8: not-an-event
+keywords, gender from the row else the text, discipline word, candidates, date / day cue
+against `event_date` — only when a candidate carries a date, `date_mismatch` never falls
+through — series word, exactly one; saved mapping overrides all), identity
+(`resolveIdentity`: athletes by USSS # → FIS → **USSS People File by normalised name** with
+gender then a shared 4+-letter club word as tie-breakers, `ambiguous_usss` with the candidates
+listed → athletes by name incl. soft-deleted → new, `no_usss_match`), `previewImport` /
+`commitImport` (people grouped by USSS # else name; the same number on two names → both
+`duplicate_ussa_num`; flagged people written only when ticked; existing athletes get blank
+fields filled, adoption-locked athletes never updated but still registered; commit re-runs the
+preview and refuses 409 `preview_changed` on a token mismatch, 400 `mapping_required` while a
+marker is unresolved; one `import` audit row per commit; confirmed table saved to
+`meet_import_map`).
+
+**Server.** `POST /api/meets/:id/registrations/import?mode=preview|commit` (`requireAuth`,
+multer memory 10 MB, form fields `event_id`, `column_overrides`, `mapping`,
+`include_flagged`, `preview_token`; adoption lock + venue freeze through the mount — 423 on an
+adopted meet). `POST /api/events/:id/registrations/import-csv` **removed** (404) with
+`processCsvRows` / `matchesDiscipline`. `events.import_code` (auto-assigned on POST: M / D / A
+suffixed 2, 3… per meet + gender + discipline; PUT validated `^[A-Z][A-Z0-9]{0,3}$`, unique per
+meet + gender → 409; on every GET; clone copies; export / import / merge round-trip; boot-time
+backfill `backfillImportCodes` in `event_date, created_at` order, marker
+`migration_v27_import_code_done`, idempotent on NULLs, skips adopted meets, no-op in venue
+mode). `meet_import_map` (`UNIQUE (meet_id, marker_norm, gender)`) deleted with the meet and
+with the event it points at; not cloned. Athlete-only paths `POST /api/import/athletes/csv` and
+`POST /api/athletes/reconcile` read bytes (CSV or XLSX via `X-File-Name`) through the new
+parser with the People File lookup added; `reconcileHelpers.js` keeps `parseCSV` /
+`normalizeRow` / `SYNONYMS` as thin wrappers. Test hook `STICKIT_DISABLE_USSS_SYNC=1`
+(never set in production) keeps the boot-time People File sync off a harness instance.
+
+**Client.** New `RegistrationImportDialog.jsx` (replaces the deleted `CsvImportModal.jsx`):
+File → Columns (only when a header is unknown or two map to one field; drop-down per column,
+re-runs the preview) → Events (only when a marker is unresolved; every marker listed with count,
+reason and an event drop-down + Not an event; the whole confirmed table is saved) → Preview
+(per-event cards, To Register with a source badge, Needs Attention with tick boxes, Already
+Registered, Not in This Event, People-File-not-synced notice; Confirm disabled until nothing is
+unresolved) → Result. Meet page **Import Registrations** button (disabled without events or
+while adopted); event Registration tab button renamed **Import Registrations…** and passes
+`event_id`; event form gains **Import code (Winfree short name)** (blank = server assigns),
+Details tab shows / edits it, Registration tab shows a chip. Athletes page Import + Reconcile
+panels accept `.xlsx`, send the file as bytes, and the help text names the accepted headers.
+`api.importRegistrations(meetId, formData, mode)`.
+
+**Docs.** `reg-skireg.md` rewritten as *Importing registrations (SkiReg, RMF / Winfree,
+XLSX)*; `reg-register.md`, `meets-edit.md`, `athletes-db.md`, `ref-glossary.md` (import code,
+entry marker, People File lookup) updated; guide PDFs regenerated (67 topics, 164 pages); venue
+PDFs regenerated (footer); `docs/SYNC_PROTOCOL.md` §6 NON_SYNC sentence.
+
+**Verification.** New `harness/tests/v270.test.js` — **203 checks green** (synthetic
+fixtures in `harness/fixtures/registration/`, generated by `build_fixtures.js` with invented
+people — the real sample files hold minors' names and are never committed): pure functions
+(junk rows above the header, every synonym incl. `Prénom` / `Année de Naissance` / `ID#` /
+`Bib#` / `USSS Member #` / `Year of Birth` / `Representing` / `From`, name split, gender
+rule, the three date forms, windows-1252, XLSX ≡ CSV, duplicate headers), tokeniser,
+resolution (the six Copper categories with `*** FULL **I` noise, banquet / coaches / fee,
+ambiguous, date_mismatch, weekday, series word, no-info files meet-level vs per-event, saved
+mapping), identity (People File by name, twins by gender / club word, local athlete gains its
+number, locked athlete registered but not updated, unknown flagged and written only when
+ticked, same number on two names, three SkiReg rows → one athlete / three registrations with
+the mogul bib), endpoint (preview writes nothing, commit + audit + map, 400 / 409 / 423, filter,
+idempotent re-import, saved mapping prompts only for a new category, `import-csv` 404),
+import codes (auto, 409, backfill in date order across a restart, clone, export → import,
+event / meet delete cleanup, venue NULL after adoption, no outbox rows for
+`meet_import_map`, cloud codes survive check-in, protocol 3), athlete-only endpoints
+(regression counts, People File fill, XLSX, paste, reconcile shape), Playwright (meet page →
+dialog → six cards → confirm → Registration tab; Events step with one unresolved row → pick →
+confirm; per-event button registers only that event). **Env-gated real-sample pass**
+(`STICKIT_REG_SAMPLES=<folder>`, the app's own USSS sync loads the current People File) —
+**165 checks green on all 63 sample files** (People 2026 List 7, 2,821 records): every RMF Data
+file 0 unmapped headers, every marker resolved (the Devo / RQS / DM Reg files with no entry
+information prompt on a multi-event meet by design), USSS numbers 100 % except Vail Comp 2026
+(90/91 — 10 rows lacked an ID, the lookup filled 9); every SkiReg file (CSV and XLSX) with no
+prompt on a meet built from its own categories, banquet / coach / fee rows not events, USSS
+match 95.7–98.6 % except REG_8515 (38/41, 92.7 %) and REG_9008 (30/32, 93.8 %) against the
+September list — the harness threshold is 90 %; REG_7722 duplicate-club warning; Winfree
+results and start-list files parse. Chrome walkthrough of the Copper SkiReg import on a
+scratch server reviewed by eye. Regression: `verify_v16.js`, step0 (drift test with the
+NON_SYNC entry), step1 (route gate: new route in scope, `import-csv` gone), step2, step4,
+step5, review, release-gates (`V2_ONLY_KEYS` + `import_code`), v240, v250, v2506, v2507,
+v260, v2601 — **full harness 1,203 green** (review-ui 6, review 56, step0 87, step1 52, step2 58,
+step3 55, step4 52, step5 40, step6 34, v240 124, v250 140, v2506 42, v2507 62, v260 89, v2601 72,
+v270 203, release-gates 31); `verify_v16.js` 123/123.
+
+**Files created:** `server/import/registrationImport.js`,
+`client/src/components/RegistrationImportDialog.jsx`, `harness/tests/v270.test.js`,
+`harness/fixtures/registration/*`
+**Files deleted:** `client/src/components/CsvImportModal.jsx`
+**Files modified:** `server/routes/{meets,events,registrations,import,athletes,reconcileHelpers}.js`,
+`server/db/schema.js`, `server/sync/protocol.js`, `server/usss/sync.js`,
+`client/src/pages/{MeetDetail,EventDetail,Athletes}.jsx`, `client/src/utils/api.js`,
+`client/src/help/topics/{reg-skireg,reg-register,meets-edit,athletes-db,ref-glossary}.md`,
+`client/src/help/topicsIndex.js`, `docs/SYNC_PROTOCOL.md`, `harness/tests/zz-gates.test.js`,
+`CHANGELOG.md`, `server/public/docs/guides/*.pdf` + `server/public/docs/venue/*.pdf`
+(regenerated), `server/version.js`, `client/src/components/Layout.jsx`,
+`client/package.json`, `server/package.json`, `server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 
@@ -2046,22 +2177,37 @@ Releases + the Imager os_list can follow the successful run.
 
 ---
 
-## Registration Import Notes
+## Registration Import Notes (v2.7.00)
 
-### SkiReg CSV Format
+One pipeline, `server/import/registrationImport.js`, reads every registration file: stage 1
+`parseFile` (CSV via csv-parse, XLSX via exceljs; UTF-8 else windows-1252; the header is the
+first row within 20 that holds a Last Name synonym — Winfree rule), stage 2 `mapColumns` (the
+`SYNONYMS` table = Winfree list + SkiReg / Winfree-export spellings, NFD-stripped and
+punctuation-free; `IGNORED_HEADERS`; entry columns = a header equal to an event's
+`import_code` / name / `usss_code`) + `normalizeValues` (`Last, First` split, gender first
+letter, birth year = first 1900–now four-digit group — never `parseInt`, USSS # 5–8 digits),
+stage 3 markers (`markersForRow`: SkiReg category, Winfree Events codes tokenised longest-first
+against the meet's import codes, ticked entry columns, else the synthetic
+`(no entry information)`) resolved by `resolveMarker` (rules 1–8 of the 09-19-26 prompt: not-an-event
+keywords → gender → discipline → candidates → date/day cue → series word → exactly one; saved
+`meet_import_map` rows override; per-event button = default event for no-info files), stage 4
+identity (`resolveIdentity`: athletes by USSS # → FIS → `usss_people` by normalised name with
+gender / club-word tie-breakers → athletes by name → new), stage 5 `previewImport` /
+`commitImport` (commit re-runs the preview; `preview_token` = sha256 of file + mapping +
+overrides + event_id).
 
-Columns: `Last Name, First Name, Gender, Birth Year, USSS Member #, Team, Bib, Category Entered, Quantity, Transaction Type, Date of Birth, MerchSummary`
+**Real SkiReg 2026 export** (REG_85xx / 9008): `Bib, Category Entered [/ Merchandise Ordered],
+City, First Name, Last Name, Notes, Fundraising Pageviews, Custom Tax, Gender, State, Team[,
+Quantity, MerchSummary]` — **no USSS Member #, no birth year**; one row per category per
+athlete plus banquet / coach / fee rows. **RMF Data files**: `Last Name, First Name, Gender,
+Born, ID, Club[, Bib][, Events | M, M2, D][, FIS]`. The pre-v2.7.00 notes here described a
+synthetic demo layout (with USSS Member # and Date of Birth) that no real export has;
+`matchesDiscipline` and `POST /api/events/:id/registrations/import-csv` are gone.
 
-Key quirks:
-- Column is `Category Entered` (not `Category Entered / Merchandise Ordered` — both handled)
-- One row per category; athletes with mogul + dual have 2+ rows with the same `USSS Member #`
-- Bib number is only on the mogul (single) row; dual/banquet rows have empty `Bib`
-
-### `matchesDiscipline` logic (`registrations.js`)
-
-- `mogul`: category contains `'mogul'` AND NOT `'dual'`
-- `dual_mogul`: category contains `'mogul'` (any mogul string accepted — USSS often uses plain "Moguls" for dual entrants)
-- `aerials`: category contains `'aerial'`
+Athlete-only paths (`POST /api/import/athletes/csv`, `POST /api/athletes/reconcile`) read
+bytes (CSV text or XLSX, named in `X-File-Name`) through `reconcileHelpers.parseCSV` /
+`parseFileAsync` + `normalizeRow` (thin wrappers) and apply the USSS People File lookup
+before matching; response shapes unchanged.
 
 ### Bib Assignment Behavior
 

@@ -5,7 +5,7 @@ Once an event is created, its **Registration** tab is where you list every athle
 ### Five ways to add athletes
 
 1. **From USSS Database** (fastest) — search the master USSS People file and add directly. The athlete is auto-created in your master Athletes table if not already there. See [Importing from USSS People database](./reg-usss).
-2. **From SkiReg CSV** — bulk import the entire entry list from SkiReg. See [Importing from SkiReg CSV](./reg-skireg).
+2. **Import Registrations** — bulk import a SkiReg export (CSV or XLSX) or an RMF / Winfree Data file, for every event of the meet at once from the meet page, or for this event only from the **Import Registrations…** button on the Registration tab. See [Importing registrations](./reg-skireg).
 3. **From Master Athletes Database** — search your local Athletes table.
 4. **Manual Entry** — fill in the form by hand. See [Manual athlete entry](./reg-manual).
 5. **Import Bibs from Event** (dual mogul only) — for dual events, copy bib numbers from the qualifier mogul event of the same gender (so bib 7 is bib 7 in both events).

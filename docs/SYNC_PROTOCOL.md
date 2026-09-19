@@ -305,6 +305,12 @@ Notes:
   they are transport state, not meet data. The harness drift test enforces
   that every physical column on a fresh v2 database is either in the manifest
   or on the documented exclusion list.
+- **v2.7.00:** `events.import_code` (the Winfree short registration name used
+  only by the cloud-side registration importer) is likewise excluded — NULL on
+  a venue box, preserved on the cloud through check-in because the upsert
+  writes manifest columns only — and the cloud-only `meet_import_map` table
+  (confirmed entry-marker → event mappings) is outside the manifest entirely:
+  never packaged, never captured by the outbox. No protocol bump (still 3).
 
 ## 7. Outbox (venue-local)
 

@@ -187,6 +187,23 @@ export const api = {
   seedFromResults: (eventId) => apiFetch(`/events/${eventId}/registrations/seed-from-results`, { method: 'POST' }),
   orderByAgeGroups: (eventId) => apiFetch(`/events/${eventId}/registrations/order-by-age-groups`, { method: 'POST' }),
 
+  // v2.7.00 — unified registration import (multipart; formData carries the
+  // file + optional event_id / column_overrides / mapping / include_flagged /
+  // preview_token). Errors carry message / code / body like apiFetch.
+  importRegistrations: async (meetId, formData, mode = 'preview') => {
+    const res = await fetch(`${API_BASE}/meets/${meetId}/registrations/import?mode=${mode}`, {
+      method: 'POST', headers: { ...authHeaders() }, body: formData,
+    });
+    if (res.status === 401) handle401();
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (!res.ok) {
+      const e = new Error(body.message || body.error || `HTTP ${res.status}`);
+      e.code = body.error || null; e.body = body; e.status = res.status;
+      throw e;
+    }
+    return body;
+  },
+
   // Judges
   getJudges: (eventId) => apiFetch(`/events/${eventId}/judges`),
   addJudge: (eventId, data) => apiFetch(`/events/${eventId}/judges`, { method: 'POST', body: data }),

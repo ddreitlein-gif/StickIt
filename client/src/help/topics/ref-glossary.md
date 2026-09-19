@@ -114,6 +114,14 @@ A quick reference for the acronyms and terms that show up throughout StickIt.
 
 **Pace standard** — `USSS` (default) or `FIS`. Determines the pace speeds.
 
+### Registration import
+
+**Import code** — An event's Winfree short registration name: `M` for moguls, `M2` for a second moguls event of the same gender, `D` for duals, `A` for aerials. Assigned automatically when the event is created, editable on the event form. The Events column (`MDM2`) and the tick columns (`M`, `M2`, `D`) of an RMF Data file resolve against it. See [Importing registrations](./reg-skireg).
+
+**Entry marker** — Anything in a registration file that says which event a row belongs to: a SkiReg *Category Entered* string ("Sunday Men's Moguls (Feb 22)"), a code from a Winfree *Events* column, or a tick column headed with an import code. Every marker must resolve to exactly one event of the meet or to "Not an event"; the confirmed choice is saved with the meet.
+
+**USSS People File lookup** — The importer's name search of the synced USSS People File for rows that carry no USSS number (current SkiReg exports), which supplies the number, birth year, club and FIS id.
+
 ### Technical
 
 **Short code** — A short random string used in public URLs (e.g., `/scoreboard/abc12`). Each event and each judge has its own short code.

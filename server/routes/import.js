@@ -1,7 +1,35 @@
 const router = require('express').Router();
 const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { logAudit } = require('./audit');
-const { parseCSV, normalizeRow } = require('./reconcileHelpers');
+const { parseFileAsync, normalizeRow } = require('./reconcileHelpers');
+const R = require('../import/registrationImport');
+
+// v2.7.00 — USSS People File lookup (the step the athlete-only importers
+// lacked): a row without a USSS # is looked up by name (gender, then a shared
+// club word as tie-breakers); a row with one gets its blank birth year / club /
+// FIS id filled. Index built once per import.
+async function loadPeopleIndex() {
+  try {
+    const people = await queryAll("SELECT ussa_id, type, last_name, first_name, division, gender, yob, club_name, fis_id FROM usss_people WHERE type IN ('C','CO')");
+    return R.buildPeopleIndex(people);
+  } catch (_) { return null; }
+}
+
+function enrichFromUsss(norm, peopleIndex) {
+  if (!peopleIndex || !peopleIndex.count) return;
+  const { person } = R.lookupUsssPerson(peopleIndex, norm);
+  if (person) R.enrichFromPerson(norm, person);
+}
+
+/** Read the whole request body as bytes (CSV text or an XLSX upload). */
+function readBodyBuffer(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Import a single row:
@@ -114,10 +142,12 @@ async function importRow(norm, eventId) {
 // ---------------------------------------------------------------------------
 async function runImport(rows, eventId) {
   const summary = { added: 0, updated: 0, skipped: 0, errors: [], total: rows.length };
+  const peopleIndex = await loadPeopleIndex();
 
   for (const raw of rows) {
     try {
       const norm   = normalizeRow(raw);
+      enrichFromUsss(norm, peopleIndex);
       const result = await importRow(norm, eventId || null);
       if      (result.status === 'added')   summary.added++;
       else if (result.status === 'updated') summary.updated++;
@@ -165,18 +195,23 @@ router.post('/athletes', async (req, res) => {
 // POST /api/import/athletes/csv  -- raw CSV text body
 // Optional query: ?eventId=xxx  (updates bib numbers in registrations)
 // ---------------------------------------------------------------------------
+// v2.7.00 — body is raw bytes: CSV text (as before) or an XLSX workbook; the
+// client names the file in X-File-Name (or ?filename=) so XLSX is recognised.
 router.post('/athletes/csv', async (req, res) => {
   try {
-    let text = '';
-    await new Promise((resolve, reject) => {
-      req.on('data', chunk => { text += chunk; });
-      req.on('end', resolve);
-      req.on('error', reject);
-    });
+    const buffer = await readBodyBuffer(req);
+    if (!buffer.length || (!R.parseFile && !buffer.toString('utf8').trim())) return res.status(400).json({ error: 'Empty CSV' });
+    const filename = decodeURIComponent(String(req.get('x-file-name') || req.query.filename || 'upload.csv'));
+    if (!/\.xlsx$/i.test(filename) && !buffer.toString('utf8').trim()) return res.status(400).json({ error: 'Empty CSV' });
 
-    if (!text.trim()) return res.status(400).json({ error: 'Empty CSV' });
-
-    const { rows } = parseCSV(text);
+    let parsedFile;
+    try {
+      parsedFile = await parseFileAsync(buffer, filename);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    if (parsedFile.error) return res.status(400).json({ error: parsedFile.error });
+    const { rows } = parsedFile;
     if (!rows.length) return res.status(400).json({ error: 'No data rows found in CSV' });
 
     const eventId = req.query.eventId || null;

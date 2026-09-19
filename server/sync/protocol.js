@@ -42,6 +42,13 @@ const crypto = require('crypto');
 // v2.5.0 cloud still agree on every row hash. A bump would strand the fielded
 // v2.4.02 Pi image for no protocol reason; the venue simply lacks the new
 // buttons until it updates.
+// v2.7.00: NOT bumped. The unified registration importer adds events.import_code
+// (a cloud-side registration aid, excluded from the manifest via
+// NON_SYNC_COLUMNS below — the venue's copy stays NULL and the check-in upsert
+// writes manifest columns only, so the cloud value survives) and the cloud-only
+// meet_import_map table (outside the manifest, never packaged or captured).
+// No manifest column, no canonicalization change → every row hash is
+// unchanged between a v2.5.06 venue and a v2.7.00 cloud.
 const SYNC_PROTOCOL_VERSION = 3;
 
 /**
@@ -203,6 +210,10 @@ const NON_SYNC_COLUMNS = {
     'release_code_expires_at', 'released_at', 'released_by',
     'adopted_via', // v2.5.00 — 'code' | 'file' (how the lock happened)
   ],
+  // v2.7.00 — Winfree short registration name used only by the cloud-side
+  // registration importer. Not meet data the venue needs: NULL on a venue box,
+  // preserved on the cloud through check-in (upsert of manifest columns only).
+  events: ['import_code'],
 };
 
 /** Tables captured by the venue outbox (FR-5 write capture set). */

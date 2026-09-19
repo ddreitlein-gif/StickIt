@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import api, { authHeaders, downloadAuthed, saveFile } from '../utils/api'
 import UsssTransmitModal from '../components/UsssTransmitModal'
 import ReturnImportDialog from '../components/ReturnImportDialog'
+import RegistrationImportDialog from '../components/RegistrationImportDialog'
 import { useVenueMode } from './venue/venueShared'
 
 const DISCIPLINE_LABEL = { mogul: 'Mogul', dual_mogul: 'Dual Mogul', aerials: 'Aerials' }
@@ -147,6 +148,7 @@ function EventFormModal({ mode = 'create', meetId, events = [], initialEvent = n
       component_scoring: 1,
       score_entry_mode: 'tablet',
       is_divisional: anyDivisional ? 1 : 0,
+      import_code: '', // v2.7.00 — blank = server assigns
       // v1.18.00 — sanction + aerials config
       event_type: 'usa_regional',
       aerials_panel_size: 5,
@@ -174,6 +176,7 @@ function EventFormModal({ mode = 'create', meetId, events = [], initialEvent = n
       aerials_panel_size: pick('aerials_panel_size', base.aerials_panel_size),
       aerials_hj_scores: pick('aerials_hj_scores', base.aerials_hj_scores),
       aerials_reduction_method: pick('aerials_reduction_method', base.aerials_reduction_method),
+      import_code: pick('import_code', ''),
     }
   })
   const [loading, setLoading] = useState(false)
@@ -316,6 +319,20 @@ function EventFormModal({ mode = 'create', meetId, events = [], initialEvent = n
               value={form.name}
               onChange={e => set('name', e.target.value)}
             />
+          </div>
+
+          {/* v2.7.00 — Winfree short registration name; blank = assigned by the server (M, M2, D, A…) */}
+          <div>
+            <label className="label">Import code (Winfree short name)</label>
+            <input
+              className="input font-mono uppercase w-32"
+              maxLength={4}
+              placeholder={isEdit ? '' : 'auto'}
+              value={form.import_code}
+              onChange={e => set('import_code', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              data-testid="event-import-code"
+            />
+            <p className="text-xs text-slate-500 mt-1">What the Events column and tick columns of an RMF Data file resolve against (M = moguls, M2 = second moguls event, D = duals, A = aerials). Leave blank to assign automatically. Unique per gender within the meet.</p>
           </div>
 
           {/* Judge config (mogul/dual mogul only) */}
@@ -1241,6 +1258,7 @@ export default function MeetDetail() {
   const [showCloseExport, setShowCloseExport] = useState(false)
   const [showEditMeet, setShowEditMeet] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)   // v2.1.00 — Advanced settings panel
+  const [showRegImport, setShowRegImport] = useState(false) // v2.7.00 — Import Registrations dialog
   const [writeCount, setWriteCount] = useState(null)
   // v2.0.00 (Step 1) — venue adoption state + release-code modal
   const [adoption, setAdoption] = useState(null)
@@ -1538,6 +1556,12 @@ export default function MeetDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-3 justify-end">
+          {/* v2.7.00 — unified registration import (SkiReg / RMF Data files / XLSX) */}
+          <button onClick={() => setShowRegImport(true)} disabled={adopted || events.length === 0} className="btn-secondary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            title={events.length === 0 ? 'Add the meet\'s events first' : adopted ? 'Meet is adopted by a venue server' : 'Import a SkiReg export or RMF Data file into every event of this meet'}
+            data-testid="meet-import-registrations">
+            Import Registrations
+          </button>
           <button onClick={() => navigate(`/dashboard/meets/${meetId}/training`)} className="btn-secondary text-sm">
             Training Days
           </button>
@@ -1734,6 +1758,14 @@ export default function MeetDetail() {
           sourceName={meet.name}
           onClose={() => setShowClone(false)}
           onCloned={handleCloned}
+        />
+      )}
+
+      {showRegImport && (
+        <RegistrationImportDialog
+          meetId={meetId}
+          meetName={meet.name}
+          onClose={() => { setShowRegImport(false); refreshMeet() }}
         />
       )}
 

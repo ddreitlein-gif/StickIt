@@ -211,17 +211,32 @@ router.post('/from-usss', requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/reconcile', requireAuth, async (req, res) => {
   try {
-    let text = '';
+    // v2.7.00 — raw bytes (CSV text or XLSX, named by X-File-Name) through the
+    // unified parser, with the USSS People File lookup filling numbers on
+    // name-only rows before matching.
+    const chunks = [];
     await new Promise((resolve, reject) => {
-      req.on('data', chunk => { text += chunk; });
+      req.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
       req.on('end', resolve);
       req.on('error', reject);
     });
-    if (!text.trim()) return res.status(400).json({ error: 'Empty CSV' });
+    const buffer = Buffer.concat(chunks);
+    const filename = decodeURIComponent(String(req.get('x-file-name') || req.query.filename || 'upload.csv'));
+    if (!buffer.length || (!/\.xlsx$/i.test(filename) && !buffer.toString('utf8').trim())) return res.status(400).json({ error: 'Empty CSV' });
 
-    const { parseCSV, normalizeRow } = require('./reconcileHelpers');
-    const { rows } = parseCSV(text);
+    const { parseFileAsync, normalizeRow } = require('./reconcileHelpers');
+    let parsedFile;
+    try { parsedFile = await parseFileAsync(buffer, filename); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
+    if (parsedFile.error) return res.status(400).json({ error: parsedFile.error });
+    const { rows } = parsedFile;
     if (!rows.length) return res.status(400).json({ error: 'No data rows in CSV' });
+
+    const R = require('../import/registrationImport');
+    let peopleIndex = null;
+    try {
+      peopleIndex = R.buildPeopleIndex(await queryAll("SELECT ussa_id, type, last_name, first_name, division, gender, yob, club_name, fis_id FROM usss_people WHERE type IN ('C','CO')"));
+    } catch (_) { peopleIndex = null; }
 
     const dbAthletes = await queryAll('SELECT * FROM athletes WHERE deleted_at IS NULL ORDER BY last_name, first_name');
 
@@ -234,6 +249,10 @@ router.post('/reconcile', requireAuth, async (req, res) => {
     for (const raw of rows) {
       const norm = normalizeRow(raw);
       if (!norm.first_name || !norm.last_name) continue;
+      if (peopleIndex && peopleIndex.count) {
+        const { person } = R.lookupUsssPerson(peopleIndex, norm);
+        if (person) R.enrichFromPerson(norm, person);
+      }
 
       // Match priority: ussa_num > fis_id > name
       let existing = null;

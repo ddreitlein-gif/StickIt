@@ -1,8 +1,28 @@
 const express = require('express');
 const router = express.Router({ mergeParams: true });
-const { queryAll, queryOne, execute, uuidv4, shortCode } = require('../db/schema');
+const { queryAll, queryOne, execute, uuidv4, shortCode, nextImportCode } = require('../db/schema');
 const { calcPaceTime } = require('../scoring/engine');
 const { requireAuth } = require('../middleware/auth');
+
+// v2.7.00 — Winfree short registration name ("import code"). Validated
+// ^[A-Z][A-Z0-9]{0,3}$, unique per meet and gender. Auto-assigned on create
+// when the request does not supply one (M / D / A, suffixed 2, 3, … when the
+// bare code is taken). Cloud-side only: a venue box leaves it NULL.
+const IMPORT_CODE_RE = /^[A-Z][A-Z0-9]{0,3}$/;
+
+function normalizeImportCode(raw) {
+  if (raw === undefined) return undefined;
+  if (raw === null || String(raw).trim() === '') return null;
+  return String(raw).trim().toUpperCase();
+}
+
+async function importCodeTaken(meetId, gender, code, excludeEventId) {
+  const row = await queryOne(
+    `SELECT id FROM events WHERE meet_id = ? AND gender = ? AND UPPER(import_code) = ? ${excludeEventId ? 'AND id <> ?' : ''}`,
+    excludeEventId ? [meetId, gender, code, excludeEventId] : [meetId, gender, code]
+  );
+  return !!row;
+}
 
 // v1.18.00 — Event Type rules. Centralized so POST/PUT and meets.js share the logic.
 const EVENT_TYPES = ['fis_major', 'fis_nac', 'fis_other', 'usa_national', 'usa_regional'];
@@ -125,10 +145,25 @@ router.post('/', requireAuth, async (req, res) => {
       if (err) return res.status(400).json({ error: err });
     }
 
+    // v2.7.00 — import code: validated when supplied, else auto-assigned
+    // (cloud only; a venue box leaves it NULL by design).
+    let import_code = normalizeImportCode(req.body.import_code);
+    if (import_code !== undefined && import_code !== null) {
+      if (!IMPORT_CODE_RE.test(import_code)) return res.status(400).json({ error: 'Import code must be 1–4 characters: a letter followed by letters or digits (e.g. M, M2, D)' });
+      if (await importCodeTaken(req.params.meetId, gender, import_code, null)) {
+        return res.status(409).json({ error: `Import code ${import_code} is already used by another ${gender === 'F' ? "women's" : "men's"} event in this meet` });
+      }
+    } else if (!require('../venue/mode').isVenueMode()) {
+      const taken = (await queryAll('SELECT import_code FROM events WHERE meet_id = ? AND gender = ? AND import_code IS NOT NULL', [req.params.meetId, gender])).map(r => r.import_code);
+      import_code = nextImportCode(discipline, taken);
+    } else {
+      import_code = null;
+    }
+
     const id = uuidv4();
     await execute(
-      `INSERT INTO events (id,meet_id,discipline,division,gender,name,num_tl_judges,num_air_judges,num_jumps,has_speed,turns_weight,air_weight,speed_weight,bracket_size,has_small_final,runoff_option,component_scoring,score_entry_mode,is_divisional,short_code,event_type,aerials_panel_size,aerials_hj_scores,aerials_reduction_method) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [id, req.params.meetId, discipline, division, gender, name, num_tl_judges, num_air_judges, num_jumps, has_speed, turns_weight, air_weight, speed_weight, 128, has_small_final, runoff_option || 'runoff_to_4th', effectiveComponentScoring, score_entry_mode, is_divisional ? 1 : 0, shortCode(), event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method]
+      `INSERT INTO events (id,meet_id,discipline,division,gender,name,num_tl_judges,num_air_judges,num_jumps,has_speed,turns_weight,air_weight,speed_weight,bracket_size,has_small_final,runoff_option,component_scoring,score_entry_mode,is_divisional,short_code,event_type,aerials_panel_size,aerials_hj_scores,aerials_reduction_method,import_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, req.params.meetId, discipline, division, gender, name, num_tl_judges, num_air_judges, num_jumps, has_speed, turns_weight, air_weight, speed_weight, 128, has_small_final, runoff_option || 'runoff_to_4th', effectiveComponentScoring, score_entry_mode, is_divisional ? 1 : 0, shortCode(), event_type, aerials_panel_size, aerials_hj_scores, aerials_reduction_method, import_code]
     );
 
     // Inherit course_length and pace_time from meet's course spec
@@ -191,8 +226,20 @@ router.put('/:id', requireAuth, async (req, res) => {
       if (err) return res.status(400).json({ error: err });
     }
 
+    // v2.7.00 — import code: validated + unique per meet and gender (409).
+    if (req.body.import_code !== undefined) {
+      const code = normalizeImportCode(req.body.import_code);
+      if (code !== null && !IMPORT_CODE_RE.test(code)) {
+        return res.status(400).json({ error: 'Import code must be 1–4 characters: a letter followed by letters or digits (e.g. M, M2, D)' });
+      }
+      if (code !== null && await importCodeTaken(req.params.meetId, event.gender, code, event.id)) {
+        return res.status(409).json({ error: `Import code ${code} is already used by another ${event.gender === 'F' ? "women's" : "men's"} event in this meet` });
+      }
+      req.body.import_code = code;
+    }
+
     // course_length, pace_time, pace_time_override are meet-level (managed via Course Specs) -- not editable per event
-    const fields = ['name','num_tl_judges','num_air_judges','num_jumps','has_speed','turns_weight','air_weight','speed_weight','bracket_size','has_small_final','status','usss_code','qualifier_event_id','finals_event_id','runoff_option','score_spread_threshold','event_date','component_scoring','score_entry_mode','is_divisional','order_locked','event_type','aerials_panel_size','aerials_hj_scores','aerials_reduction_method'];
+    const fields = ['name','num_tl_judges','num_air_judges','num_jumps','has_speed','turns_weight','air_weight','speed_weight','bracket_size','has_small_final','status','usss_code','qualifier_event_id','finals_event_id','runoff_option','score_spread_threshold','event_date','component_scoring','score_entry_mode','is_divisional','order_locked','event_type','aerials_panel_size','aerials_hj_scores','aerials_reduction_method','import_code'];
     const updates = [], values = [];
     for (const f of fields) {
       if (req.body[f] !== undefined) { updates.push(`${f}=?`); values.push(req.body[f]); }
@@ -240,6 +287,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
     await execute('DELETE FROM phase_run_order WHERE phase_id IN (SELECT id FROM event_phases WHERE event_id = ?)', [eventId]);
     await execute('DELETE FROM event_phases WHERE event_id = ?', [eventId]);
     await execute('DELETE FROM run_round_status WHERE event_id = ?', [eventId]);
+    // v2.7.00 — saved registration-import mappings pointing at this event
+    try { await execute('DELETE FROM meet_import_map WHERE event_id = ?', [eventId]); } catch (_) {}
 
     // Delete the event
     await execute('DELETE FROM events WHERE id = ?', [eventId]);
