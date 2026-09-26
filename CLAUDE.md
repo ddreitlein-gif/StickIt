@@ -298,8 +298,9 @@ the run-order / check / timer sheets' athlete order among athletes with neither 
 event; the venue auto-follow DB fallback after a mid-day reboot with two events holding scoring
 runs updated in the same second; and the row order inside the meet export zip / adoption package
 (grouped per event — checksums are order-independent; only these same tie cases can differ
-between a cloud meet and its venue copy). Every one is a query-level tie-break the prompt
-forbade changing here; all are listed as follow-ups in the handoff note.
+between a cloud meet and its venue copy). **Closed, no action (David's ruling 09-26-26):** none is
+a real issue; the same-second audit order is the better order for a newest-first list, the rest
+are invisible or cosmetic. No secondary ORDER BY is planned.
 
 **Verification.** `harness/tests/step0.test.js` §E grew 17 checks (fresh cloud + venue DB hold
 the twelve, plain, on their tables; boot logs say 12 of 12 with no FAILED line; a
