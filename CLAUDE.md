@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.7.00
+**Current version:** v2.7.01
 
 ## Commands
 
@@ -232,6 +232,120 @@ Which surfaces are public vs. protected when password protection is enabled:
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
 **Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+
+---
+
+## v2.7.01 Feature Notes
+
+### Query Indexes — Turso Rows-Read Fix (v2.7.01)
+
+Implements `Claude Output/StickIt_Turso_Rows_Read_Index_Implementation_Prompt_09-26-26.md`
+(Turso alert 09-26-26: 410.9 M of the 500 M monthly rows-read quota used, 264.9 M on the 26th
+alone against 2,095 rows written). Cause: the schema had exactly one index (the FR-11 unique
+index on `judge_scores`) plus two table-level UNIQUEs, so every `WHERE event_id = ?` on
+`runs` / `registrations` / `dual_bracket` / `judges` / `event_phases` / `heats` and every
+`WHERE meet_id = ?` on `events` was a full table scan, and the judge / HJ / Timekeeper
+tablets issue three or four of those every 2–3 s. Turso bills every row a scan touches.
+**Indexes only**: no query text, polling interval, scoring, run-order, seeding, phase, bracket,
+tablet, venue-server or sync change; nothing under `server/routes/`, `server/scoring/`,
+`server/dual/`, `server/venue/`, `server/sync/` or `client/src/` except the Layout.jsx version
+default. **`SYNC_PROTOCOL_VERSION` stays 3** — indexes are not rows; the manifest, adoption
+package, outbox and check-in checksums are untouched (step0 drift test green as is).
+
+**The twelve** (`QUERY_INDEXES` in `server/db/schema.js`, right after the FR-11 block, raw
+client `c.execute` so the venue write-capture hook — which wraps the module's `execute()`,
+never the client — cannot see the DDL; one `CREATE INDEX IF NOT EXISTS` per name, each in its
+own try/catch, loud and non-fatal, then one log line `[v2.7.01 index migration] N of 12 query
+indexes present`): `idx_runs_event_status` (event_id, status), `idx_runs_event_run_number`
+(event_id, run_number), `idx_runs_event_round_status` (event_id, round, status),
+`idx_runs_registration` (registration_id), `idx_registrations_event_status` (event_id, status),
+`idx_registrations_athlete` (athlete_id), `idx_judges_event`, `idx_events_meet`,
+`idx_dual_bracket_event`, `idx_event_phases_event` (event_id, run_number), `idx_heats_event`,
+`idx_audit_log_timestamp`. All plain (never UNIQUE — production holds a historical duplicate
+`runs` row), additive (the v1.30.03 rollback gate still passes), idempotent. A box already
+holding one of the names boots clean. `EXPLAIN QUERY PLAN` on every Turso Top Query: before
+`SCAN runs` / `SCAN registrations` / `SCAN djp` / `SCAN pro` / `SCAN e`, after
+`SEARCH … USING INDEX idx_…` on every one (the two join queries that used to scan the
+OTHER table — `dual_judge_points`, `phase_run_order` — now enter through the bracket / phase
+index and hit the existing UNIQUE autoindexes). Every static SELECT explained; none with an
+event / meet equality still scans an indexed table. The boot line counts indexes by
+DEFINITION (a name already taken by an index with other columns is kept by IF NOT EXISTS,
+logged as a WARNING, and not counted).
+
+**The one real risk — row order — audited and measured.** An index can only change the order
+of rows that tie on the ORDER BY (or have none), because SQLite's incidental order follows the
+access path. Rule used throughout: an index whose every column is pinned by equality yields the
+matching rows in rowid order, exactly like the old table scan, so most sites are provably
+unchanged. All 462 SELECTs reading the eight tables were classified (handoff note
+`Claude Output/StickIt_Turso_Index_Release_Notes_09-26-26.md`): (a) 399 order-determined or
+order-free, (b) 39 re-ranked in JS (`rankResults` / `pickBestRun` / `assembleTieredResults`,
+per-match / per-athlete maps, shuffles), (c) 24 where the incidental order of tied rows can
+differ. **Observed (2):** audit lists (`/api/audit`, Admin dashboard) — the timestamp index
+satisfies `ORDER BY timestamp DESC` walked in reverse, so rows sharing one timestamp SECOND
+now list newest-first where the sorter listed them oldest-first (and a LIMIT-20 window inside
+one busy second holds its newest rows); the set of rows, filters and cross-second order are
+unchanged — arguably the intended order for a newest-first list. TD report: judges tying
+completely on (event_date, created_at, role) — only imported meets, whose events share one
+creation second — list per event instead of per insertion (two HJs of the RMF mock meet swapped
+on one line). **Theoretical (5):** training-day / registration-listing "first bib seen" for an
+athlete carrying DIFFERENT bibs in two events of one meet now comes from the earliest-created
+event rather than the earliest-created registration (follow-up: a deterministic rule would be a
+query change); the Registration tab and meet-export row order among athletes with no run
+order, no bib and the same last name (dns before registered); the meet status card's "current
+round" word when runs of two different run numbers complete in the same second (paper mode);
+the run-order / check / timer sheets' athlete order among athletes with neither run order nor bib
+(dns first); Import Bibs from Event's by-NAME fallback with two same-name athletes in the source
+event; the venue auto-follow DB fallback after a mid-day reboot with two events holding scoring
+runs updated in the same second; and the row order inside the meet export zip / adoption package
+(grouped per event — checksums are order-independent; only these same tie cases can differ
+between a cloud meet and its venue copy). Every one is a query-level tie-break the prompt
+forbade changing here; all are listed as follow-ups in the handoff note.
+
+**Verification.** `harness/tests/step0.test.js` §E grew 17 checks (fresh cloud + venue DB hold
+the twelve, plain, on their tables; boot logs say 12 of 12 with no FAILED line; a
+v1.30.03-shaped legacy DB with duplicate `runs` rows AND one index pre-created under its name
+boots clean with exactly one copy; a name taken by an index with OTHER columns is kept,
+warned about and not counted — 11 of 12; second boot byte-identical in `sqlite_master`, no
+error lines) — **106**. New `harness/tests/v2701.test.js` — **43 checks green**: **A golden compare**
+— one database file built through the REAL v2.7.00 server (git tag, worktree
+`harness/.v270baseline`, gitignored): 24-athlete Best-of-2 with a rejection and a DNF (Run 1 +
+Run 2 finalized), 12-athlete qualifier / finals with a DNS, aerials v2 (3-judge panel, manual
+entry), 16-athlete dual runoff to 8th played to completion, the real
+`RMF_Mock_Comp_08-30-26.zip` import; 757 responses captured on v2.7.00 and again on this tree
+serving the same file (every tablet / Scoreboard / Overlay / Broadcast Board / Viewer API /
+Officials GET, per-run scores, per-match judge points, CSV / USSA / XLSX sheet XML / HTML /
+print exports, 19 PDF kinds through `pdftotext`), request-time stamps and the version string
+normalized: **byte-identical except the two recorded (c) instances above**, asserted as the
+only tolerated classes (the "before" server is rebooted once before its capture so v2.7.00's
+own boot-time import-code backfill on the imported events cannot masquerade as a diff).
+**B EXPLAIN QUERY PLAN** before / after for the nine Top Queries and all 286 static SELECTs
+(listing in `harness/.scratch/v2701/plans.txt`). **C venue mode**: adopt → cloud stopped →
+venue rebooted on the adopted DB (12 of 12, nothing DDL-shaped in `sync_outbox`) → two runs
+scored offline (50 outbox rows, all manifest-table `upsert` / `delete` records) → cloud back
+→ drained → check-in 200 with equal cloud / venue checksums. `verify_v16.js` 123/123. Full
+harness **1,265 green** (review-ui 6, review 56, step0 106, step1 52, step2 58, step3 55, step4
+52, step5 40, step6 34, v240 124, v250 140, v2506 42, v2507 62, v260 89, v2601 72, v270 203,
+v2701 43, release-gates 31; the review suite crashed once in an all-suites run on its venue
+check-in's "cloud unreachable" 502 — the v2.1.00 timing flake — and passed clean alone).
+**Cloud ultra review (09-26-26) — passed, ZERO findings** on the source-only diff (4 files /
+768 lines, branch `review/v2.7.01-source`, docs / build assets / version bumps stashed). A local
+high-effort review beforehand raised ten items — the vacuous outbox-op assertion, the too-broad
+"no error lines" regex, dead code in the new suite, the name-only boot count, the untracked new
+bundle at commit time, and the tie-order sites listed above — all fixed here or recorded as
+follow-ups. Gotcha: running the v270 suite rewrites the bytes of
+`harness/fixtures/registration/skireg_copper.xlsx` — `git checkout` it before committing.
+
+**Release.** Version bump, client rebuilt (Layout default), venue PDFs regenerated (footer),
+zip `StickIt_2_7_01.zip`, GitHub Release with the v2.5.06 Pi image re-attached (nothing
+venue-side changed). No manual `CREATE INDEX` on Turso — the first Render boot does it; check
+the Render log for the "12 of 12" line, then the Turso Top Queries per-execution rows read the
+next day (should fall from thousands to tens).
+
+**Files created:** `harness/tests/v2701.test.js`
+**Files modified:** `server/db/schema.js`, `harness/tests/step0.test.js`, `harness/.gitignore`,
+`CHANGELOG.md`, `server/version.js`, `client/src/components/Layout.jsx`, `client/package.json`,
+`server/package.json`, `server/public/*` (rebuilt), `server/public/docs/venue/*.pdf`
+(regenerated footer), `CLAUDE.md`
 
 ---
 

@@ -2,6 +2,8 @@
 
 For version notes v2.0.00 and later, see CLAUDE.md.
 
+**v2.7.01 (2026-09-26) — Query indexes (Turso rows-read fix).** Twelve plain indexes on the `event_id` / `meet_id` / `registration_id` / `athlete_id` / `timestamp` columns the tablets poll every 2–3 s (`runs`, `registrations`, `judges`, `events`, `dual_bracket`, `event_phases`, `heats`, `audit_log`), created at boot with `CREATE INDEX IF NOT EXISTS` in `server/db/schema.js`. No query text, polling, scoring, bracket, tablet, venue or sync change; `SYNC_PROTOCOL_VERSION` stays 3. Golden compare of 757 read responses on one database served by v2.7.00 and v2.7.01: byte-identical except same-second audit rows now listing newest-first. Full notes in CLAUDE.md.
+
 **v2.7.00 (2026-09-19) — Unified registration import.** One pipeline (`server/import/registrationImport.js`) reads SkiReg exports (CSV / XLSX, no USSS # — recovered by name from the USSS People File), RMF / Winfree Data files (Events codes and M / M2 / D tick columns resolved against the new `events.import_code`) and any Last-Name sheet; meet-level `POST /api/meets/:id/registrations/import` with preview → columns → events mapping (saved per meet in `meet_import_map`) → needs-attention; the per-event `import-csv` route is removed. No scoring, bracket, tablet or venue change; `SYNC_PROTOCOL_VERSION` stays 3 (`import_code` is NON_SYNC). Full notes in CLAUDE.md.
 
 **v2.6.02 (2026-09-15) — Bracket Keeper as a plain Winfree-style line tree** (replaces the v2.6.01

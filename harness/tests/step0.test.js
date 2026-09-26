@@ -8,6 +8,9 @@
  *   D. Protocol determinism: checksums independent of row order / extra cols.
  *   E. FR-11: unique index on fresh DB; dedup of a legacy DB with duplicates;
  *      racing INSERT retry never surfaces an error and leaves exactly one row.
+ *      v2.7.01: the twelve plain query indexes exist on a fresh DB (cloud and
+ *      venue), build over duplicate runs rows on a legacy DB, tolerate one that
+ *      already exists, survive a second boot, and the boot log says 12 of 12.
  *   F. Playwright smoke (FR-21 foundation): the SPA loads from the instance.
  */
 
@@ -19,6 +22,47 @@ const { openDb } = require('../lib/db');
 const { withPage } = require('../lib/browser');
 
 const protocol = require(path.join(SERVER_DIR, 'sync', 'protocol.js'));
+
+// v2.7.01 -- the twelve query indexes, restated independently of schema.js
+// (section 3.1 of the 09-26-26 prompt): name -> [table, columns].
+const QUERY_INDEXES = {
+  idx_runs_event_status:          ['runs', 'event_id, status'],
+  idx_runs_event_run_number:      ['runs', 'event_id, run_number'],
+  idx_runs_event_round_status:    ['runs', 'event_id, round, status'],
+  idx_runs_registration:          ['runs', 'registration_id'],
+  idx_registrations_event_status: ['registrations', 'event_id, status'],
+  idx_registrations_athlete:      ['registrations', 'athlete_id'],
+  idx_judges_event:               ['judges', 'event_id'],
+  idx_events_meet:                ['events', 'meet_id'],
+  idx_dual_bracket_event:         ['dual_bracket', 'event_id'],
+  idx_event_phases_event:         ['event_phases', 'event_id, run_number'],
+  idx_heats_event:                ['heats', 'event_id'],
+  idx_audit_log_timestamp:        ['audit_log', 'timestamp'],
+};
+const INDEX_NAMES = Object.keys(QUERY_INDEXES);
+
+/** sqlite_master rows for the twelve names: { name -> { tbl_name, sql } }. */
+async function queryIndexRows(db) {
+  const rows = await db.queryAll(
+    `SELECT name, tbl_name, sql FROM sqlite_master WHERE type='index' AND name IN (${INDEX_NAMES.map(() => '?').join(',')})`,
+    INDEX_NAMES
+  );
+  const out = {};
+  for (const r of rows) out[r.name] = { tbl_name: r.tbl_name, sql: r.sql };
+  return out;
+}
+
+/** True when every one of the twelve is present, on its table, non-unique, with its columns. */
+function checkIndexSet(c, rows, tag) {
+  const missing = INDEX_NAMES.filter(n => !rows[n]);
+  c.deepEq(missing, [], `${tag}: all twelve query indexes present`);
+  const wrong = INDEX_NAMES.filter(n => rows[n] && (
+    rows[n].tbl_name !== QUERY_INDEXES[n][0] ||
+    /UNIQUE/i.test(rows[n].sql || '') ||
+    !(rows[n].sql || '').replace(/\s+/g, ' ').includes(`(${QUERY_INDEXES[n][1]})`)
+  ));
+  c.deepEq(wrong, [], `${tag}: every index is plain (non-unique), on its table, with its columns`);
+}
 
 const CLOUD_PORT = 3101;
 const VENUE_PORT = 3102;
@@ -88,6 +132,20 @@ async function main() {
     // ---- E1. FR-11 unique index exists on a fresh database --------------
     const idx = await vdb.queryOne(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_judge_scores_run_judge_type'`);
     c.ok(!!idx, 'FR-11 UNIQUE index exists on fresh database');
+
+    // ---- E4. v2.7.01 query indexes on a fresh database (cloud + venue) ----
+    checkIndexSet(c, await queryIndexRows(vdb), 'E4 fresh venue DB');
+    {
+      const cdb0 = openDb(cloud.dbPath);
+      checkIndexSet(c, await queryIndexRows(cdb0), 'E4 fresh cloud DB');
+      cdb0.close();
+    }
+    for (const inst of [cloud, venue]) {
+      c.ok(inst.log.some(l => l.includes('[v2.7.01 index migration] 12 of 12 query indexes present')),
+        `E4: ${inst.name} boot log reports 12 of 12 query indexes`);
+      c.ok(!inst.log.some(l => l.includes('[v2.7.01 index migration] FAILED')),
+        `E4: ${inst.name} boot log has no index-migration failure`);
+    }
     vdb.close();
 
     // ---- E2. FR-11 dedup of a legacy database with duplicates -----------
@@ -101,6 +159,19 @@ async function main() {
         ('dup-old', 'r1', 'j1', 'turns', 11.0, '2026-01-01 10:00:00'),
         ('dup-new', 'r1', 'j1', 'turns', 14.5, '2026-01-01 10:00:05'),
         ('keep-1',  'r1', 'j2', 'turns', 12.0, '2026-01-01 10:00:01')`);
+      // v2.7.01 (E5/E6): a v1.30.03-shaped runs table holding DUPLICATE
+      // (registration_id, run_number) rows -- the plain indexes must build
+      // over them -- and one of the twelve already created under its name.
+      await ldb.execute(`CREATE TABLE runs (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, registration_id TEXT NOT NULL, run_number INTEGER NOT NULL DEFAULT 1, round TEXT NOT NULL DEFAULT 'qualification', bracket_round INTEGER, bracket_position INTEGER, course TEXT, jump1_code TEXT, jump1_dd REAL, jump2_code TEXT, jump2_dd REAL, turns_score REAL, air_score REAL, speed_score REAL, total_score REAL, run_time REAL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+      await ldb.execute(`INSERT INTO runs (id, event_id, registration_id, run_number, status, total_score) VALUES
+        ('run-dup-a', 'e1', 'reg1', 1, 'complete', 70.1),
+        ('run-dup-b', 'e1', 'reg1', 1, 'complete', 71.2),
+        ('run-other', 'e1', 'reg2', 1, 'complete', 65.0)`);
+      await ldb.execute(`CREATE INDEX idx_runs_event_status ON runs(event_id, status)`);
+      // E6b: one of the names taken by an index with OTHER columns — kept by
+      // IF NOT EXISTS, but the boot line must not count it and must warn.
+      await ldb.execute(`CREATE TABLE heats (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, heat_number INTEGER NOT NULL, heat_name TEXT, round TEXT NOT NULL DEFAULT 'qualification', created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')))`);
+      await ldb.execute(`CREATE INDEX idx_heats_event ON heats(event_id, round)`);
       ldb.close();
     }
     const legacy = new Instance({ name: 'step0-legacy', port: 3103, mode: 'cloud', dbPath: legacyDbPath });
@@ -114,7 +185,37 @@ async function main() {
       c.ok(!rows.some(r => r.id === 'dup-old'), 'FR-11 dedup removed the older submission');
       const lidx = await ldb.queryOne(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_judge_scores_run_judge_type'`);
       c.ok(!!lidx, 'FR-11 index created on migrated legacy database');
+      // ---- E5/E6. v2.7.01 indexes over duplicate runs rows + a pre-existing one --
+      const legacyRows = await queryIndexRows(ldb);
+      c.ok(/\(event_id, round\)/.test(legacyRows.idx_heats_event?.sql || ''), 'E6b: the foreign idx_heats_event(event_id, round) is kept (IF NOT EXISTS never drops)');
+      c.ok(legacy.log.some(l => l.includes('WARNING idx_heats_event exists with a different definition')), 'E6b: boot log warns about the foreign definition');
+      c.ok(legacy.log.some(l => l.includes('[v2.7.01 index migration] 11 of 12 query indexes present')), 'E6b: boot line counts 11 of 12 (definition-checked, not name-checked)');
+      // put the real one in place by hand (what an operator would do after the warning);
+      // the second boot below must then keep it and report 12 of 12
+      await ldb.execute('DROP INDEX idx_heats_event');
+      await ldb.execute('CREATE INDEX idx_heats_event ON heats(event_id)');
+      checkIndexSet(c, await queryIndexRows(ldb), 'E5 legacy DB with duplicate runs rows');
+      const dupRuns = await ldb.queryAll(`SELECT id FROM runs WHERE registration_id='reg1' AND run_number=1 ORDER BY id`);
+      c.eq(dupRuns.length, 2, 'E5: the duplicate runs rows are still both there (plain index, no dedup)');
+      const named = await ldb.queryAll(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runs_event_status'`);
+      c.eq(named.length, 1, 'E6: the pre-existing idx_runs_event_status is left alone (exactly one, no duplicate)');
+      c.ok(!legacy.log.some(l => l.includes('[v2.7.01 index migration] FAILED')), 'E6: legacy boot log has no index-migration failure');
       ldb.close();
+    }
+    // ---- E7. second boot is idempotent -----------------------------------
+    {
+      const before = JSON.stringify(await (async () => { const d = openDb(legacyDbPath); const r = await queryIndexRows(d); d.close(); return r; })());
+      legacy.log.length = 0;
+      await legacy.start();
+      await legacy.stop();
+      const d = openDb(legacyDbPath);
+      const after = await queryIndexRows(d);
+      d.close();
+      c.eq(JSON.stringify(after), before, 'E7: second boot leaves the twelve indexes byte-identical in sqlite_master');
+      c.ok(legacy.log.some(l => l.includes('[v2.7.01 index migration] 12 of 12 query indexes present')), 'E7: second boot log reports 12 of 12');
+      // (the USSS People File startup sync logs its own "failed" line when this Mac is offline — not a boot error)
+      const errLines = legacy.log.filter(l => /\bError\b|FAILED|WARNING/.test(l) && !/USSS/.test(l));
+      c.deepEq(errLines, [], 'E7: second boot log has no error / FAILED / WARNING lines');
     }
 
     // ---- E3. FR-11 racing INSERT retry ----------------------------------

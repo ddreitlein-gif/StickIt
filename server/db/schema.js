@@ -433,6 +433,58 @@ async function initSchema() {
     console.error('[FR-11 migration] FAILED to dedup/create UNIQUE index on judge_scores(run_id, judge_id, score_type):', e.message);
   }
 
+  // v2.7.01 -- query indexes. Turso bills every row a scan touches and the
+  // schema had no index on any event_id / meet_id column, so each tablet poll
+  // (every 2-3 s) scanned runs, registrations, dual_bracket, ... in full.
+  // Plain indexes only (never UNIQUE: production holds at least one historical
+  // duplicate runs row), additive (v1.30.03 boots against the migrated DB),
+  // idempotent (IF NOT EXISTS), non-fatal (logged; the server boots anyway).
+  // Not in the sync manifest -- indexes are not rows; protocol stays 3.
+  // Raw client on purpose (as FR-11 above): the venue write-capture hook wraps
+  // the module's execute(), never the client, so DDL never reaches the outbox.
+  const QUERY_INDEXES = [
+    ['idx_runs_event_status',           'runs(event_id, status)'],
+    ['idx_runs_event_run_number',       'runs(event_id, run_number)'],
+    ['idx_runs_event_round_status',     'runs(event_id, round, status)'],
+    ['idx_runs_registration',           'runs(registration_id)'],
+    ['idx_registrations_event_status',  'registrations(event_id, status)'],
+    ['idx_registrations_athlete',       'registrations(athlete_id)'],
+    ['idx_judges_event',                'judges(event_id)'],
+    ['idx_events_meet',                 'events(meet_id)'],
+    ['idx_dual_bracket_event',          'dual_bracket(event_id)'],
+    ['idx_event_phases_event',          'event_phases(event_id, run_number)'],
+    ['idx_heats_event',                 'heats(event_id)'],
+    ['idx_audit_log_timestamp',         'audit_log(timestamp)'],
+  ];
+  for (const [name, def] of QUERY_INDEXES) {
+    try {
+      await c.execute(`CREATE INDEX IF NOT EXISTS ${name} ON ${def}`);
+    } catch (e) {
+      console.error(`[v2.7.01 index migration] FAILED to create ${name} ON ${def}:`, e.message);
+    }
+  }
+  try {
+    // Count by DEFINITION, not just by name: IF NOT EXISTS keeps whatever
+    // already carries the name, so a hand-made index with other columns (or
+    // UNIQUE) would otherwise pass as "present" while the plans still scan.
+    const names = QUERY_INDEXES.map(([n]) => `'${n}'`).join(',');
+    const present = await c.execute(
+      `SELECT name, sql FROM sqlite_master WHERE type='index' AND name IN (${names})`
+    );
+    const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').replace(/\s*([(),])\s*/g, '$1').trim();
+    const bySql = new Map(present.rows.map(r => [r.name, norm(r.sql)]));
+    let ok = 0;
+    for (const [name, def] of QUERY_INDEXES) {
+      const have = bySql.get(name);
+      if (have === undefined) continue;
+      if (have === norm(`CREATE INDEX ${name} ON ${def}`)) ok++;
+      else console.error(`[v2.7.01 index migration] WARNING ${name} exists with a different definition: ${bySql.get(name)}`);
+    }
+    console.log(`[v2.7.01 index migration] ${ok} of ${QUERY_INDEXES.length} query indexes present`);
+  } catch (e) {
+    console.error('[v2.7.01 index migration] could not read sqlite_master:', e.message);
+  }
+
   // v2.0.00 (FR-9): every boot-time mutation below is guarded so it never
   // touches a row belonging to an adopted meet — a cloud restart mid-meet
   // must not mutate the venue's mirror. Adopted-meet subqueries:
