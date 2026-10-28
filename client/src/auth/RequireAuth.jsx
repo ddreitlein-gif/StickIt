@@ -7,9 +7,10 @@ export default function RequireAuth({ children, role }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // v1.25.00 (A-3) — mirrors server/auth/roles.js: judge < official < system_admin,
-  // event_admin kept only as a legacy alias ranked with system_admin.
-  const ROLE_RANK = { judge: 1, official: 2, event_admin: 3, system_admin: 3 };
+  // v1.25.00 (A-3) — mirrors server/auth/roles.js. v2.7.02: two roles,
+  // official ("Judge / Official") < system_admin; judge and event_admin are
+  // legacy aliases ranked with official / system_admin respectively.
+  const ROLE_RANK = { judge: 2, official: 2, event_admin: 3, system_admin: 3 };
 
   useEffect(() => {
     if (loading) return;

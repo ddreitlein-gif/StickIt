@@ -9,9 +9,6 @@ const NAV_ALL = [
   { to: '/dashboard/athletes', label: 'Athletes', icon: '&#9975;' },
   { to: '/dashboard/usss', label: 'USSS Database', icon: '&#128203;' },
 ]
-const NAV_JUDGE = [
-  { to: '/dashboard', label: 'Meets', icon: '&#127942;', exact: true },
-]
 
 // ── Jump DD Reference Panel ──────────────────────────────────────────────────
 function JumpDDReference({ onClose }) {
@@ -83,7 +80,7 @@ function JumpDDReference({ onClose }) {
 
 // ── About Panel ──────────────────────────────────────────────────────────────
 function AboutPanel({ onClose }) {
-  const [version, setVersion] = useState('v2.7.01')
+  const [version, setVersion] = useState('v2.7.02')
   useEffect(() => {
     fetch('/api/version').then(r => r.json()).then(d => d.version && setVersion(d.version)).catch(() => {})
   }, [])
@@ -121,7 +118,9 @@ export default function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, authEnabled, logout } = useAuth()
-  const NAV = user?.role === 'judge' ? NAV_JUDGE : NAV_ALL
+  // v2.7.02 — one nav for every login: the judge-only (Meets-link) sidebar went
+  // with the login-only judge role (two roles now: Judge / Official, System Admin).
+  const NAV = NAV_ALL
   // v2.4.00 (physical test T-7): on a venue server the Scoring Computer must
   // always be able to reach the venue menu (Hand Back / Check In live there).
   // "/" alone bounces back here through the device role memory, so the link

@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.7.01)
+# Changelog — Version Notes (v1.7.00 – v2.7.02)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -14,6 +14,67 @@ box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — B
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
 PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
 `consolationSlot` from `dual.js`. Full notes below.
+
+---
+
+## v2.7.02 Feature Notes
+
+### Two Login Roles — Judge / Official and System Admin (v2.7.02)
+
+Per David's 10-28-26 request: the three login roles (Judge, Official, System Admin) are
+compressed to **two** — **Judge / Official** (full access to everything in the Officials section)
+and **System Admin** (everything, including the Admin panel) — so the test users set up as
+System Admin can be moved to Judge / Official **without deleting anyone or changing a password**.
+Cloud auth only (venue mode never renders Login and `users` is not a sync-manifest table);
+**no schema change, no sync-protocol change (still v3), no scoring / tablet / venue change.**
+
+**Model.** `server/auth/roles.js`: `VALID_ROLES = ['official', 'system_admin']`;
+`ROLE_RANK = { judge: 2, official: 2, event_admin: 3, system_admin: 3 }` — the stored value for
+Judge / Official stays `official` (no data rewrite for the common case), and `judge` /
+`event_admin` remain as legacy aliases so an un-migrated row still resolves. Mirrored in
+`client/src/auth/RequireAuth.jsx`. **Boot migration** (`schema.js`, beside the v1.25.00
+event_admin one): `UPDATE users SET role='official' WHERE role='judge'` — idempotent, logs
+`[v2.7.02 migration] N judge-role user(s) migrated to official` only when N > 0, touches no
+other column. The judge-only UI limits went with the role: the Meets-only sidebar
+(`NAV_JUDGE`, `Layout.jsx`) and the Links-only event page (`isJudge`, `EventDetail.jsx`) are
+removed; every login sees the full Officials UI. Admin → Users: `ROLES` is the two values,
+labels **Judge / Official** / **System Admin** (legacy rows, if ever seen pre-migration, show
+"(legacy)" labels); creating or editing a user to `judge` is refused 400 by the existing
+`VALID_ROLES` check. The last-active-admin deactivation guard and the "set an admin password
+before enabling protection" check already counted only system_admin / event_admin — unchanged.
+
+**Why a role change is safe for existing accounts.** `PUT /api/admin/users/:id` updates `role`
+through `COALESCE` and touches `password_hash` / `must_change_password` only when a new
+`password` is sent; sessions carry the user id, not the role, and `requireAuth` re-reads the
+row per request — so a demoted user's existing session loses `/api/admin` immediately (403)
+and keeps working for the Officials section, and their next login with the unchanged password
+returns `role: official`. **The demotions themselves are data, not code** — David does them in
+Admin → Users (Edit → Role → Save) after the deploy; a boot rule "everyone but admin and
+ddreitlein" was rejected because it would also demote any admin created later.
+
+**Docs.** Help `admin-users.md` (two-role table, role change leaves the password alone,
+username editable since v2.0.01 — the topic still said it could not be) and
+`admin-security.md` (role table); guide PDFs regenerated; venue PDFs regenerated (footer).
+CLAUDE.md Access Model roles paragraph rewritten.
+
+**Verification.** Scratch-server test (21 checks): a planted `judge` row + official + two
+system_admins → boot migrates exactly the judge row, every `password_hash` byte-identical, no
+`must_change_password` set, log line with the count; the migrated user logs in with the old
+password as official, reaches GET/POST Officials endpoints, 403 at `/api/admin`; POST / PUT
+with role `judge` → 400 naming the two roles; demotion PUT (role only) → 200, hash + flag
+untouched, existing session 403 at admin / 200 at Officials, re-login as official; promotion
+back works; second boot silent and healthy. Playwright (6 checks, built bundle): users table
+shows **Judge / Official**, no bare "Judge" label, the Edit drop-down offers exactly the two
+roles, a UI demotion changes only the role column, the migrated judge-role login gets the full
+sidebar (Athletes, USSS Database) and is bounced from `/admin`. `verify_v16.js` 123/123.
+
+**Files modified:** `server/auth/roles.js`, `server/db/schema.js`,
+`client/src/auth/RequireAuth.jsx`, `client/src/pages/admin/AdminUsers.jsx`,
+`client/src/components/Layout.jsx`, `client/src/pages/EventDetail.jsx`,
+`client/src/help/topics/{admin-users,admin-security}.md`, `server/public/docs/guides/*.pdf` +
+`server/public/docs/venue/*.pdf` (regenerated), `CHANGELOG.md`, `server/version.js`,
+`client/src/components/Layout.jsx`, `client/package.json`, `server/package.json`,
+`server/public/*` (rebuilt), `CLAUDE.md`
 
 ---
 

@@ -572,6 +572,17 @@ async function initSchema() {
     console.log('[v1.25 migration] event_admin role migration skipped:', e.message);
   }
 
+  // v2.7.02 -- two-role model: the login-only 'judge' role is folded into
+  // 'official' ("Judge / Official"). Role is one column on the users row --
+  // password_hash, must_change_password and sessions (JWT sub = user id) are
+  // untouched. Idempotent; users is not a sync-manifest table.
+  try {
+    const r = await c.execute(`UPDATE users SET role='official', updated_at=datetime('now') WHERE role='judge'`);
+    if (r.rowsAffected > 0) console.log(`[v2.7.02 migration] ${r.rowsAffected} judge-role user(s) migrated to official`);
+  } catch (e) {
+    console.log('[v2.7.02 migration] judge role migration skipped:', e.message);
+  }
+
   // v2.7.00 -- import codes for existing events (cloud only; the venue's copy
   // stays NULL by design). Idempotent: writes only NULL codes, so it may run
   // at every boot; the marker records the first pass. FR-9: events of an

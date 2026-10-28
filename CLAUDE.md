@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.7.01
+**Current version:** v2.7.02
 
 ## Commands
 
@@ -231,7 +231,7 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 **Protected when auth is enabled:** all Officials mutations (meets, events, registrations, runs manual entry, dual seeding/paper score, phases, exports, USSS transmit, imports, audit, training days, PDFs not listed above) and the entire `/api/admin` panel (system_admin role). Client downloads can't carry an Authorization header in a plain anchor — use `downloadAuthed()` from `client/src/utils/api.js`.
 
-**Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`):** judge (1, login-only; Officials dashboard restricted to Links) < official (2, full Officials section) < system_admin (3, everything). `event_admin` is a legacy alias ranked with system_admin; existing rows are migrated to system_admin at boot.
+**Roles (single source of truth `server/auth/roles.js`, mirrored in `client/src/auth/RequireAuth.jsx`; two roles since v2.7.02):** official (2, labelled **Judge / Official** — the full Officials section, no `/admin`) < system_admin (3, everything). Legacy values are aliases in `ROLE_RANK` only and are migrated at boot: `judge` (the pre-v2.7.02 login-only role restricted to the Links area) → official; `event_admin` → system_admin. Neither is creatable (`VALID_ROLES`). Changing a role is a one-column edit: password hash, `must_change_password` and sessions (JWT `sub` = user id) are untouched; the server re-reads the role per request, so a demoted session loses `/admin` at once.
 
 ---
 
@@ -247,6 +247,7 @@ and one line to the index below — do not add feature-note sections to this fil
 
 | Version | Date | Headline |
 |---|---|---|
+| v2.7.02 | 2026-10-28 | Two login roles — Judge / Official (= `official`) and System Admin; legacy `judge` rows migrated to official at boot; judge-only sidebar / Links-tab limits removed |
 | v2.7.01 | 2026-09-26 | Query indexes — Turso rows-read fix (12 plain indexes; row-order audit; golden compare vs v2.7.00) |
 | v2.7.00 | 2026-09-19 | Unified registration import — SkiReg / RMF-Winfree / XLSX, `events.import_code`, `meet_import_map`, People File lookup |
 | v2.6.03 | 2026-09-15 | Bracket Keeper — Won/Lost labels below the open line, 32 pt pitch |

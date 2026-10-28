@@ -2,9 +2,12 @@ import { useState, useEffect } from 'react'
 import { authHeaders, checkApiResponse } from '../../utils/api'
 import PasswordInput from '../../components/PasswordInput'
 
-// v1.25.00 (A-3) — canonical roles, lowest to highest: judge < official < system_admin
-const ROLES = ['judge', 'official', 'system_admin']
-const ROLE_LABELS = { judge: 'Judge', official: 'Official', system_admin: 'System Admin', event_admin: 'System Admin (legacy)' }
+// v1.25.00 (A-3) — canonical roles, lowest to highest. v2.7.02: two roles —
+// official ("Judge / Official": the whole Officials section) < system_admin
+// (everything incl. this Admin panel). judge / event_admin are legacy values
+// migrated at boot; labelled here only in case a row is seen before migration.
+const ROLES = ['official', 'system_admin']
+const ROLE_LABELS = { official: 'Judge / Official', system_admin: 'System Admin', judge: 'Judge / Official (legacy)', event_admin: 'System Admin (legacy)' }
 
 function UserModal({ user, onClose, onSave }) {
   const [form, setForm] = useState({

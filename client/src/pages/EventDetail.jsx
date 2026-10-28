@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import api, { createWebSocket, authHeaders, downloadAuthed } from '../utils/api'
-import { useAuth } from '../auth/AuthContext'
 import UsssAutocomplete from '../components/UsssAutocomplete'
 import UsssAthleteSearchPanel from '../components/UsssAthleteSearchPanel'
 import RegistrationImportDialog from '../components/RegistrationImportDialog'
@@ -6028,12 +6027,12 @@ function VenueOverlayPinControl({ eventId }) {
 
 export default function EventDetail() {
   const { meetId, eventId } = useParams()
-  const { user } = useAuth()
-  const isJudge = user?.role === 'judge'
+  // v2.7.02 — the login-only judge role (Links tab only) is gone; every login
+  // sees the full event page (two roles now: Judge / Official, System Admin).
   const [event,         setEvent]         = useState(null)
   const [registrations, setRegistrations] = useState([])
   const [judges,        setJudges]        = useState([])
-  const [activeTab,     setActiveTab]     = useState(isJudge ? 'Links' : 'Registrations')
+  const [activeTab,     setActiveTab]     = useState('Registrations')
   const [loading,       setLoading]       = useState(true)
 
   const refresh = async () => {
@@ -6057,11 +6056,9 @@ export default function EventDetail() {
   if (loading) return <div className="p-8 text-slate-500">Loading...</div>
   if (!event)  return null
 
-  const tabsToShow = isJudge
-    ? ['Links']
-    : event.discipline === 'dual_mogul'
-      ? TABS.filter(t => !['Phases'].includes(t))
-      : TABS.filter(t => t !== 'Dual Bracket')
+  const tabsToShow = event.discipline === 'dual_mogul'
+    ? TABS.filter(t => !['Phases'].includes(t))
+    : TABS.filter(t => t !== 'Dual Bracket')
 
   return (
     <div className="p-8 max-w-6xl mx-auto">

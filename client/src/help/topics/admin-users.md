@@ -4,15 +4,14 @@ The User Management page at `/admin/users` is full CRUD for StickIt login accoun
 
 ### Roles
 
-Three roles, lowest to highest:
+Two roles:
 
 | Role | Access |
 |---|---|
-| **Judge** | Login only; the Officials dashboard is restricted to the Links area |
-| **Official** | Full Officials section — meets, events, registration, scoring, reports |
+| **Judge / Official** | The full Officials section — meets, events, registration, scoring, reports, exports. No Admin panel. |
 | **System Admin** | Everything, including this Admin panel |
 
-A higher role can do everything a lower role can. (Accounts created in older versions with the legacy `event_admin` role are automatically migrated to System Admin.)
+System Admin can do everything Judge / Official can. Changing a user's role never touches their password or signs them out — it is a one-field edit. (Accounts from older versions are migrated automatically at startup: the former login-only **Judge** role becomes Judge / Official, and the legacy `event_admin` role becomes System Admin.)
 
 ### The users table
 
@@ -26,7 +25,7 @@ Each row shows username, display name, role, a **Password** column (Set / Not se
 
 ### Editing
 
-Click **Edit** on any row to change display name, role, active status, or to set / reset the password. Usernames cannot be changed (they're the de facto key).
+Click **Edit** on any row to change username, display name, role, active status, or to set / reset the password. To move a user between the two roles, change only the **Role** drop-down and save — the password is left as it is and no password change is forced.
 
 ### Deactivating
 

@@ -19,8 +19,7 @@ These are never behind the login, by design:
 
 | Role | Can do |
 |---|---|
-| **Judge** | Log in; Officials dashboard restricted to the Links area |
-| **Official** | Full Officials section — run meets end-to-end |
+| **Judge / Official** | Full Officials section — run meets end-to-end; no Admin panel |
 | **System Admin** | Everything, including the Admin panel |
 
 Roles are managed on the [User management](./admin-users) page.
