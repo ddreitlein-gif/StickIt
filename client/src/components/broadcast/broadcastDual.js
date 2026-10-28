@@ -11,8 +11,10 @@
 // no course, until the server writes the athlete into a slot (David's ruling
 // 09-14-26).
 
+// v2.8.00 -- run_sequence (the pairing number unless the match was skipped)
+// is the effective order; pairing_number stays the printed label.
 export const byRunOrder = (a, b) =>
-  ((a.pairing_number ?? 1e9) - (b.pairing_number ?? 1e9))
+  ((a.run_sequence ?? a.pairing_number ?? 1e9) - (b.run_sequence ?? b.pairing_number ?? 1e9))
   || (b.bracket_round - a.bracket_round)
   || (a.bracket_position - b.bracket_position);
 

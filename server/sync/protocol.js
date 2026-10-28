@@ -49,6 +49,11 @@ const crypto = require('crypto');
 // meet_import_map table (outside the manifest, never packaged or captured).
 // No manifest column, no canonicalization change → every row hash is
 // unchanged between a v2.5.06 venue and a v2.7.00 cloud.
+// v2.8.00: NOT bumped. "Skip athlete" stores per-run run-order overrides in
+// run_order_skips, a venue-local table outside the manifest (never packaged,
+// never captured, never checksummed) — the stored order itself is untouched.
+// The skip audit rows sync like any audit row. No manifest column, no
+// canonicalization change.
 const SYNC_PROTOCOL_VERSION = 3;
 
 /**

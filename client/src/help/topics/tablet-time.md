@@ -58,6 +58,10 @@ If `score_entry_mode='paper'`, the Start Run button stays visible even mid-scori
 
 The Start Run and DNS buttons appear only when the meet's Advanced settings allow the Timekeeper to start runs (on by default). Pressing Start Run first re-checks the server's next-up athlete — a card that went stale while the iPad was asleep can never start the wrong athlete — and the server refuses duplicate starts and (in tablet mode) starts while another run is still scoring.
 
+### Skip — athlete not at the start
+
+The grey **Skip** button between Start Run and DNS moves the next-up athlete down the order for **this run only** — it asks how many spots (default 1); past the end of the list makes them last. Use it when the athlete is still competing but not ready when called; press it again if they are still not there, or DNS if they never show. The printed start number, start list, Run 2 order and results never change. The Chief of Scoring can put the athlete back with **Restore spot** on the Scoring Computer.
+
 ### Age group transition banner
 
 When the next athlete is in a different age group from the just-finished one, an amber banner appears at the top:

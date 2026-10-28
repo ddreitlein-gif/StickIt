@@ -4,6 +4,7 @@ import useHighContrast from '../hooks/useHighContrast'
 import useResolveIds from '../hooks/useResolveIds'
 import AthleteBar from '../components/tablet/AthleteBar'
 import HCModeButton from '../components/tablet/HCModeButton'
+import SkipDialog from '../components/SkipDialog'   // v2.8.00
 
 const API = '/api'
 
@@ -31,6 +32,8 @@ export default function TimekeeperTablet() {
   const [recentTimes, setRecentTimes] = useState([])
   const [confirmNT, setConfirmNT]   = useState(false)
   const [confirmDNS, setConfirmDNS] = useState(false)
+  const [confirmSkip, setConfirmSkip] = useState(false)   // v2.8.00
+  const [skipping, setSkipping] = useState(false)
   const pollRef = useRef(null)
   const wsRef   = useRef(null)
 
@@ -284,6 +287,37 @@ export default function TimekeeperTablet() {
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || 'Failed') }
       setNextUp(null)
     } catch (e) { setError('DNS failed: ' + e.message) }
+  }
+
+  // v2.8.00 -- Skip: move the next-up athlete `spots` places down the order
+  // for THIS run (public endpoint, no token — same rule as /status-only).
+  const skipNextUp = async (spots) => {
+    if (!nextUp) return
+    setSkipping(true); setError('')
+    try {
+      // Re-fetch /next-up first (as Start Run does): a stale card must never
+      // skip the wrong athlete.
+      const fresh = await fetch(`${API}/events/${eventId}/runs/next-up`).then(r => r.ok ? r.json() : null).catch(() => null)
+      if (!fresh?.id || fresh.id !== nextUp.id) {
+        setConfirmSkip(false)
+        if (fresh?.id) setNextUp(fresh); else setNextUp(null)
+        setStatusMsg(fresh?.id ? `Next-up card was stale — refreshed to #${fresh.bib_number}. Check and skip again.` : 'No next-up athlete — card refreshed.')
+        return
+      }
+      const res = await fetch(`${API}/events/${eventId}/runs/skip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // expected_position 1: the server refuses the skip if another tablet
+        // already moved this athlete (no double skip).
+        body: JSON.stringify({ registration_id: fresh.id, run_number: fresh.run_number || 1, spots, expected_position: 1 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed')
+      setConfirmSkip(false)
+      setStatusMsg(data.message || 'Skipped.')
+      await fetchNextUp()
+    } catch (e) { setError('Skip failed: ' + e.message) }
+    finally { setSkipping(false) }
   }
 
   // ── Full-screen states ───────────────────────────────────────────────────
@@ -549,6 +583,16 @@ export default function TimekeeperTablet() {
                     >
                       {starting ? 'Starting...' : `Start ${nextUp.phase_label || 'Run'}`}
                     </button>
+                    {/* v2.8.00 -- Skip: athlete not at the start; move them down the order */}
+                    <button
+                      type="button"
+                      onClick={() => setConfirmSkip(true)}
+                      disabled={starting || skipping}
+                      className="tablet-btn-neutral"
+                      style={{ height: 56, fontSize: 16, padding: '0 18px' }}
+                    >
+                      Skip
+                    </button>
                     <button
                       type="button"
                       onClick={() => setConfirmDNS(true)}
@@ -618,6 +662,17 @@ export default function TimekeeperTablet() {
           confirmVariant="amber"
           onCancel={() => setConfirmDNS(false)}
           onConfirm={() => { setConfirmDNS(false); dnsNextUp() }}
+        />
+      )}
+
+      {/* v2.8.00 -- Skip dialog (how many spots down, default 1) */}
+      {confirmSkip && nextUp && (
+        <SkipDialog
+          tablet
+          name={`${nextUp.last_name}, ${nextUp.first_name} (Bib #${nextUp.bib_number})`}
+          busy={skipping}
+          onCancel={() => setConfirmSkip(false)}
+          onConfirm={skipNextUp}
         />
       )}
 

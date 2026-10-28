@@ -61,6 +61,10 @@ Once all judges (and timekeeper) have submitted, the big green button appears. T
 
 The **Start Run** button (with its DNS companion) on the next-up card appears only when the meet's Advanced settings allow the Head Judge to start runs (on by default). When pressed, the tablet re-checks the server's next-up athlete first — so a card that went stale while the iPad was asleep can never start the wrong athlete — and the server refuses duplicate or concurrent starts outright.
 
+### Skip — athlete not at the start
+
+The grey **Skip** button between Start Run and DNS is for an athlete who is still competing but is not ready when called (binding, late to the top, coach talk). It asks how many spots down to move them — default 1 — and re-inserts them that far down the order for **this run only**. Past the end of the list simply makes them last. Skip as many times as needed; DNS stays available if they never show. The printed start number, the start list, Run 2 order and the results are never changed — the Chief of Scoring can put a skipped athlete back with **Restore spot** on the Scoring Computer.
+
 **The first run of an event is started by the Chief of Scoring from the Scoring Computer.** On a venue server the HJ tablet follows whichever event is live; before any run has started nothing is live yet, so the tablet follows a best guess (the meet's first event) and may not show the expected athlete. The Scoring Computer's first Start Run — made after the run order, judge panel and course specs have been checked — puts the event in the spotlight, and from then on the Head Judge starts runs from the tablet as usual. See [Venue tablets](./venue-tablets).
 
 ### Send Back to Scoring

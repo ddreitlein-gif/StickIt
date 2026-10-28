@@ -233,7 +233,8 @@ export default function Scoreboard() {
             });
             loadBracket();
             loadPlacements();
-          } else if (msg.type === 'run_updated' && d.dualComplete) {
+          } else if ((msg.type === 'run_updated' && d.dualComplete) || msg.type === 'run_order_changed') {
+            // v2.8.00 -- run_order_changed: a pairing was skipped / restored
             loadBracket();
             loadPlacements();
           } else if (msg.type === 'dual_nj_update' || msg.type === 'dual_points_update') {

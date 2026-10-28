@@ -8,6 +8,8 @@ import BibAssignModal from '../components/BibAssignModal'
 import VoiceManualEntryModal from '../components/VoiceManualEntryModal'
 import StatusConfirmDialog from '../components/StatusConfirmDialog'
 import AerialsV2ManualModal from '../components/AerialsV2ManualModal'
+import SkipDialog from '../components/SkipDialog'   // v2.8.00
+import { byRunOrder as byDualRunOrder } from '../components/broadcast/broadcastDual'   // v2.8.00
 import { QRCodeSVG } from 'qrcode.react'
 
 const ROLE_LABELS = {
@@ -2416,13 +2418,39 @@ function DualScoringPanel({ event, registrations }) {
   // WebSocket for live updates
   useEffect(() => {
     const ws = createWebSocket(event.id, msg => {
-      if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'dual_bracket_review', 'dual_bracket_sent_back', 'event_finalized'].includes(msg.type)) {
+      // v2.8.00: run_order_changed = a pairing was skipped / restored
+      if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'dual_bracket_review', 'dual_bracket_sent_back', 'event_finalized', 'run_order_changed'].includes(msg.type)) {
         load()
       }
     })
     wsRef.current = ws
     return () => ws.close()
   }, [event.id])
+
+  // v2.8.00 -- Skip pairing (move it down within its round) / Restore spot
+  const [skipTarget, setSkipTarget] = useState(null)
+  const [skipping, setSkipping] = useState(false)
+  const confirmSkip = async (spots) => {
+    if (!skipTarget) return
+    setSkipping(true); setError(''); setMsg('')
+    try {
+      // expected_position 1: the Scoring tab only skips the Up Next pairing;
+      // the server refuses the request if another surface already moved it.
+      const res = await api.skipDualMatch(event.id, { match_id: skipTarget.id, spots, expected_position: 1 })
+      setSkipTarget(null)
+      setMsg(res && res.message ? res.message : 'Pairing skipped.')
+      await load()
+    } catch (e) { setError('Skip failed: ' + e.message) }
+    finally { setSkipping(false) }
+  }
+  const restoreMatchSkip = async (m) => {
+    setError(''); setMsg('')
+    try {
+      await api.restoreDualSkip(event.id, m.id)
+      setMsg(`Pairing ${m.pairing_label || ''} is back at its original spot.`)
+      await load()
+    } catch (e) { setError('Restore failed: ' + e.message) }
+  }
 
   const resendToHj = async () => {
     setResending(true); setError(''); setMsg('')
@@ -2480,8 +2508,10 @@ function DualScoringPanel({ event, registrations }) {
   // of the first unfinished match in that order. Previously every main round
   // ran to the end first, so the championship final came up before the 3/4,
   // 5/6 and 7/8 finals (seen at the 09-07-26 test meet).
-  const byRunOrder = (a, b) => ((a.pairing_number ?? 1e9) - (b.pairing_number ?? 1e9))
-    || (b.bracket_round - a.bracket_round) || (a.bracket_position - b.bracket_position)
+  // v2.8.00 -- the ONE comparator (components/broadcast/broadcastDual.js):
+  // run_sequence = the pairing number unless the match was skipped (moved
+  // down within its block); the printed pairing label never changes.
+  const byRunOrder = byDualRunOrder
   // The block is anchored on the first PLAYABLE open match (both sides known);
   // a consolation match that can never fill (byes in a 6-athlete 5-8 bracket)
   // must not pin the console on an empty block while the semis wait behind it.
@@ -2569,12 +2599,16 @@ function DualScoringPanel({ event, registrations }) {
   const allDone = !activeRoundNum
   const roundAllComplete = pendingMatches.length === 0 && !activeMatch
 
-  const MatchRow = ({ m, highlight, showStart }) => {
+  const MatchRow = ({ m, highlight, showStart, showSkip = false }) => {
     const ptData = matchPoints[m.id] || null
     const ptResult = ptData?.result || null
     const isDone = m.status === 'complete'
     const isHjPending = m.status === 'hj_pending'
     const isActive = m.id === activeMatchId
+    // v2.8.00 -- a pending match may be skipped (moved down its block) or,
+    // once skipped, restored; the pairing label is unchanged either way.
+    const canSkip = showSkip && !isPaper && canChiefStart && !isDone && !isActive && !isHjPending && m.registration_id_blue && m.registration_id_red
+    const canRestore = m.skipped && canChiefStart && !isDone && !isActive
     // v2.5.07 -- USSS/FIS 4310.3.1: the top competitor is RED in an odd round
     // (Final, Round of 8 / 32 / 128) and BLUE in an even one, consolation
     // matches included (the result sheets draw them the same way).
@@ -2624,6 +2658,9 @@ function DualScoringPanel({ event, registrations }) {
 
           <div className="text-center text-slate-600 font-bold text-sm">
             {isDone ? <span className="text-xs text-green-400">Done</span> : isHjPending ? <span className="text-xs text-amber-400 animate-pulse">HJ</span> : isActive ? <span className="text-xs text-blue-400 animate-pulse">LIVE</span> : 'vs'}
+            {/* v2.8.00 -- pairing label + Skipped chip */}
+            {m.pairing_label && <div className="text-[10px] font-bold text-slate-500 mt-0.5">{m.pairing_label}</div>}
+            {m.skipped && !isDone && <div className="text-[10px] font-bold px-1.5 py-0.5 mt-0.5 rounded bg-amber-900/60 text-amber-400 inline-block" title="Moved down the order within its round">SKIPPED</div>}
           </div>
 
           {redOnTop ? blueBox : redBox}
@@ -2648,15 +2685,37 @@ function DualScoringPanel({ event, registrations }) {
 
         {/* Start / Clear buttons (tablet mode) — v2.1.00 (10c): gated on the
             Chief-of-Score start permission (with an all-off failsafe) */}
-        {!isPaper && canChiefStart && showStart && !isDone && !isActive && m.registration_id_blue && m.registration_id_red && (
-          <div className="mt-3 pt-2 border-t border-slate-700">
-            <button
-              onClick={() => startMatch(m.id)}
-              disabled={!!activeMatchId}
-              className="btn-primary w-full text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {activeMatchId ? 'Finish current match first' : 'Start Match'}
-            </button>
+        {((!isPaper && canChiefStart && showStart && !isDone && !isActive && m.registration_id_blue && m.registration_id_red) || canSkip || canRestore) && (
+          <div className="mt-3 pt-2 border-t border-slate-700 flex gap-2">
+            {!isPaper && canChiefStart && showStart && !isDone && !isActive && m.registration_id_blue && m.registration_id_red && (
+              <button
+                onClick={() => startMatch(m.id)}
+                disabled={!!activeMatchId}
+                className="btn-primary flex-1 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {activeMatchId ? 'Finish current match first' : 'Start Match'}
+              </button>
+            )}
+            {/* v2.8.00 -- Skip (pairing not ready) / Restore spot */}
+            {canSkip && (
+              <button
+                onClick={() => setSkipTarget(m)}
+                disabled={skipping}
+                className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-40"
+                title="Pairing not ready — move it down the order within its round"
+              >
+                Skip
+              </button>
+            )}
+            {canRestore && (
+              <button
+                onClick={() => restoreMatchSkip(m)}
+                className="text-xs px-2 py-1 rounded border border-amber-800 text-amber-400 hover:bg-amber-900/20 transition-colors"
+                title="Put the pairing back at its original spot in the round"
+              >
+                Restore spot
+              </button>
+            )}
           </div>
         )}
 
@@ -2791,13 +2850,13 @@ function DualScoringPanel({ event, registrations }) {
       {nextMatch && (!activeMatch || isPaper) && (
         <div className="space-y-2">
           <div className="text-xs text-white uppercase tracking-wide font-semibold">Up Next</div>
-          <MatchRow m={nextMatch} highlight={true} showStart={!isPaper} />
+          <MatchRow m={nextMatch} highlight={true} showStart={!isPaper} showSkip={upNextMatches.length > 1} />
         </div>
       )}
       {nextMatch && activeMatch && !isPaper && (
         <div className="space-y-2">
           <div className="text-xs text-white uppercase tracking-wide font-semibold">Up Next</div>
-          <MatchRow m={nextMatch} highlight={true} showStart={false} />
+          <MatchRow m={nextMatch} highlight={true} showStart={false} showSkip={upNextMatches.length > 1} />
         </div>
       )}
 
@@ -2807,6 +2866,18 @@ function DualScoringPanel({ event, registrations }) {
           <div className="text-xs text-slate-400 uppercase tracking-wide font-semibold">On Deck</div>
           {onDeckMatches.map(m => <MatchRow key={m.id} m={m} highlight={false} showStart={false} />)}
         </div>
+      )}
+
+      {/* v2.8.00 -- Skip dialog (how many spots down within the round) */}
+      {skipTarget && (
+        <SkipDialog
+          kind="match"
+          name={`${skipTarget.pairing_label || 'Pairing'} — ${skipTarget.blue_last || 'TBD'} vs ${skipTarget.red_last || 'TBD'}`}
+          max={Math.max(1, upNextMatches.length - 1)}
+          busy={skipping}
+          onCancel={() => setSkipTarget(null)}
+          onConfirm={confirmSkip}
+        />
       )}
 
       {/* Remaining */}
@@ -3224,6 +3295,13 @@ function ScoringPanel({ event, registrations }) {
   const [activePhase, setActivePhase]           = useState(null)
   const [expandedPhases, setExpandedPhases]     = useState({}) // { phaseId: true/false }
   const [phaseEligibleMap, setPhaseEligibleMap] = useState({}) // { phaseId: [...athletes] }
+  // v2.8.00 -- Skip athlete: the server's remaining-order queue for the
+  // current run ({ runNumber, athletes } from GET /runs/upcoming, incl. the
+  // skip overrides) + the Skip dialog state. The stored order is never edited.
+  const [queue,      setQueue]      = useState(null)
+  const [skipTarget, setSkipTarget] = useState(null)   // { registration, runNumber, max }
+  const [skipping,   setSkipping]   = useState(false)
+  const [notice,     setNotice]     = useState('')
   const wsRef = useRef(null)
 
   const isPaper  = event.score_entry_mode === 'paper'
@@ -3315,6 +3393,79 @@ function ScoringPanel({ event, registrations }) {
     return () => ws.close()
   }, [event.id])
 
+  // v2.8.00 -- refresh the remaining-order queue whenever the runs list or
+  // the current run number changes (every loadAll produces a new `runs`).
+  useEffect(() => {
+    if (event.discipline === 'dual_mogul') return
+    let on = true
+    api.getUpcomingAthletes(event.id, currentRunNumber)
+      .then(u => { if (on) setQueue({ runNumber: currentRunNumber, athletes: (u && u.athletes) || [] }) })
+      .catch(() => { if (on) setQueue(null) })
+    return () => { on = false }
+  }, [event.id, currentRunNumber, runs])
+
+  // Order a locally computed remaining list by the server queue (which
+  // carries the skip overrides) and attach `skipped`. Athletes the queue does
+  // not know yet (a just-changed run) keep their stored-order position at the
+  // end; a queue for another run number is ignored.
+  const orderByQueue = (rem, runNumber) => {
+    if (!queue || queue.runNumber !== runNumber) return rem.map(r => ({ ...r, skipped: !!r.skipped }))
+    const pos = new Map(queue.athletes.map((q, i) => [q.id, { i, skipped: !!q.skipped }]))
+    return [...rem]
+      .sort((a, b) => ((pos.get(a.id)?.i ?? 1e9) - (pos.get(b.id)?.i ?? 1e9)) || ((a.run_order || 999) - (b.run_order || 999)))
+      .map(r => ({ ...r, skipped: pos.get(r.id)?.skipped || false }))
+  }
+
+  const confirmSkip = async (spots) => {
+    if (!skipTarget) return
+    setSkipping(true); setError(''); setNotice('')
+    try {
+      // expected_position 1: Skip is only offered on the first Up Next row; the
+      // server refuses the request if a tablet already moved that athlete.
+      const res = await api.skipAthlete(event.id, { registration_id: skipTarget.registration.id, run_number: skipTarget.runNumber, spots, expected_position: 1 })
+      setSkipTarget(null)
+      setNotice(res && res.message ? res.message : 'Skipped.')
+      await loadAll()
+    } catch (err) { setError('Skip failed: ' + err.message) }
+    finally { setSkipping(false) }
+  }
+  const restoreSkip = async (r, runNumber) => {
+    setError(''); setNotice('')
+    try {
+      await api.restoreSkip(event.id, r.id, runNumber)
+      setNotice(`Bib ${r.bib_number} ${r.last_name}, ${r.first_name} is back at start number ${r.run_order} for Run ${runNumber}.`)
+      await loadAll()
+    } catch (err) { setError('Restore failed: ' + err.message) }
+  }
+  // Skip (first row) + Skipped chip / Restore (any skipped row) — shared by
+  // the phased and flat Up Next / Remaining lists.
+  const SkipControls = ({ r, idx, runNumber, remainingCount }) => (
+    <>
+      {r.skipped && (
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-400" title="Moved down the order for this run">SKIPPED</span>
+      )}
+      {idx === 0 && canChiefStart && event.discipline !== 'dual_mogul' && remainingCount > 1 && (
+        <button
+          onClick={() => setSkipTarget({ registration: r, runNumber, max: remainingCount - 1 })}
+          disabled={saving || skipping}
+          className="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-40"
+          title="Athlete not at the start — move them down the order for this run"
+        >
+          Skip
+        </button>
+      )}
+      {r.skipped && canChiefStart && (
+        <button
+          onClick={() => restoreSkip(r, runNumber)}
+          className="text-xs px-2 py-1 rounded border border-amber-800 text-amber-400 hover:bg-amber-900/20 transition-colors"
+          title="Put the athlete back at their printed start number for this run"
+        >
+          Restore spot
+        </button>
+      )}
+    </>
+  )
+
   const startForerunner = async () => {
     setSaving(true); setError('')
     try {
@@ -3389,7 +3540,8 @@ function ScoringPanel({ event, registrations }) {
 
   const sortedEligible = [...eligibleAthletes].sort((a, b) => (a.run_order || 999) - (b.run_order || 999))
   const alreadyRun = hasOrder ? sortedEligible.filter(r => completedIds.has(r.id) && !scoringIds.has(r.id)) : []
-  const remaining  = hasOrder ? sortedEligible.filter(r => !completedIds.has(r.id) && !scoringIds.has(r.id)) : []
+  // v2.8.00 -- the remaining list follows the server queue (skip overrides)
+  const remaining  = orderByQueue(hasOrder ? sortedEligible.filter(r => !completedIds.has(r.id) && !scoringIds.has(r.id)) : [], currentRunNumber)
   const upNext     = remaining.slice(0, 3)
   const afterNext  = remaining.slice(3)
 
@@ -3532,7 +3684,9 @@ function ScoringPanel({ event, registrations }) {
             const phScoringIds = new Set(phRuns.filter(r => r.status === 'scoring').map(r => r.registration_id))
             const phSorted = [...phAthletes].sort((a, b) => (a.run_order || 999) - (b.run_order || 999))
             const phDone = phSorted.filter(r => phCompletedIds.has(r.id) && !phScoringIds.has(r.id))
-            const phRemaining = phSorted.filter(r => !phCompletedIds.has(r.id) && !phScoringIds.has(r.id))
+            // v2.8.00 -- the active phase's remaining list follows the server queue (skip overrides)
+            const phRemainingBase = phSorted.filter(r => !phCompletedIds.has(r.id) && !phScoringIds.has(r.id))
+            const phRemaining = isActive ? orderByQueue(phRemainingBase, ph.run_number) : phRemainingBase
 
             const statusColor = ph.status === 'finalized' ? 'text-purple-400' :
                                 ph.status === 'complete' ? 'text-emerald-400' :
@@ -3582,6 +3736,8 @@ function ScoringPanel({ event, registrations }) {
                                     {saving ? 'Starting...' : (!isPaper && activeRun) ? 'Run in progress' : 'Start Run'}
                                   </button>
                                 )}
+                                {/* v2.8.00 -- Skip / Skipped / Restore spot */}
+                                <SkipControls r={r} idx={idx} runNumber={ph.run_number} remainingCount={phRemaining.length} />
                                 {idx === 0 && canChiefStart && event.discipline !== 'dual_mogul' && (
                                   <button
                                     onClick={async () => {
@@ -3618,6 +3774,7 @@ function ScoringPanel({ event, registrations }) {
                                 <span className="font-mono text-slate-700 w-6 text-right">{r.run_order}</span>
                                 <span className="font-mono text-slate-600 w-8">#{r.bib_number}</span>
                                 <span className="text-slate-500 flex-1">{r.last_name}, {r.first_name}</span>
+                                <SkipControls r={r} idx={-1} runNumber={ph.run_number} remainingCount={phRemaining.length} />
                                 {event.discipline !== 'dual_mogul' && (
                                   <button
                                     onClick={() => setManualModal({ mode: 'entry', registration: r, runNumber: ph.run_number })}
@@ -3741,6 +3898,8 @@ function ScoringPanel({ event, registrations }) {
                             {saving ? 'Starting...' : (!isPaper && activeRun) ? 'Run in progress' : 'Start Run'}
                           </button>
                         )}
+                        {/* v2.8.00 -- Skip / Skipped / Restore spot */}
+                        <SkipControls r={r} idx={idx} runNumber={currentRunNumber} remainingCount={remaining.length} />
                         {idx === 0 && canChiefStart && event.discipline !== 'dual_mogul' && (
                           <button
                             onClick={async () => {
@@ -3783,6 +3942,7 @@ function ScoringPanel({ event, registrations }) {
                       <span className="font-mono text-slate-700 w-6 text-right">{r.run_order}</span>
                       <span className="font-mono text-slate-600 w-8">#{r.bib_number}</span>
                       <span className="text-slate-500 flex-1">{r.last_name}, {r.first_name}</span>
+                      <SkipControls r={r} idx={-1} runNumber={currentRunNumber} remainingCount={remaining.length} />
                       {event.discipline !== 'dual_mogul' && (
                         <button
                           onClick={() => setManualModal({ mode: 'entry', registration: r, runNumber: currentRunNumber })}
@@ -3836,6 +3996,7 @@ function ScoringPanel({ event, registrations }) {
             </div>
           </div>
           {error && <p className="text-red-400 text-sm">{error}</p>}
+          {notice && <p className="text-amber-400 text-sm">{notice}</p>}
           <button type="submit" disabled={saving || (!isPaper && !!activeRun)}
             className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed">
             {saving ? 'Starting...' : (!isPaper && activeRun) ? 'Waiting -- finish current run first' : 'Start Run'}
@@ -3946,6 +4107,17 @@ function ScoringPanel({ event, registrations }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* v2.8.00 -- Skip dialog (how many spots down for this run, default 1) */}
+      {skipTarget && (
+        <SkipDialog
+          name={`${skipTarget.registration.last_name}, ${skipTarget.registration.first_name} (Bib #${skipTarget.registration.bib_number})`}
+          max={skipTarget.max}
+          busy={skipping}
+          onCancel={() => setSkipTarget(null)}
+          onConfirm={confirmSkip}
+        />
       )}
 
       {/* v1.25.00 (C-7) -- aerials v2 events open the per-judge grid modal */}

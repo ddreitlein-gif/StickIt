@@ -4,6 +4,9 @@ const { calcMogulScore, calcAerialsScore, calcAerialsScoreV2, areJumpsRepeats, c
 const { logAudit } = require('./audit');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const { requireAuth } = require('../middleware/auth');
+// v2.8.00 -- Skip athlete: the effective run order (base order + per-run
+// skip overrides) lives in ONE module so every next-up consumer agrees.
+const skips = require('../runs/skips');
 const lockCheck = requireUnlocked();
 
 // Age group helpers for transition messages
@@ -69,24 +72,16 @@ async function getAgeGroupTransition(eventId, completedRegistrationId) {
     if (phases.length > 0) {
       const activePhase = phases.find(p => p.status === 'in_progress') || phases.find(p => p.status === 'not_started');
       if (activePhase) {
+        // v2.8.00 -- effective order (skip overrides) via the shared literal
         nextAthlete = await queryOne(
-          `SELECT a.birth_year FROM phase_run_order pro
-           JOIN registrations reg ON reg.id = pro.registration_id
-           JOIN athletes a ON a.id = reg.athlete_id
-           WHERE pro.phase_id = ? AND reg.status = 'registered'
-             AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
-           ORDER BY pro.run_order ASC LIMIT 1`,
-          [activePhase.id, eventId, activePhase.run_number]
+          skips.phasedRemainingSql({ cols: 'a.birth_year', limit1: true }),
+          [activePhase.run_number, activePhase.id, eventId, activePhase.run_number]
         );
       }
     } else {
       nextAthlete = await queryOne(
-        `SELECT a.birth_year FROM registrations reg
-         JOIN athletes a ON a.id = reg.athlete_id
-         WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL
-           AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = 1)
-         ORDER BY reg.run_order ASC LIMIT 1`,
-        [eventId, eventId]
+        skips.legacyRemainingSql({ cols: 'a.birth_year', limit1: true }),
+        [1, eventId, eventId, 1]
       );
     }
     const nextAge = computeAgeClass(nextAthlete?.birth_year, event?.event_date);
@@ -174,33 +169,22 @@ router.get('/next-up', async (req, res) => {
 
       if (phase) {
         // Use phase_run_order for ordering, filter out athletes who already have a run for this run_number
-        const next = await queryOne(
-          `SELECT reg.id, reg.bib_number, pro.run_order, a.first_name, a.last_name
-           FROM phase_run_order pro
-           JOIN registrations reg ON reg.id = pro.registration_id
-           JOIN athletes a ON a.id = reg.athlete_id
-           WHERE pro.phase_id = ? AND reg.status = 'registered'
-             AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
-           ORDER BY pro.run_order ASC
-           LIMIT 1`,
-          [phase.id, eventId, runNumber]
-        );
+        // v2.8.00 -- effective order: a skipped athlete sorts by the skip key
+        // for THIS run number only (server/runs/skips.js); `skipped` flags it.
+        const [next] = skips.withSkipFlag([await queryOne(
+          skips.phasedRemainingSql({ limit1: true }),
+          [runNumber, phase.id, eventId, runNumber]
+        )].filter(Boolean));
         return res.json(next ? { ...next, run_number: runNumber, phase_label: phase.label } : null);
       }
     }
 
     // Legacy: no phases — use registrations.run_order
     const runNumber = requestedRunNumber || 1;
-    const next = await queryOne(
-      `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name
-       FROM registrations reg
-       JOIN athletes a ON a.id = reg.athlete_id
-       WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL
-         AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
-       ORDER BY reg.run_order ASC
-       LIMIT 1`,
-      [eventId, eventId, runNumber]
-    );
+    const [next] = skips.withSkipFlag([await queryOne(
+      skips.legacyRemainingSql({ limit1: true }),
+      [runNumber, eventId, eventId, runNumber]
+    )].filter(Boolean));
     res.json(next ? { ...next, run_number: runNumber } : null);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -241,31 +225,21 @@ router.get('/upcoming', async (req, res) => {
       const phase = phases.find(p => p.run_number === runNumber);
 
       if (phase) {
-        const rows = await queryAll(
-          `SELECT reg.id, reg.bib_number, pro.run_order, a.first_name, a.last_name
-           FROM phase_run_order pro
-           JOIN registrations reg ON reg.id = pro.registration_id
-           JOIN athletes a ON a.id = reg.athlete_id
-           WHERE pro.phase_id = ? AND reg.status = 'registered'
-             AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
-           ORDER BY pro.run_order ASC`,
-          [phase.id, eventId, runNumber]
-        );
+        // v2.8.00 -- effective order incl. skip overrides (server/runs/skips.js)
+        const rows = skips.withSkipFlag(await queryAll(
+          skips.phasedRemainingSql(),
+          [runNumber, phase.id, eventId, runNumber]
+        ));
         return res.json({ run_number: runNumber, phase_label: phase.label, athletes: rows });
       }
     }
 
     // Legacy / no-phases path
     const runNumber = requestedRunNumber || 1;
-    const rows = await queryAll(
-      `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name
-       FROM registrations reg
-       JOIN athletes a ON a.id = reg.athlete_id
-       WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL
-         AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?)
-       ORDER BY reg.run_order ASC`,
-      [eventId, eventId, runNumber]
-    );
+    const rows = skips.withSkipFlag(await queryAll(
+      skips.legacyRemainingSql(),
+      [runNumber, eventId, eventId, runNumber]
+    ));
     res.json({ run_number: runNumber, phase_label: `Run ${runNumber}`, athletes: rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -684,6 +658,121 @@ router.post('/status-only', async (req, res) => {
     } catch (_) {}
 
     return await createStatusRun(req, res, { registration_id, run_number, round, run_status });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// v2.8.00 -- SKIP ATHLETE (move down the run order for THIS run only)
+//
+// POST /skip -- public (tablet rule: the HJ and Timekeeper Skip buttons call
+// it with no login token, exactly like /status-only). It only ever writes a
+// run_order_skips row: no run, no score, no change to the stored order.
+// Body: { registration_id, run_number = 1, spots = 1, expected_position? }.
+// ---------------------------------------------------------------------------
+router.post('/skip', async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const event = await queryOne('SELECT * FROM events WHERE id=?', [eventId]);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (event.discipline === 'dual_mogul') {
+      return res.status(400).json({ error: 'Use the dual skip endpoint for dual mogul (POST /dual/skip)' });
+    }
+    // Reachable without a login: refuse anything but the three fields.
+    const allowed = ['registration_id', 'run_number', 'spots', 'expected_position'];
+    const extras = Object.keys(req.body || {}).filter(k => !allowed.includes(k));
+    if (extras.length) {
+      return res.status(400).json({ error: `Unexpected fields for skip: ${extras.join(', ')}` });
+    }
+    const { registration_id } = req.body || {};
+    if (!registration_id) return res.status(400).json({ error: 'registration_id required' });
+    const runNumber = req.body.run_number === undefined || req.body.run_number === null ? 1 : Number(req.body.run_number);
+    if (!Number.isInteger(runNumber) || runNumber < 1) {
+      return res.status(400).json({ error: 'run_number must be a whole number of 1 or more' });
+    }
+    const spots = skips.parseSpots(req.body.spots);
+    if (Number.isNaN(spots)) {
+      return res.status(400).json({ error: 'spots must be a whole number from 1 to 999' });
+    }
+    const expectedPosition = skips.parseExpectedPosition(req.body.expected_position);
+    if (Number.isNaN(expectedPosition)) {
+      return res.status(400).json({ error: 'expected_position must be a whole number of 1 or more' });
+    }
+    const reg = await queryOne(
+      `SELECT reg.id, reg.bib_number, reg.status, a.first_name, a.last_name
+       FROM registrations reg JOIN athletes a ON a.id = reg.athlete_id
+       WHERE reg.id=? AND reg.event_id=?`,
+      [registration_id, eventId]
+    );
+    if (!reg) return res.status(400).json({ error: 'registration_id does not belong to this event' });
+
+    const result = await skips.skipAthlete({ eventId, runNumber, registrationId: registration_id, spots, expectedPosition });
+    if (result && result.stale) {
+      return res.status(409).json({
+        error: `Bib ${reg.bib_number ?? '?'} ${reg.last_name}, ${reg.first_name} is no longer at position ${expectedPosition} (now ${result.from_position} of ${result.remaining}) — another tablet may have skipped them already.  Refresh the next-up card.`,
+        from_position: result.from_position, remaining: result.remaining,
+      });
+    }
+    if (!result) {
+      // Not in the remaining list: already ran (stale card) or not on the start list.
+      const existingRun = await queryOne(
+        `SELECT status FROM runs WHERE event_id=? AND registration_id=? AND run_number=?`,
+        [eventId, registration_id, runNumber]
+      );
+      if (existingRun) {
+        const stateWord = existingRun.status === 'complete' ? 'complete' : 'in progress';
+        return res.status(409).json({
+          error: `Bib ${reg.bib_number ?? '?'} already has a Run ${runNumber} entry (${stateWord}) — nothing to skip.  Refresh the next-up card.`
+        });
+      }
+      return res.status(400).json({
+        error: `Bib ${reg.bib_number ?? '?'} is not in the Run ${runNumber} start list (no run order, scratched, or wrong run number).`
+      });
+    }
+
+    const who = `Bib ${reg.bib_number ?? '?'} ${reg.last_name}, ${reg.first_name}`;
+    const spotsMoved = result.to_position - result.from_position;
+    const message = result.moved
+      ? `${who} moved down ${spotsMoved} spot${spotsMoved === 1 ? '' : 's'} to position ${result.to_position} of ${result.remaining} for Run ${runNumber}.`
+      : `${who} is already last in Run ${runNumber} — nothing to skip.`;
+    if (result.moved) {
+      try {
+        await logAudit('run_order_skip', 'registration', registration_id, null, {
+          run_number: runNumber, spots_requested: spots, spots_moved: spotsMoved,
+          from_position: result.from_position, to_position: result.to_position,
+          sort_order: result.sort_order, base_order: result.base_order,
+          bib: reg.bib_number, name: `${reg.last_name}, ${reg.first_name}`,
+        });
+      } catch (_) {}
+      // run_updated: every next-up consumer (HJ / Timekeeper tablets, Scoring
+      // Computer, Scoreboard, Broadcast Board) already reloads on it.
+      if (req.app.broadcast) req.app.broadcast(eventId, 'run_updated', { run_order_skip: { registration_id, run_number: runNumber } });
+    }
+    res.json({
+      ok: true, moved: result.moved, registration_id, run_number: runNumber,
+      spots_requested: spots, spots_moved: spotsMoved,
+      from_position: result.from_position, to_position: result.to_position,
+      remaining: result.remaining, message,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /skip/:registrationId?run_number=N -- "Restore original spot".
+// Scoring Computer only (requireAuth); tablets never call it.
+router.delete('/skip/:registrationId', requireAuth, async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const registrationId = req.params.registrationId;
+    const runNumber = req.query.run_number === undefined ? 1 : Number(req.query.run_number);
+    if (!Number.isInteger(runNumber) || runNumber < 1) {
+      return res.status(400).json({ error: 'run_number must be a whole number of 1 or more' });
+    }
+    const reg = await queryOne('SELECT id, bib_number FROM registrations WHERE id=? AND event_id=?', [registrationId, eventId]);
+    if (!reg) return res.status(400).json({ error: 'registration_id does not belong to this event' });
+    const existed = await skips.restoreAthlete(eventId, runNumber, registrationId);
+    if (!existed) return res.status(404).json({ error: `No skip recorded for this athlete in Run ${runNumber}` });
+    try { await logAudit('run_order_skip_restored', 'registration', registrationId, null, { run_number: runNumber, bib: reg.bib_number }); } catch (_) {}
+    if (req.app.broadcast) req.app.broadcast(eventId, 'run_updated', { run_order_skip: { registration_id: registrationId, run_number: runNumber, restored: true } });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

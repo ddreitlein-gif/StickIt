@@ -56,6 +56,10 @@ const V2_ONLY_KEYS = [
   // v2.7.00 — events.import_code (Winfree short registration name; NON_SYNC,
   // returned by every event GET / list)
   'import_code',
+  // v2.8.00 — Skip athlete: `skipped` on /next-up, /upcoming, /eligible and
+  // viewer upcoming rows; `run_sequence` + `skipped` on dual rows. Additive;
+  // the stored order the regression script compares is untouched.
+  'skipped', 'run_sequence',
 ];
 // Keep this list current with every release's additive response fields —
 // the gate compares against a frozen v1.30.03 worktree, so any new key

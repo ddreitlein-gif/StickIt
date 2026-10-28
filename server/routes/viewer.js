@@ -7,6 +7,8 @@ const { calcDualMogulPointSplit, effectiveJudgePoints, pickBestRun, assembleTier
 const { rankDualPlacements } = require('../dual/placement_ranking');
 const { pairingNumbers: dualPairingNumbers, formatPairingLabel: dualPairingLabel } = require('../dual/runOrder');
 const { normalizeGender } = require('../utils/gender');
+// v2.8.00 -- Skip athlete: effective upcoming order (shared literals)
+const skips = require('../runs/skips');
 // v2.2.00 — shared phased-results assembly (same code path as the web
 // Scoreboard's /phases/results) for the new /results/phases endpoint.
 const { buildPhasesResults } = require('./phases');
@@ -191,43 +193,16 @@ router.get('/events/:eventId/status', async (req, res) => {
     }
     let upcoming = [];
     if (round) {
+      // v2.8.00 -- effective order incl. per-run skip overrides; the literals
+      // (same filters as before) live in server/runs/skips.js.
       if (phase) {
-        upcoming = await queryAll(
-          `SELECT a.first_name, a.last_name, reg.bib_number, pro.run_order
-           FROM phase_run_order pro
-           JOIN registrations reg ON reg.id = pro.registration_id
-           JOIN athletes a ON a.id = reg.athlete_id
-           WHERE pro.phase_id = ?
-             AND NOT EXISTS (
-               SELECT 1 FROM runs r
-               WHERE r.registration_id = pro.registration_id
-                 AND r.event_id = ?
-                 AND r.run_number = ?
-                 AND r.status IN ('scoring', 'complete')
-             )
-           ORDER BY pro.run_order
-           LIMIT ?`,
-          [phase.id, eventId, phase.run_number, upcomingLimit]
-        );
+        upcoming = await queryAll(skips.viewerPhasedSql(),
+          [phase.run_number, phase.id, eventId, phase.run_number, upcomingLimit]);
       } else {
-        upcoming = await queryAll(
-          `SELECT a.first_name, a.last_name, reg.bib_number, reg.run_order
-           FROM registrations reg
-           JOIN athletes a ON a.id = reg.athlete_id
-           WHERE reg.event_id = ?
-             AND reg.status = 'registered'
-             AND reg.run_order IS NOT NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM runs r
-               WHERE r.registration_id = reg.id
-                 AND r.run_number = ?
-                 AND r.status IN ('scoring', 'complete')
-             )
-           ORDER BY reg.run_order
-           LIMIT ?`,
-          [eventId, round.run_number, upcomingLimit]
-        );
+        upcoming = await queryAll(skips.viewerLegacySql(),
+          [round.run_number, eventId, round.run_number, upcomingLimit]);
       }
+      upcoming = skips.withSkipFlag(upcoming);
     }
 
     res.json({
@@ -244,7 +219,8 @@ router.get('/events/:eventId/status', async (req, res) => {
         run_order: u.run_order,
         bib_number: u.bib_number,
         first_name: u.first_name,
-        last_name: u.last_name
+        last_name: u.last_name,
+        skipped: u.skipped,   // v2.8.00 -- moved down the order for this run (additive)
       }))
     });
   } catch (err) {
@@ -412,6 +388,7 @@ router.get('/events/:eventId/results', async (req, res) => {
       // finals 7/8 -> 5/6 -> 3/4 -> 1/2).
       const pairingNums = dualPairingNumbers(bracket, event.runoff_option || 'runoff_to_4th');
       const genderPrefix = normalizeGender(event.gender) === 'F' ? 'W' : 'M';
+      const dualSkips = await skips.loadDualSkips(eventId);   // v2.8.00
       const enriched = bracket.map(m => {
         const rows = rowsByMatch.get(m.id) || [];
         const pNum = pairingNums.get(m.id) ?? null;
@@ -429,7 +406,10 @@ router.get('/events/:eventId/results', async (req, res) => {
           if (m.winner_registration_id === m.registration_id_blue) winner_side = 'blue';
           else if (m.winner_registration_id === m.registration_id_red) winner_side = 'red';
         }
-        return { ...m, blue_score, red_score, winner_side, pairing_number: pNum, pairing_label: pNum != null ? dualPairingLabel(genderPrefix, pNum) : null };
+        // v2.8.00 -- run_sequence / skipped (additive): the effective order
+        // after a Skip; pairing_number never changes.
+        return { ...m, blue_score, red_score, winner_side, pairing_number: pNum, pairing_label: pNum != null ? dualPairingLabel(genderPrefix, pNum) : null,
+          run_sequence: skips.dualKeyOf(pNum, dualSkips.get(m.id)), skipped: skips.dualSkipped(pNum, dualSkips.get(m.id)) };
       });
       return res.json({ discipline: 'dual_mogul', bracket: enriched });
     }

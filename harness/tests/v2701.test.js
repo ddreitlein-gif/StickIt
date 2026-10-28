@@ -240,7 +240,11 @@ function canonBody({ status, ct, buf }) {
     .replace(/Generated \d{1,2}\/\d{1,2}\/\d{4}/g, 'Generated «ts»')
     .replace(/Time: \d{1,2}:\d{2}(:\d{2})? ?[AP]M/g, 'Time: «ts»')
     .replace(/v?2\.7\.0[01]\b/g, 'vX')
-    .replace(/"uptime":[^,}]*/g, '"uptime":0');
+    .replace(/"uptime":[^,}]*/g, '"uptime":0')
+    // v2.8.00 — additive Skip-athlete keys on /next-up, /upcoming, /eligible,
+    // viewer /status and the dual rows; absent from the v2.7.00 baseline.
+    .replace(/,"skipped":(true|false)/g, '')
+    .replace(/,"run_sequence":(null|-?[0-9.e+-]+)/g, '');
   return `${status} ${ct.split(';')[0]}\n${text}`;
 }
 
@@ -363,12 +367,15 @@ const TOP_QUERIES = [
   ['dual judge points by event (dual.js / viewer.js)', `SELECT djp.* FROM dual_judge_points djp JOIN dual_bracket db ON db.id = djp.match_id WHERE db.event_id = ? ORDER BY djp.judge_number`, 'dual_bracket'],
   ['phase for a run number (runs.js:333)', `SELECT ep.id, ep.label, pro.run_order as phase_run_order FROM event_phases ep JOIN phase_run_order pro ON pro.phase_id = ep.id AND pro.registration_id = ? WHERE ep.event_id = ? AND ep.run_number = ?`, 'event_phases'],
   ['meet events list with counts (meets.js:611)', `SELECT e.*, (SELECT COUNT(*) FROM registrations WHERE event_id = e.id AND status != 'scratched') as athlete_count FROM events e WHERE e.meet_id = ? ORDER BY e.discipline, e.division, e.gender`, 'events'],
-  ['/next-up legacy (runs.js:195)', `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name FROM registrations reg JOIN athletes a ON a.id = reg.athlete_id WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY reg.run_order ASC LIMIT 1`, 'registrations'],
+  // v2.8.00 — the three next-up / upcoming literals now carry the run_order_skips
+  // LEFT JOIN + CASE sort key (server/runs/skips.js); the labelled table must
+  // still be searched USING INDEX (the skips join hits its UNIQUE autoindex).
+  ['/next-up legacy (runs.js /next-up)', `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name, (s.base_order = reg.run_order) AS skipped FROM registrations reg JOIN athletes a ON a.id = reg.athlete_id LEFT JOIN run_order_skips s ON s.event_id = reg.event_id AND s.run_number = ? AND s.registration_id = reg.id WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY CASE WHEN s.base_order = reg.run_order THEN s.sort_order ELSE reg.run_order END ASC LIMIT 1`, 'registrations'],
   ['/runs/active scoring run (runs.js:295)', `SELECT r.*, reg.bib_number, reg.run_order, a.first_name, a.last_name, a.club FROM runs r JOIN registrations reg ON reg.id = r.registration_id JOIN athletes a ON a.id = reg.athlete_id WHERE r.event_id = ? AND r.status = 'scoring' ORDER BY r.created_at DESC LIMIT 1`, 'runs'],
-  ['/upcoming legacy (runs.js:261)', `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name FROM registrations reg JOIN athletes a ON a.id = reg.athlete_id WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY reg.run_order ASC`, 'registrations'],
+  ['/upcoming legacy (runs.js /upcoming)', `SELECT reg.id, reg.bib_number, reg.run_order, a.first_name, a.last_name, (s.base_order = reg.run_order) AS skipped FROM registrations reg JOIN athletes a ON a.id = reg.athlete_id LEFT JOIN run_order_skips s ON s.event_id = reg.event_id AND s.run_number = ? AND s.registration_id = reg.id WHERE reg.event_id = ? AND reg.status = 'registered' AND reg.run_order IS NOT NULL AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY CASE WHEN s.base_order = reg.run_order THEN s.sort_order ELSE reg.run_order END ASC`, 'registrations'],
   ['forerunner lookup (runs.js:278)', `SELECT r.* FROM runs r WHERE r.event_id = ? AND r.status = 'scoring' AND r.registration_id = '__forerunner__' ORDER BY r.created_at DESC LIMIT 1`, 'runs'],
   ['round results (results.js:172)', `SELECT r.*, reg.bib_number, reg.seed, a.first_name, a.last_name FROM runs r JOIN registrations reg ON reg.id = r.registration_id JOIN athletes a ON a.id = reg.athlete_id WHERE r.event_id = ? AND r.round = ? AND r.status = 'complete' ORDER BY r.total_score DESC`, 'runs'],
-  ['/next-up phase (runs.js:178)', `SELECT reg.id, reg.bib_number, pro.run_order, a.first_name, a.last_name FROM phase_run_order pro JOIN registrations reg ON reg.id = pro.registration_id JOIN athletes a ON a.id = reg.athlete_id WHERE pro.phase_id = ? AND reg.status = 'registered' AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY pro.run_order ASC LIMIT 1`, 'runs'],
+  ['/next-up phase (runs.js /next-up)', `SELECT reg.id, reg.bib_number, pro.run_order, a.first_name, a.last_name, (s.base_order = pro.run_order) AS skipped FROM phase_run_order pro JOIN registrations reg ON reg.id = pro.registration_id JOIN athletes a ON a.id = reg.athlete_id LEFT JOIN run_order_skips s ON s.event_id = reg.event_id AND s.run_number = ? AND s.registration_id = reg.id WHERE pro.phase_id = ? AND reg.status = 'registered' AND reg.id NOT IN (SELECT r.registration_id FROM runs r WHERE r.event_id = ? AND r.run_number = ?) ORDER BY CASE WHEN s.base_order = pro.run_order THEN s.sort_order ELSE pro.run_order END ASC LIMIT 1`, 'runs'],
 ];
 
 /** Every static SELECT literal in the server source that reads an indexed table. */

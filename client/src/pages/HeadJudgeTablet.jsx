@@ -8,6 +8,8 @@ import AthleteBar from '../components/tablet/AthleteBar'
 import CalculatedScorePanel from '../components/tablet/CalculatedScorePanel'
 import RunStatusGrid from '../components/tablet/RunStatusGrid'
 import { DualRoundLabel, DualRoundEndedPanel } from '../components/tablet/DualRoundNotice'  // v2.5.06
+import SkipDialog from '../components/SkipDialog'   // v2.8.00
+import { byRunOrder as byDualRunOrder } from '../components/broadcast/broadcastDual'   // v2.8.00
 
 const ROLE_DISPLAY_HJ = {
   TL1: 'T&L 1', TL2: 'T&L 2', TL3: 'T&L 3', TL4: 'T&L 4', TL5: 'T&L 5',
@@ -264,10 +266,49 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
         // round/position sort offered the championship final BEFORE the 3/4,
         // 5/6 and 7/8 finals (seen at the 09-07-26 test). Round/position stays
         // only as the fallback for a server that sends no pairing_number.
-        .sort((a, b) => ((a.pairing_number ?? 1e9) - (b.pairing_number ?? 1e9))
-                     || (b.bracket_round - a.bracket_round) || (a.bracket_position - b.bracket_position))
+        // v2.8.00: the ONE comparator (components/broadcast/broadcastDual.js) —
+        // run_sequence = the pairing number unless the match was skipped
+        // (moved down within its round); the label never changes.
+        .sort(byDualRunOrder)
       setNextMatch(ready[0] || null)
     } catch {}
+  }
+
+  // v2.8.00 -- Skip: the next pairing is not ready; move it down its round.
+  const [skipTarget, setSkipTarget] = useState(null)
+  const [skipping, setSkipping] = useState(false)
+  const confirmSkip = async (spots) => {
+    if (!skipTarget) return
+    setSkipping(true); setError(''); setStatusMsg('')
+    try {
+      // Re-check the next pairing first (as Start Run does for singles): a
+      // card that went stale must never skip a pairing that already moved or
+      // that the Scoring Computer has just started.
+      const br = await fetch(`${API}/events/${eventId}/dual`).then(r => r.ok ? r.json() : []).catch(() => [])
+      const fresh = (br || [])
+        .filter(m => m.status === 'pending' && m.registration_id_blue && m.registration_id_red && !m.is_bye)
+        .sort(byDualRunOrder)[0] || null
+      if (!fresh || fresh.id !== skipTarget.id) {
+        setNextMatch(fresh); setSkipTarget(null)
+        setStatusMsg(fresh ? `Next pairing changed — refreshed to ${fresh.pairing_label || 'the next pairing'}. Check it and skip again.` : 'No pairing is waiting — card refreshed.')
+        return
+      }
+      const res = await fetch(`${API}/events/${eventId}/dual/skip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // expected_position 1: the server refuses the skip if another surface
+        // already moved this pairing (no double skip).
+        body: JSON.stringify({ match_id: skipTarget.id, spots, expected_position: 1 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
+      setSkipTarget(null)
+      setStatusMsg(data.message || 'Pairing skipped.')
+      await loadNextMatch()
+      await loadRoundState()
+    } catch (e) {
+      setError('Skip failed: ' + e.message)
+    } finally { setSkipping(false) }
   }
 
   // v1.5 F4: start the next run -- mirrors EventDetail.jsx startMatch exactly.
@@ -327,7 +368,8 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
       try {
         const msg = JSON.parse(e.data)
         if (msg.eventId !== eventId) return
-        if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'run_updated'].includes(msg.type)) {
+        // v2.8.00: run_order_changed = a pairing was skipped / restored
+        if (['dual_points_update', 'dual_nj_update', 'dual_match_started', 'dual_match_cleared', 'score_update', 'run_updated', 'run_order_changed'].includes(msg.type)) {
           loadMatch()
           loadNextMatch()
           loadReviewState()
@@ -631,15 +673,37 @@ function DualHeadJudgeView({ meetId, eventId, hc, toggleHc, eventCfg }) {
             </div>
             {/* v2.1.00 (10c) -- render only when the HJ may start runs */}
             {(eventCfg?.meet_settings?.start_run_head_judge ?? 1) !== 0 && (
-              <button
-                onClick={startNextRun}
-                disabled={startingNext}
-                className="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
-              >
-                {startingNext ? 'Starting...' : 'Start Run'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={startNextRun}
+                  disabled={startingNext || skipping}
+                  className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 text-white font-bold text-lg py-4 rounded-xl transition-colors"
+                >
+                  {startingNext ? 'Starting...' : 'Start Run'}
+                </button>
+                {/* v2.8.00 -- Skip: pairing not ready; move it down within its round */}
+                <button
+                  onClick={() => setSkipTarget(nextMatch)}
+                  disabled={startingNext || skipping}
+                  className="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 disabled:opacity-50 text-white font-bold text-sm px-5 py-4 rounded-xl transition-colors"
+                >
+                  Skip
+                </button>
+              </div>
             )}
           </div>
+        )}
+
+        {/* v2.8.00 -- Skip dialog (how many spots down within the round) */}
+        {skipTarget && (
+          <SkipDialog
+            tablet
+            kind="match"
+            name={`${skipTarget.pairing_label || 'Pairing'} — ${skipTarget.blue_last || 'TBD'} vs ${skipTarget.red_last || 'TBD'}`}
+            busy={skipping}
+            onCancel={() => setSkipTarget(null)}
+            onConfirm={confirmSkip}
+          />
         )}
 
         {/* Active match — landscape two-column layout */}
@@ -1046,6 +1110,8 @@ export default function HeadJudgeTablet() {
   const reviewModeRef = useRef(null)
   const [nextUp, setNextUp] = useState(null)
   const [startingNext, setStartingNext] = useState(false)
+  const [skipTarget, setSkipTarget] = useState(null)   // v2.8.00 -- Skip dialog target
+  const [skipping, setSkipping] = useState(false)
   const [eventCompleted, setEventCompleted] = useState(false)
   const [finalReview, setFinalReview] = useState(null)
   const [eventFinalized, setEventFinalized] = useState(false)
@@ -1155,6 +1221,41 @@ export default function HeadJudgeTablet() {
     } catch (e) {
       setError('Start run failed: ' + e.message)
     } finally { setStartingNext(false) }
+  }
+
+  // v2.8.00 -- Skip: the next-up athlete is not at the start; move them
+  // `spots` places down the order for THIS run. Re-fetches /next-up first,
+  // like Start Run, so a stale card can never skip the wrong athlete. Public
+  // endpoint (tablet rule), no token.
+  const confirmSkip = async (spots) => {
+    if (!skipTarget) return
+    setSkipping(true); setError(''); setStatusMsg('')
+    try {
+      const fresh = await fetch(`${API}/events/${eventId}/runs/next-up`).then(r => r.ok ? r.json() : null).catch(() => null)
+      if (!fresh?.id) {
+        setNextUp(null); setSkipTarget(null)
+        throw new Error('No next-up athlete — the queue may have changed. Card refreshed.')
+      }
+      if (fresh.id !== skipTarget.id) {
+        setNextUp(fresh); setSkipTarget(null)
+        setStatusMsg(`Next-up card was stale — refreshed to bib ${fresh.bib_number}. Check the athlete and skip again.`)
+        return
+      }
+      const res = await fetch(`${API}/events/${eventId}/runs/skip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // expected_position 1: the server refuses the skip if another tablet
+        // already moved this athlete (no double skip).
+        body: JSON.stringify({ registration_id: fresh.id, run_number: fresh.run_number || 1, spots, expected_position: 1 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed to skip')
+      setSkipTarget(null)
+      setStatusMsg(data.message || 'Skipped.')
+      await fetchNextUp()
+    } catch (e) {
+      setError('Skip failed: ' + e.message)
+    } finally { setSkipping(false) }
   }
 
   useEffect(() => {
@@ -1827,10 +1928,18 @@ export default function HeadJudgeTablet() {
                 <div className="flex gap-2">
                   <button
                     onClick={startNextRun}
-                    disabled={startingNext}
+                    disabled={startingNext || skipping}
                     className="flex-1 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-lg py-4 rounded-2xl transition-colors"
                   >
                     {startingNext ? 'Starting...' : `Start ${nextUp.phase_label || 'Run'}`}
+                  </button>
+                  {/* v2.8.00 -- Skip: athlete not at the start; move them down the order for this run */}
+                  <button
+                    onClick={() => setSkipTarget(nextUp)}
+                    disabled={startingNext || skipping}
+                    className="bg-slate-700 hover:bg-slate-600 active:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm px-5 py-4 rounded-2xl transition-colors"
+                  >
+                    Skip
                   </button>
                   <button
                     onClick={async () => {
@@ -1854,6 +1963,16 @@ export default function HeadJudgeTablet() {
                 </div>
                 )}
               </div>
+            )}
+            {/* v2.8.00 -- Skip dialog (how many spots down, default 1) */}
+            {skipTarget && (
+              <SkipDialog
+                tablet
+                name={`${skipTarget.last_name}, ${skipTarget.first_name} (Bib #${skipTarget.bib_number})`}
+                busy={skipping}
+                onCancel={() => setSkipTarget(null)}
+                onConfirm={confirmSkip}
+              />
             )}
           </div>
         )}

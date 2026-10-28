@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.7.02)
+# Changelog — Version Notes (v1.7.00 – v2.8.00)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -16,6 +16,121 @@ PDF's finals page for 32 and 64 shells, and the additive export of `advancementS
 `consolationSlot` from `dual.js`. Full notes below.
 
 ---
+
+## v2.8.00 Feature Notes
+
+### Skip Athlete — move down the run order for this run (v2.8.00)
+
+Per David's 10-28-26 request: every surface that can start the next run now has a **Skip**
+button beside Start Run / DNS — the Head Judge tablet, the Timekeeper tablet, the Scoring
+Computer's Up Next row, and both dual-mogul surfaces (dual HJ tablet, dual Scoring tab).
+It is for an athlete who is still competing but is not ready when called (binding, late to
+the top, coach talk). Pressing it opens a small dialog — "Move *name* down how many spots?",
+default 1, with −/+ 56 px targets — and re-inserts the athlete that far down the remaining
+order for **this run only**. Rulings settled that day:
+
+| Question | Ruling |
+|---|---|
+| Dual moguls | Included: a skip moves the whole **pairing** down within its own round/block; the server refuses to start a later-block match while a skipped pairing is still pending (409 naming the pairing and round). |
+| Past the end | Clamp to last, no error. |
+| Still not ready | Skip again (unlimited) or DNS; no special state. |
+| Run scope | Current run number only. A Run 1 skip never changes Run 2, start lists, PDFs or later-phase order building. |
+| Undo | **Restore spot** on skipped rows of the Scoring tab (singles and dual). Tablets only skip. |
+| Pi sync | Venue-local, not synced; `SYNC_PROTOCOL_VERSION` stays 3. Skips are audit-logged (the audit rows sync). During a Pi meet the cloud's upcoming lists show the stored order until the next run starts. |
+
+**No scoring, results, placement, run_position, export, PDF or sync-protocol change.**
+
+#### How it works
+
+- **The stored order is never edited.** Next-up has always been computed on the fly ("lowest
+  `run_order` among registered athletes with no `runs` row for this run number"), and flat
+  events reuse `registrations.run_order` for Run 2, the start-list / run-order PDFs print it,
+  and later phases build from it. So skips live in a new table **`run_order_skips`** (one row
+  per event / run number / athlete, or per dual match): `base_order` = the run_order (pairing
+  number) the athlete had when skipped, `sort_order` = the effective key. Effective key =
+  `CASE WHEN s.base_order = base THEN s.sort_order ELSE base END`, so a row is live only while
+  the base number is unchanged — a reorder, random order, rebuild-order or locked-order scratch
+  makes it inert on its own, with no cleanup at the ~9 base-order write sites. Responses keep
+  `run_order` = the printed start number and add `skipped: true/false`.
+- **Skip by k:** R = remaining list in effective order (same filter as `/runs/upcoming`),
+  t = min(i + k, len − 1); t == i → `moved:false` (200, "already last"). The new key goes
+  strictly between R[t]'s key and the next-higher key anywhere in the list (or +1 at the end),
+  so keys stay distinct through repeat skips and never tie with the next dual block. UPSERT the
+  athlete's row only; **Restore** deletes it and the base key returns.
+- **One module, `server/runs/skips.js`**, owns the SQL (the `/next-up`, `/upcoming`,
+  `getAgeGroupTransition`, viewer `/status` and phases `/eligible` literals), the key placement,
+  `skipAthlete` / `restoreAthlete`, and the dual equivalents (`skipMatch` / `restoreMatch` /
+  `earlierBlockSkipPending` over `roundBlocks()`).
+- **Dual:** GET `/dual`, GET `/active-match` and the viewer bracket rows gain `run_sequence`
+  (= pairing number unless skipped) + `skipped`; the HJ tablet, Scoring tab and Broadcast Board
+  sort by `run_sequence ?? pairing_number`. `pairing_number` / `pairing_label` / `round_*` never
+  change (printed on the bracket and keeper PDFs). A skip clamps to the last pending playable
+  match of its own block. The Scoring tab's dual grouping is by `bracket_round`, so a
+  consolation semi skipped past the main semis reappears when its group is next — the server
+  guard allows it (same block).
+
+#### Endpoints (existing routers, so event lock 403 + adoption lock 423 apply by prefix)
+
+- `POST /api/events/:eventId/runs/skip` `{registration_id, run_number=1, spots=1}` — **public**
+  (tablet rule, modelled on `/status-only`: allowed-fields check, registration-belongs-to-event,
+  409 when the athlete already has a run for that number, 400 when not on the start list).
+  Audit `run_order_skip`; broadcast `run_updated` (every next-up consumer already reloads on it).
+- `DELETE /api/events/:eventId/runs/skip/:registrationId?run_number=N` — `requireAuth`
+  (Scoring Computer only); 404 when no row; audit `run_order_skip_restored`.
+- `POST /api/events/:eventId/dual/skip` `{match_id, spots=1}` — **public**; 409 for a complete /
+  started / unfilled match, 400 for a bye. Audit `dual_match_skip`; broadcast the **new type
+  `run_order_changed`** (`dual_match_cleared` would blank the Scoreboard's live panel and
+  `dual_match_started` takes the venue spotlight / fires the Overlay animation). Listeners added:
+  dual HJ tablet, dual Scoring tab, Scoreboard.
+- `DELETE /api/events/:eventId/dual/skip/:matchId` — `requireAuth`; audit `dual_match_skip_restored`.
+- `PUT /dual/active-match` — new 409 guard for a pending skipped pairing in an earlier block.
+- Rows are deleted with the event, the meet, `buildBracketShell` and dual `/reset`; never cloned.
+
+#### Client
+
+- New `client/src/components/SkipDialog.jsx` (tablet and officials class sets).
+- HJ tablet: Skip between Start and DNS (singles card, inside the `start_run_head_judge` gate;
+  re-fetches `/next-up` first like Start Run and refreshes a stale card instead of skipping);
+  dual Next Pairing card gets Skip beside Start Run.
+- Timekeeper tablet: Skip between Start and DNS (inside the `start_run_timekeeper` gate).
+- Scoring tab (`ScoringPanel`): the remaining list follows the server queue (`/runs/upcoming`
+  for the current run, re-fetched after every reload); Skip on the first Up Next row, a
+  **SKIPPED** chip + **Restore spot** on any skipped row (Up Next and Remaining, phased and
+  flat), an amber notice line for the server's message. `DualScoringPanel`: Skip beside Start
+  Match on the Up Next pairing, pairing label + SKIPPED chip in the "vs" cell, Restore spot on
+  skipped pending rows; the Start Match 409 shows in the existing error line.
+
+#### Ultra review (10-28-26) — six findings, all fixed before release
+
+- **Double skip from two tablets** (normal): `POST /runs/skip` and `POST /dual/skip` take an
+  optional `expected_position` (the 1-based position the caller saw); the server refuses with
+  409 when the target has moved ("no longer at position 1 (now 2 of 8) — another tablet may
+  have skipped them already"). Every surface sends 1, and the Timekeeper and dual HJ tablets
+  now re-fetch the next-up card before skipping, as the singles HJ path already did.
+- **Phase delete left skip rows behind** (normal): `DELETE /phases/:id` also removes that run
+  number's rows, so a re-added phase with the same order cannot revive a skip.
+- Venue replace-import (`clearMeetLocalStatements`) clears the meet's skip rows.
+- The live dual match (its `dual_bracket.status` stays `pending`) can no longer be skipped and
+  never blocks a later round (`waiting()` excludes `events.active_dual_match_id`).
+- `parseSpots` / `parseExpectedPosition` live in `server/runs/skips.js` for both routes.
+- The dual `byRunOrder` comparator is imported from `broadcastDual.js` in the Scoring tab and
+  the HJ tablet instead of being copied.
+
+#### Harness / verification
+
+- New `harness/tests/v280.test.js` — 114 checks: flat skip by 1 / k / clamp / last; repeat
+  (one UPSERTed row) / restore / 404; DNS of a skipped athlete, skip mid-run, stale-card 409,
+  `run_position` unchanged; phased (a Run 1 skip never reaches Run 2 "same" order; a Run 2 skip
+  leaves Run 1 and the stored order alone; rebuild-order makes a changed-number row inert);
+  no-effect byte compare of results / judge scores / viewer results / CSV / start-list +
+  run-order PDFs across a skip; dual (run_sequence 3.5 between pairings, labels + bracket /
+  keeper PDFs identical, block clamp, only-pending → moved:false, later-block 409 then 200,
+  restore, `/reset` clears rows); access (adopted meet 423, locked event 403, protection ON →
+  public skip 200 / anonymous restore 401 / token 200).
+- `v2701` TOP_QUERIES carry the new literals; `canonBody` strips the additive `skipped` /
+  `run_sequence` keys; `zz-gates` V2_ONLY_KEYS gained `skipped`, `run_sequence`.
+- Help: `tablet-hj`, `tablet-time`, `scoring-live`, `reg-runorder`; guides and venue cards
+  regenerated. `docs/SYNC_PROTOCOL.md` records the venue-local table (no bump).
 
 ## v2.7.02 Feature Notes
 

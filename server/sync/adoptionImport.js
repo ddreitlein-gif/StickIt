@@ -93,6 +93,13 @@ function clearMeetLocalStatements(meetId) {
       }
     }
   }
+  // v2.8.00 -- the venue-local Skip overrides (outside the manifest) belong
+  // to the meet's events too; a replace-import must not revive them
+  // (ultra review 10-28-26). Runs before the events rows go.
+  stmts.unshift({
+    sql: `DELETE FROM run_order_skips WHERE event_id IN (SELECT id FROM events WHERE meet_id=?)`,
+    args: [meetId],
+  });
   return stmts;
 }
 
@@ -202,4 +209,4 @@ async function executeAdoptionImport(pkg, opts = {}) {
   return { meet_id: meetId, counts, logo: logoWritten, bottom_logo: bottomLogoWritten };
 }
 
-module.exports = { executeAdoptionImport, clearMeetLocal, writeLogo, IMPORT_ORDER, UPSERT_TABLES };
+module.exports = { executeAdoptionImport, clearMeetLocal, clearMeetLocalStatements, writeLogo, IMPORT_ORDER, UPSERT_TABLES };

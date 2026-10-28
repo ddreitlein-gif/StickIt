@@ -11,6 +11,8 @@ const {
 } = require('../dual/placement');
 const { normalizeGender } = require('../utils/gender');
 const runOrderLib = require('../dual/runOrder');
+// v2.8.00 -- Skip match: per-match run-sequence overrides (server/runs/skips.js)
+const skips = require('../runs/skips');
 const { requireUnlocked } = require('../middleware/lockCheck');
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return requireUnlocked()(req, res, next);
@@ -435,6 +437,8 @@ function nextPowerOf2(n) {
 
 async function buildBracketShell(eventId, fieldSize, runoffOption) {
   await execute(`DELETE FROM dual_bracket WHERE event_id=?`, [eventId]);
+  // v2.8.00 -- skip rows point at match ids that no longer exist
+  try { await execute(`DELETE FROM run_order_skips WHERE event_id=? AND match_id IS NOT NULL`, [eventId]); } catch (_) {}
 
   const size       = nextPowerOf2(fieldSize);
   const totalRound = Math.log2(size);
@@ -708,6 +712,7 @@ router.get('/', async (req, res) => {
     // Attach pairing labels
     const pairingCtx = await computePairingNumbers(req.params.eventId);
     const { pairingNums, genderPrefix } = pairingCtx;
+    const dualSkips = await skips.loadDualSkips(req.params.eventId);   // v2.8.00
     const enriched = bracket.map(m => {
       const pNum = pairingNums.get(m.id);
       const rows = rowsByMatch.get(m.id) || [];
@@ -725,6 +730,11 @@ router.get('/', async (req, res) => {
         pairing_label: pNum != null ? formatPairingLabel(genderPrefix, pNum) : null,
         round_label: matchRoundLabel(m, pairingCtx),   // v2.5.06: "Female Round of 32" (tablet notation)
         round_name: matchRoundName(m, pairingCtx),     // v2.5.07: "Round of 32" (no gender word)
+        // v2.8.00: effective run sequence — equals pairing_number unless the
+        // match was skipped (moved down within its block). Clients sort by
+        // this; the pairing number / label never change (printed on PDFs).
+        run_sequence: skips.dualKeyOf(pNum, dualSkips.get(m.id)),
+        skipped: skips.dualSkipped(pNum, dualSkips.get(m.id)),
       };
     });
     res.json(enriched);
@@ -1606,6 +1616,8 @@ router.post('/:matchId/nj', async (req, res) => {
 router.delete('/reset', requireAuth, async (req, res) => {
   try {
     await execute(`DELETE FROM dual_bracket WHERE event_id=?`, [req.params.eventId]);
+    // v2.8.00 -- skip rows for the deleted matches
+    try { await execute(`DELETE FROM run_order_skips WHERE event_id=? AND match_id IS NOT NULL`, [req.params.eventId]); } catch (_) {}
     await execute(`UPDATE registrations SET dual_seed=NULL WHERE event_id=?`, [req.params.eventId]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1688,11 +1700,12 @@ router.get('/active-match', async (req, res) => {
     const pairing_label = pNum != null ? formatPairingLabel(genderPrefix, pNum) : null;
     const round_label = matchRoundLabel(match, pairingCtx);   // v2.5.06
     const round_name  = matchRoundName(match, pairingCtx);    // v2.5.07
+    const skipRow = (await skips.loadDualSkips(req.params.eventId)).get(match.id);   // v2.8.00
 
     // v2.1.00 -- carry the Advanced meet settings so the dual tablets can
     // hide the NJ panel / Air Tied button when the rules are disabled (10a/10b).
     const settings = await getDualMeetSettings(req.params.eventId);
-    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, round_label, round_name, manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
+    res.json({ ...match, judgePoints: rows, judgeScores, pointResult: result, pairing_number: pNum ?? null, pairing_label, round_label, round_name, run_sequence: skips.dualKeyOf(pNum, skipRow), skipped: skips.dualSkipped(pNum, skipRow), manual_entry: event.dual_manual_entry ? 1 : 0, nj_rule_enabled: settings.nj_rule_enabled, air_tie_allowed: settings.air_tie_allowed });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1708,6 +1721,17 @@ router.put('/active-match', async (req, res) => {
       [match_id, req.params.eventId]
     );
     if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    // v2.8.00 -- a skipped match must still be run inside its own round: a
+    // pending skipped pairing in an EARLIER block refuses the start of any
+    // later-block match (David's ruling 10-28-26).
+    const blocker = await skips.earlierBlockSkipPending(req.params.eventId, match_id);
+    if (blocker) {
+      return res.status(409).json({
+        error: `Pairing ${blocker.pairing_label} (${blocker.round_name}) was skipped and must still be run before ${blocker.requested_label || 'the next round'}.  Start it first, or restore its spot on the Scoring Computer.`,
+        skipped_match_id: blocker.match.id,
+      });
+    }
 
     await execute('UPDATE events SET active_dual_match_id=? WHERE id=?', [match_id, req.params.eventId]);
 
@@ -1732,6 +1756,83 @@ router.put('/active-match', async (req, res) => {
     }
 
     res.json({ ok: true, match_id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// v2.8.00 -- SKIP MATCH (move a pending pairing down within its own block)
+//
+// POST /skip -- public (tablet rule: the dual HJ tablet's Skip button). It only
+// writes a run_order_skips row: pairing numbers, labels, placement and the
+// bracket itself are untouched. Body: { match_id, spots = 1, expected_position? }.
+// ---------------------------------------------------------------------------
+router.post('/skip', async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const allowed = ['match_id', 'spots', 'expected_position'];
+    const extras = Object.keys(req.body || {}).filter(k => !allowed.includes(k));
+    if (extras.length) return res.status(400).json({ error: `Unexpected fields for skip: ${extras.join(', ')}` });
+    const { match_id } = req.body || {};
+    if (!match_id) return res.status(400).json({ error: 'match_id required' });
+    const spots = skips.parseSpots(req.body.spots);
+    if (Number.isNaN(spots)) return res.status(400).json({ error: 'spots must be a whole number from 1 to 999' });
+    const expectedPosition = skips.parseExpectedPosition(req.body.expected_position);
+    if (Number.isNaN(expectedPosition)) return res.status(400).json({ error: 'expected_position must be a whole number of 1 or more' });
+    const match = await queryOne('SELECT * FROM dual_bracket WHERE id=? AND event_id=?', [match_id, eventId]);
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+    if (match.is_bye) return res.status(400).json({ error: 'A bye cannot be skipped' });
+
+    const result = await skips.skipMatch({ eventId, matchId: match_id, spots, expectedPosition });
+    if (!result) {
+      const ctx = await computePairingNumbers(eventId);
+      const pNum = ctx.pairingNums.get(match_id);
+      const label = pNum != null ? formatPairingLabel(ctx.genderPrefix, pNum) : 'This pairing';
+      return res.status(409).json({ error: `Pairing ${label} is complete, already started, or not yet filled — nothing to skip.` });
+    }
+    if (result.stale) {
+      return res.status(409).json({
+        error: `Pairing ${result.pairing_label} is no longer at position ${expectedPosition} in the ${result.round_name} (now ${result.from_position} of ${result.remaining_in_round}) — another tablet may have skipped it already.  Refresh and check the next pairing.`,
+        from_position: result.from_position, remaining_in_round: result.remaining_in_round,
+      });
+    }
+    const spotsMoved = result.to_position - result.from_position;
+    const message = result.moved
+      ? `Pairing ${result.pairing_label} moved down ${spotsMoved} spot${spotsMoved === 1 ? '' : 's'} to position ${result.to_position} of ${result.remaining_in_round} in the ${result.round_name}.`
+      : `Pairing ${result.pairing_label} is the last match left in the ${result.round_name} — nothing to skip.`;
+    if (result.moved) {
+      try {
+        await logAudit('dual_match_skip', 'dual_match', match_id, null, {
+          pairing_label: result.pairing_label, round_name: result.round_name,
+          spots_requested: spots, spots_moved: spotsMoved,
+          from_position: result.from_position, to_position: result.to_position,
+          run_sequence: result.run_sequence,
+        });
+      } catch (_) {}
+      // A dedicated type: dual_match_cleared would blank the Scoreboard's live
+      // panel and dual_match_started takes the venue spotlight / fires the
+      // Overlay animation. Listeners: dual HJ tablet, Scoring Computer, Scoreboard.
+      if (req.app.broadcast) req.app.broadcast(eventId, 'run_order_changed', { match_id });
+    }
+    res.json({
+      ok: true, moved: result.moved, match_id, pairing_label: result.pairing_label,
+      spots_requested: spots, spots_moved: spotsMoved,
+      from_position: result.from_position, to_position: result.to_position,
+      remaining_in_round: result.remaining_in_round, message,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /skip/:matchId -- "Restore original spot" (Scoring Computer only).
+router.delete('/skip/:matchId', requireAuth, async (req, res) => {
+  try {
+    const eventId = req.params.eventId;
+    const match = await queryOne('SELECT id FROM dual_bracket WHERE id=? AND event_id=?', [req.params.matchId, eventId]);
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+    const existed = await skips.restoreMatch(eventId, match.id);
+    if (!existed) return res.status(404).json({ error: 'No skip recorded for this pairing' });
+    try { await logAudit('dual_match_skip_restored', 'dual_match', match.id, null, {}); } catch (_) {}
+    if (req.app.broadcast) req.app.broadcast(eventId, 'run_order_changed', { match_id: match.id, restored: true });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

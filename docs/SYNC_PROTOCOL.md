@@ -311,6 +311,15 @@ Notes:
   writes manifest columns only — and the cloud-only `meet_import_map` table
   (confirmed entry-marker → event mappings) is outside the manifest entirely:
   never packaged, never captured by the outbox. No protocol bump (still 3).
+- **v2.8.00:** the `run_order_skips` table ("Skip athlete" — per-run overrides
+  of the run order, one row per event / run number / athlete or per dual
+  match) is venue-local and outside the manifest: never packaged, never
+  captured, never checksummed. The stored order (`registrations.run_order`,
+  `phase_run_order`, pairing numbers) is never edited by a skip, so every
+  synced row is unchanged; only the `run_order_skip` / `dual_match_skip`
+  audit rows travel. During an adopted meet the cloud's "upcoming" lists
+  therefore show the stored order until the next run starts (David's ruling
+  10-28-26). No protocol bump (still 3).
 
 ## 7. Outbox (venue-local)
 

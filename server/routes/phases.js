@@ -3,6 +3,8 @@ const { queryAll, queryOne, execute, uuidv4 } = require('../db/schema');
 const { rankResults, pickBestRun, takeUpToRank, assembleTieredResults, makeTierKeyForRun } = require('../scoring/engine');
 const { requireUnlocked } = require('../middleware/lockCheck');
 const { requireAuth } = require('../middleware/auth');
+// v2.8.00 -- Skip athlete: shared effective-order SQL fragments
+const skips = require('../runs/skips');
 
 // v1.26.03 — auth is applied inside this router (not at the mount) so the one
 // read-only endpoint the public Scoreboard and the HJ tablet final-review
@@ -458,6 +460,10 @@ router.delete('/:phaseId', async (req, res) => {
     // Delete run_round_status entry
     await execute(`DELETE FROM run_round_status WHERE event_id=? AND run_number=?`, [eventId, phase.run_number]);
 
+    // v2.8.00 -- skip overrides for this run number: a re-added phase with the
+    // same order would otherwise revive them (ultra review 10-28-26)
+    try { await execute(`DELETE FROM run_order_skips WHERE event_id=? AND run_number=? AND registration_id IS NOT NULL`, [eventId, phase.run_number]); } catch (_) {}
+
     // Delete the phase
     await execute(`DELETE FROM event_phases WHERE id=?`, [phaseId]);
 
@@ -749,15 +755,19 @@ router.get('/:phaseId/eligible', async (req, res) => {
     const phase = await queryOne('SELECT * FROM event_phases WHERE id=? AND event_id=?', [phaseId, eventId]);
     if (!phase) return res.status(404).json({ error: 'Phase not found' });
 
-    const athletes = await queryAll(
-      `SELECT pro.run_order, reg.id as registration_id, reg.bib_number, a.first_name, a.last_name
+    // v2.8.00 -- `skipped` marks an athlete moved down THIS run's order (the
+    // Scoring Computer badge); the list itself stays in stored order — the
+    // remaining-order queue comes from GET /runs/upcoming.
+    const athletes = skips.withSkipFlag(await queryAll(
+      `SELECT pro.run_order, reg.id as registration_id, reg.bib_number, a.first_name, a.last_name, ${skips.skippedCol('pro.run_order')}
        FROM phase_run_order pro
        JOIN registrations reg ON reg.id = pro.registration_id
        JOIN athletes a ON a.id = reg.athlete_id
+       ${skips.SKIP_JOIN}
        WHERE pro.phase_id = ?
        ORDER BY pro.run_order`,
-      [phaseId]
-    );
+      [phase.run_number, phaseId]
+    ));
 
     res.json(athletes);
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -32,6 +32,10 @@ You don't build Run 2 order manually — the server reverses Run 1 standings aut
 
 For qualifier-finals events, the Final phase's run order similarly reverses qualifier standings, but only for the athletes that made the cut.
 
+### Skipped athletes on the day
+
+A **Skip** on the Scoring tab or a tablet (athlete not at the start when called) does not edit this order. It records a temporary override for that run only: the athlete is re-inserted N spots down the remaining order, the printed start number stays as built, Run 2 is built from the stored order as usual, and **Restore spot** on the Scoring tab removes the override. Rebuilding or reordering a run makes any skip for that run void.
+
 ### Locking the order
 
 Once the order is finalized, click **Lock Order** ([Locking run order](./reg-runorder-lock)). This:

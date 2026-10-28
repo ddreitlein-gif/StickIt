@@ -400,6 +400,12 @@ async function deleteMeetCascade(meetId) {
   await execute('DELETE FROM course_specs WHERE meet_id = ?', [meetId]);
   // v2.7.00 — saved registration-import mappings (cloud-only table)
   try { await execute('DELETE FROM meet_import_map WHERE meet_id = ?', [meetId]); } catch (_) {}
+  // v2.8.00 — per-run skip overrides of the meet's events (venue-local table;
+  // the event rows are deleted just above, so match by the collected ids)
+  if (eventIds.length) {
+    const ph = eventIds.map(() => '?').join(',');
+    try { await execute(`DELETE FROM run_order_skips WHERE event_id IN (${ph})`, eventIds); } catch (_) {}
+  }
 
   // Training days + per-day exclusions
   const trainingDays = await queryAll('SELECT id FROM training_days WHERE meet_id = ?', [meetId]);

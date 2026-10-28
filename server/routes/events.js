@@ -289,6 +289,8 @@ router.delete('/:id', requireAuth, async (req, res) => {
     await execute('DELETE FROM run_round_status WHERE event_id = ?', [eventId]);
     // v2.7.00 — saved registration-import mappings pointing at this event
     try { await execute('DELETE FROM meet_import_map WHERE event_id = ?', [eventId]); } catch (_) {}
+    // v2.8.00 — per-run skip overrides (venue-local table)
+    try { await execute('DELETE FROM run_order_skips WHERE event_id = ?', [eventId]); } catch (_) {}
 
     // Delete the event
     await execute('DELETE FROM events WHERE id = ?', [eventId]);

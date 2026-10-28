@@ -388,6 +388,27 @@ async function initSchema() {
     // judge's codes for both. Both are in the sync manifest (protocol v3).
     `ALTER TABLE judge_scores ADD COLUMN jump_code TEXT`,
     `ALTER TABLE runs ADD COLUMN air_codes_reconciled INTEGER NOT NULL DEFAULT 0`,
+    // v2.8.00 -- "Skip athlete": per-run overrides of the run order (one row
+    // per event / run_number / athlete, or per dual match). base_order is the
+    // run_order (pairing number) the athlete had when skipped; the row is
+    // live only while that base number is unchanged (server/runs/skips.js).
+    // The stored order (registrations.run_order, phase_run_order, pairing
+    // numbers) is NEVER edited by a skip. Venue-local: outside the sync
+    // manifest, not in the adoption package, never captured by the outbox,
+    // never cloned; SYNC_PROTOCOL_VERSION stays 3. Deleted with the event /
+    // meet / bracket. The two UNIQUE constraints are the lookup indexes.
+    `CREATE TABLE IF NOT EXISTS run_order_skips (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL,
+      run_number INTEGER NOT NULL,
+      registration_id TEXT,
+      match_id TEXT,
+      base_order REAL NOT NULL,
+      sort_order REAL NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (event_id, run_number, registration_id),
+      UNIQUE (event_id, match_id)
+    )`,
   ];
   for (const sql of migrations) {
     try { await c.execute(sql); } catch (_) { /* column already exists -- safe to ignore */ }

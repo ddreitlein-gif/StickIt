@@ -40,6 +40,7 @@ Below Currently Scoring is **Up Next** — the next 3–5 athletes in run order.
 - **A judge's tablet loses connection** — the judge can re-submit when it comes back; the polling fallback catches up.
 - **The timekeeper enters the wrong time** — the HJ can reject the time submission, prompting a re-entry.
 - **The Start Run was for the wrong athlete** — End Run from the HJ tablet or the Scoring tab, then Start Run on the correct athlete.
+- **The next athlete is not at the start** — press **Skip** (next to Start Run on the Scoring tab, the Head Judge tablet and the Timekeeper tablet). It asks how many spots down to move them (default 1) and re-inserts them there for this run only; past the end makes them last. Skip again or DNS if they still don't show. Skipped athletes carry a **SKIPPED** chip in the Scoring tab's list with a **Restore spot** button that puts them back at their printed start number. The start list, Run 2 order and results are never affected. In dual moguls Skip moves the whole pairing down within its round, and the server refuses to start a later round while a skipped pairing is still waiting.
 
 ### Phases and Run 2
 

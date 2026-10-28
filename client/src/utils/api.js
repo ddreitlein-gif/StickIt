@@ -223,6 +223,13 @@ export const api = {
   startForerunner: (eventId) => apiFetch(`/events/${eventId}/runs/forerunner`, { method: 'POST' }),
   updateRun: (eventId, runId, data) => apiFetch(`/events/${eventId}/runs/${runId}`, { method: 'PUT', body: data }),
   setRunStatus: (eventId, runId, run_status) => apiFetch(`/events/${eventId}/runs/${runId}/status`, { method: 'PUT', body: { run_status } }),
+  // v2.8.00 -- Skip athlete (Scoring Computer). The tablets call the public
+  // POST endpoints with a plain fetch; the DELETE (restore) routes are
+  // requireAuth and only the Scoring Computer uses them.
+  skipAthlete: (eventId, data) => apiFetch(`/events/${eventId}/runs/skip`, { method: 'POST', body: data }),
+  restoreSkip: (eventId, registrationId, runNumber) => apiFetch(`/events/${eventId}/runs/skip/${registrationId}?run_number=${runNumber || 1}`, { method: 'DELETE' }),
+  skipDualMatch: (eventId, data) => apiFetch(`/events/${eventId}/dual/skip`, { method: 'POST', body: data }),
+  restoreDualSkip: (eventId, matchId) => apiFetch(`/events/${eventId}/dual/skip/${matchId}`, { method: 'DELETE' }),
 
   // Scoring
   submitScore: (eventId, runId, data) => apiFetch(`/events/${eventId}/runs/${runId}/scores`, { method: 'POST', body: data }),
