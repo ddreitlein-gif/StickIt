@@ -5329,7 +5329,12 @@ function UsssCodeField({ meetId, eventId, field, value, onSave, type = "text" })
 // ── PDF Reports Panel ─────────────────────────────────────────────────────────
 function PdfReportsPanel({ event }) {
   const [runNumber, setRunNumber] = useState(1)
+  // v2.8.01: each sort belongs to ONE report and is shown on that report's row.
+  // `sort` is the Registration Listing only; the Run Order report has its own,
+  // defaulting to run order (it used to inherit the registration sort and so
+  // printed alphabetically by default).
   const [sort,  setSort]    = useState('alpha')
+  const [runOrderSort, setRunOrderSort] = useState('run_order')
   const [busy,  setBusy]    = useState({})
   const [phases, setPhases] = useState([])
   const [hasLogo, setHasLogo] = useState(false)
@@ -5414,6 +5419,28 @@ function PdfReportsPanel({ event }) {
 
   const isDual = event.discipline === 'dual_mogul'
 
+  const selectCls = 'bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none focus:border-blue-500'
+  const registrationSortControl = (
+    <label className="flex items-center gap-1.5 text-xs text-slate-400">
+      Sort:
+      <select value={sort} onChange={e => setSort(e.target.value)} className={selectCls}>
+        <option value="alpha">Alphabetical</option>
+        <option value="bib">By Bib</option>
+      </select>
+    </label>
+  )
+  const runOrderSortControl = (
+    <label className="flex items-center gap-1.5 text-xs text-slate-400">
+      Order:
+      <select value={runOrderSort} onChange={e => setRunOrderSort(e.target.value)} className={selectCls}>
+        <option value="run_order">Run Order</option>
+        <option value="alpha">Alphabetical</option>
+      </select>
+    </label>
+  )
+  // "Final Results" is not a run: a run order list or time sheet prints without a run number
+  const finalNote = runNumber === 'final' ? 'Final Results is not a run, so this prints without a run number.' : null
+
   const sections = isDual ? [
     {
       title: 'Registration',
@@ -5422,6 +5449,7 @@ function PdfReportsPanel({ event }) {
           key: 'registration', label: 'Registration Listing - All Events',
           desc: 'All registered (non-scratched) athletes with USSA#, FIS#, birth year, and events. Totals by sex at bottom.',
           opts: { sort }, file: `${safe}_registration_${ds}.pdf`,
+          control: registrationSortControl,
         },
       ],
     },
@@ -5458,6 +5486,7 @@ function PdfReportsPanel({ event }) {
           key: 'registration', label: 'Registration Listing - All Events',
           desc: 'All registered (non-scratched) athletes with USSA#, FIS#, birth year, and events. Totals by sex at bottom.',
           opts: { sort }, file: `${safe}_registration_${ds}.pdf`,
+          control: registrationSortControl,
         },
       ],
     },
@@ -5466,13 +5495,15 @@ function PdfReportsPanel({ event }) {
       reports: [
         {
           key: 'run-order', label: 'Run Order (Single Space)',
-          desc: 'Compact 3-column entrants list in run order with bib, name, group, and club.',
-          opts: { runNumber, sort }, file: `${safe}_run_order_${ds}.pdf`,
+          desc: 'Compact 3-column entrants list with order, bib, name, group, and club. Prints in run order unless you choose Alphabetical.',
+          opts: { runNumber, sort: runOrderSort }, file: `${safe}_run_order_${ds}.pdf`,
+          control: runOrderSortControl, note: finalNote,
         },
         {
           key: 'timer-sheet', label: 'Manual Time Sheet',
           desc: 'Triple-spaced timing sheet with blank Top Time and Bottom Time columns for on-hill use.',
-          opts: {}, file: `${safe}_timer_sheet_${ds}.pdf`,
+          opts: { runNumber }, file: `${safe}_timer_sheet_${ds}.pdf`,
+          note: finalNote,
         },
         {
           key: 'check-bib', label: 'Check Sheet -- By Bib',
@@ -5559,17 +5590,6 @@ function PdfReportsPanel({ event }) {
             </select>
           </label>
         )}
-        <label className="flex items-center gap-2 text-sm text-slate-300">
-          <span className="text-slate-400">Registration sort:</span>
-          <select
-            value={sort}
-            onChange={e => setSort(e.target.value)}
-            className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white outline-none focus:border-blue-500"
-          >
-            <option value="alpha">Alphabetical</option>
-            <option value="bib">By Bib</option>
-          </select>
-        </label>
         <div className="flex items-center gap-2 text-sm text-slate-300">
           <span className="text-slate-400">Event Logo:</span>
           {hasLogo ? (
@@ -5607,7 +5627,9 @@ function PdfReportsPanel({ event }) {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-slate-100">{r.label}</div>
                 <div className="text-xs text-slate-400 mt-0.5">{r.desc}</div>
+                {r.note && <div className="text-xs text-amber-400 mt-0.5">{r.note}</div>}
               </div>
+              {r.control}
               <button
                 onClick={() => post(r.key, r.opts, r.file)}
                 disabled={!!busy[r.key]}

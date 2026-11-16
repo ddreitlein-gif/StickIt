@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.8.00)
+# Changelog — Version Notes (v1.7.00 – v2.8.01)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -14,6 +14,74 @@ box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — B
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
 PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
 `consolationSlot` from `dual.js`. Full notes below.
+
+---
+
+## v2.8.01 Feature Notes
+
+### PDF Reports tab: Run Order report sort, Time Sheet run label (v2.8.01)
+
+Per David's 11-16-26 bug report. Three fixes on the event **PDF Reports** tab, all in
+`PdfReportsPanel` (`client/src/pages/EventDetail.jsx`) and `server/routes/pdf.js`. No schema,
+scoring, tablet, venue or sync change (`SYNC_PROTOCOL_VERSION` stays 3).
+
+**1. Run Order (Single Space) printed alphabetically by default (the bug).** The panel had one
+shared `sort` state (default `'alpha'`) behind a control labelled "Registration sort", and the
+Run Order report sent it too. `POST /api/pdf/run-order` prints alphabetically (no Ord column,
+sub-header "Alphabetical") on `sort === 'alpha'`, so the default Run Order report was
+alphabetical and picking "By Bib" produced the real run order.
+
+- Each sort control now sits on the row of the ONE report it affects (`control` on the report
+  descriptor, rendered beside Generate PDF). Registration Listing: **Sort** = Alphabetical /
+  By Bib (state `sort`, unchanged default). Run Order: **Order** = Run Order / Alphabetical
+  (new state `runOrderSort`, default `'run_order'`). The global "Registration sort" select is gone.
+- Server: alphabetical only on an explicit `sort: 'alpha'`. Nothing sent, or any other value
+  (including the old `'bib'`), prints by run order with the Ord column and "By Moguls Run-order".
+  That was already the code path for a missing sort; it is now the documented contract.
+- Other callers checked: the Print menu's Start List (`openPdf('start-list', {})`) and Timer
+  Sheet send empty options and were never affected; the `/start-list` alias forwards to
+  `/run-order`; the harness (v2701, v280) posts no sort. Nothing depended on alpha-by-default.
+
+**2. Manual Time Sheet always said "Run 1".** The panel sent `opts: {}`; it now sends
+`{ runNumber }` like the check sheets, so the sub-header matches the run selected.
+
+**3. "Final Results" in the run selector.** It is not a run. New `listRunNumber(options)` in
+`pdf.js` (used by `/run-order` and `/timer-sheet` only): a positive integer prints
+"Moguls Run N"; `'final'` or anything unparseable prints the discipline alone ("Moguls"),
+never "Moguls Final Results"; nothing sent means the run in progress (see 4). The two
+report rows show a one-line note while Final Results is selected. The check sheets and Run
+Results are untouched.
+
+**4. Each run's sheet prints THAT run's order (David's ruling 11-16-26: "print run order
+sheets for both Run 1 and Run 2 as well as time keeper sheets for both").** On an event with
+phases, `fetchAthletes` (Run Order, Time Sheet) printed the *active* phase's
+`phase_run_order` whatever run was selected, so once Run 2 was in progress a Run 1 sheet
+could no longer be printed and the label could name a different run than the order shown;
+`fetchAthletesByRunNumber` (both check sheets) always used `registrations.run_order` (the
+Run 1 / Q1 order), so the Check Sheet by Run Order disagreed with the Run Order report during
+Run 2 or a Final. New `resolvePrintOrder(eventId, runNumber)` in `pdf.js`, used by all four:
+
+- run number chosen and a phase exists for it → that phase's `phase_run_order`. The first
+  phase lists every non-scratched athlete (phase order where present, else
+  `registrations.run_order`, as before); a later phase lists only the athletes in it.
+- nothing sent (Print menu Start List / Timer Sheet) → the run in progress, as before, and
+  the sub-header now names that run instead of always "Run 1".
+- no phases, or no phase for that run → `registrations.run_order` (unchanged; a Run 2 sheet
+  printed before Run 2 has been added on the Phases tab shows the stored Run 1 order).
+- Run Order / Time Sheet for a LATER phase with no stored order → 400 "No run order is stored
+  for *label*…" instead of silently printing the Run 1 order under a Run 2 heading (the first
+  phase always falls back to `registrations.run_order`). The check sheets fall back to the
+  registration order in that case, and on a later phase never drop an athlete who has a run
+  in that run number.
+- Sub-header wording is unchanged ("Moguls Run N", N = the phase's run number).
+- Skips (`run_order_skips`) still never change a printed sheet. The v2701 golden compare
+  against v2.7.00 stays byte-identical for every PDF endpoint.
+
+**Harness:** new `harness/tests/v2801.test.js`, 75 checks (run order by default with every
+option shape, explicit alpha, `/start-list` alias, registration by name and by bib, time sheet
+run label, `'final'` on list reports, check sheets, and a two-run event where the Run Order,
+Time Sheet and Check Sheet by Run Order are printed for Run 1 and Run 2 while Run 2 is in
+progress, and a qualifier + final with a cut where each phase prints its own field).
 
 ---
 

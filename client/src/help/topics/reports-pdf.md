@@ -31,9 +31,13 @@ Sorted by bib number. Used by judges and the TD during the meet for quick lookup
 
 Same data, sorted by run order. Mirrors how athletes appeared on the start list.
 
-### Start List
+### Start List (Run Order)
 
-Run order, bibs, names, clubs. Used pre-event to confirm the day's lineup.
+Run order, bibs, names, clubs. Used pre-event to confirm the day's lineup. Choose the run in **Run Number**: the Run 1 sheet always shows the Run 1 order and the Run 2 sheet the Run 2 order, whichever run is under way. Run 2's order exists once Run 2 has been added on the Phases tab. The Manual Time Sheet and the Check Sheet by Run Order follow the same rule. On the **PDF Reports** tab this is **Run Order (Single Space)**. It prints in run order, with the **Ord** column, unless you set the **Order** control on its row to **Alphabetical**. The **Sort** control on the Registration Listing row (Alphabetical or By Bib) applies to that listing only.
+
+### Manual Time Sheet
+
+Triple-spaced sheet in run order with blank Top Time and Bottom Time columns. The header shows the run chosen in **Run Number**. "Final Results" is not a run, so with that choice the Run Order report and the Time Sheet print without a run number.
 
 ### TD Report (USSS Freestyle Technical Delegate Report)
 

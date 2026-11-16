@@ -802,6 +802,60 @@ function drawWinfreeSubHeader(doc, meet, event, reportType, sortLabel, runNumber
 }
 
 // ---------------------------------------------------------------------------
+// Shared: run number for the sub-header of a LIST report (run order, time
+// sheet). v2.8.01: the Reports tab's run selector also offers "Final Results",
+// which is not a run -- for a list report it prints no run number at all
+// (null -> the sub-header shows the discipline only) instead of the old
+// "Moguls Final Results". Nothing sent returns undefined: the caller prints
+// the run in progress (Print menu, older callers).
+// ---------------------------------------------------------------------------
+function listRunNumber(options) {
+  const raw = options ? options.runNumber : undefined;
+  if (raw == null || raw === '') return undefined;
+  const n = parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+// ---------------------------------------------------------------------------
+// Shared: which stored run order a printed sheet uses (v2.8.01).
+//   - a run number was chosen and the event has a phase for it -> THAT phase's
+//     phase_run_order (Run 1 sheet = Run 1 order, Run 2 sheet = Run 2 order,
+//     whichever run is in progress). The first phase lists every athlete;
+//     a later phase lists only the athletes in it (after a cut).
+//   - no run number chosen -> the run in progress (the pre-v2.8.01 rule).
+//   - no phases, or no phase for that run -> registrations.run_order.
+// Returns { phase, orderMap, onlyListed, runNumber } -- orderMap null means
+// "use registrations.run_order". Skips (run_order_skips) never change a
+// printed sheet.
+// ---------------------------------------------------------------------------
+async function resolvePrintOrder(eventId, runNumber) {
+  const phases = await queryAll(
+    `SELECT * FROM event_phases WHERE event_id=? ORDER BY sequence_order`, [eventId]
+  );
+  if (!phases.length) return { phase: null, orderMap: null, onlyListed: false, runNumber: runNumber === null ? null : (runNumber || 1) };
+  const chosen = Number.isInteger(runNumber) && runNumber > 0;
+  const phase = chosen
+    ? (phases.find(p => Number(p.run_number) === runNumber) || null)
+    : (phases.find(p => p.status === 'in_progress' || p.status === 'not_started') || phases[0]);
+  if (!phase) return { phase: null, orderMap: null, onlyListed: false, runNumber };
+  const rows = await queryAll(
+    `SELECT registration_id, run_order FROM phase_run_order WHERE phase_id=?`, [phase.id]
+  );
+  const orderMap = {};
+  for (const po of rows) orderMap[po.registration_id] = po.run_order;
+  const laterPhase = phase.id !== phases[0].id;
+  return {
+    phase, orderMap,
+    orderCount: rows.length,
+    // a LATER phase with no stored order cannot be printed as a run order
+    // (the first phase always falls back to registrations.run_order)
+    missingOrder: laterPhase && rows.length === 0,
+    onlyListed: chosen && laterPhase,
+    runNumber: chosen ? runNumber : (runNumber === null ? null : Number(phase.run_number) || 1),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Shared: fetch event + meet
 // ---------------------------------------------------------------------------
 async function fetchEventMeet(eventId) {
@@ -814,23 +868,14 @@ async function fetchEventMeet(eventId) {
 // ---------------------------------------------------------------------------
 // Shared: fetch registered (non-scratched) athletes with run_order and scores
 // ---------------------------------------------------------------------------
-async function fetchAthletes(eventId, round) {
-  // v1.9.00: Check for phases and use phase_run_order when available
-  const phases = await queryAll(
-    `SELECT * FROM event_phases WHERE event_id=? ORDER BY sequence_order`, [eventId]
-  );
-  // If phases exist, find the active/first phase and use its run_order
-  let phaseOrderMap = null;
-  if (phases.length > 0) {
-    const activePhase = phases.find(p => p.status === 'in_progress' || p.status === 'not_started') || phases[0];
-    const phaseOrders = await queryAll(
-      `SELECT registration_id, run_order FROM phase_run_order WHERE phase_id=?`, [activePhase.id]
-    );
-    phaseOrderMap = {};
-    for (const po of phaseOrders) phaseOrderMap[po.registration_id] = po.run_order;
-  }
+async function fetchAthletes(eventId, round, printOrder) {
+  // v1.9.00: phase_run_order when phases exist. v2.8.01: the caller may pass
+  // the order resolved for the run it is printing (resolvePrintOrder);
+  // without one, the run in progress as before.
+  const po = printOrder || await resolvePrintOrder(eventId, undefined);
+  const phaseOrderMap = po.orderMap;
 
-  const regs = await queryAll(
+  let regs = await queryAll(
     `SELECT reg.id as registration_id, reg.bib_number, reg.seed, reg.run_order, reg.status as reg_status,
             a.id as athlete_id, a.first_name, a.last_name, a.ussa_num, a.fis_id,
             a.club, a.nation, a.birth_year, a.gender
@@ -840,6 +885,7 @@ async function fetchAthletes(eventId, round) {
      ORDER BY reg.run_order ASC, reg.bib_number ASC`,
     [eventId]
   );
+  if (po.onlyListed) regs = regs.filter(r => phaseOrderMap[r.registration_id] != null);
 
   let scoresMap = {};
   if (round) {
@@ -881,7 +927,13 @@ async function fetchAthletes(eventId, round) {
 // Shared: fetch athletes with scores by run_number (int) instead of round
 // ---------------------------------------------------------------------------
 async function fetchAthletesByRunNumber(eventId, runNumber) {
-  const regs = await queryAll(
+  // v2.8.01: the check sheets follow the same stored order as the Run Order
+  // report for the run they show. A phase whose order is not built yet falls
+  // back to registrations.run_order (the pre-v2.8.01 behaviour).
+  const rn = parseInt(runNumber, 10);
+  const po = Number.isInteger(rn) && rn > 0 ? await resolvePrintOrder(eventId, rn) : { orderMap: null };
+  const orderMap = po.orderMap && po.orderCount > 0 ? po.orderMap : null;
+  let regs = await queryAll(
     `SELECT reg.id as registration_id, reg.bib_number, reg.seed, reg.run_order, reg.status as reg_status,
             a.id as athlete_id, a.first_name, a.last_name, a.ussa_num, a.fis_id,
             a.club, a.nation, a.birth_year, a.gender
@@ -902,6 +954,12 @@ async function fetchAthletesByRunNumber(eventId, runNumber) {
     if (!prev || (r.total_score || 0) > (prev.total_score || 0)) {
       scoresMap[r.registration_id] = r;
     }
+  }
+  if (orderMap) {
+    // a later phase lists its own athletes -- plus anyone who has a run in
+    // this run number, so a check sheet can never hide an entered score
+    if (po.onlyListed) regs = regs.filter(r => orderMap[r.registration_id] != null || scoresMap[r.registration_id]);
+    regs = regs.map(r => ({ ...r, run_order: orderMap[r.registration_id] || r.run_order }));
   }
 
   return regs.map(reg => {
@@ -1144,8 +1202,16 @@ router.post('/run-order', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
-    const athletes = await fetchAthletes(eventId, null);
+    const po = await resolvePrintOrder(eventId, listRunNumber(options));
+    if (po.missingOrder) {
+      return res.status(400).json({ error: `No run order is stored for ${po.phase.label}. If it has not started, set its order on the Phases tab, then print again.` });
+    }
+    const athletes = await fetchAthletes(eventId, null, po);
+    // v2.8.01: run order is the default. Alphabetical only on an explicit
+    // sort:'alpha' (the report's own "Order" control on the Reports tab);
+    // nothing sent, or any other value, prints by run order with the Ord column.
     const isAlpha = options.sort === 'alpha';
+    const runNumber = po.runNumber;
     let sorted;
     if (isAlpha) {
       sorted = [...athletes].sort((a, b) => (a.last_name || '').localeCompare(b.last_name || '') || (a.first_name || '').localeCompare(b.first_name || ''));
@@ -1160,7 +1226,7 @@ router.post('/run-order', requireAuth, async (req, res) => {
     const doc = new PDFDocument({ size: 'LETTER', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
     streamPdf(res, doc, safeFilename(event, 'run_order'));
     pdfHeader(doc, meet, event, 'Entrants');
-    drawWinfreeSubHeader(doc, meet, event, 'Entrants', sortLabel, options.runNumber || 1);
+    drawWinfreeSubHeader(doc, meet, event, 'Entrants', sortLabel, runNumber);
 
     // 3-column compact layout
     const startX = doc.page.margins.left;
@@ -1198,7 +1264,7 @@ router.post('/run-order', requireAuth, async (req, res) => {
       if (page > 0) {
         addPageWithFooter(doc);
         pdfHeader(doc, meet, event, 'Entrants');
-        drawWinfreeSubHeader(doc, meet, event, 'Entrants', sortLabel, options.runNumber || 1);
+        drawWinfreeSubHeader(doc, meet, event, 'Entrants', sortLabel, runNumber);
       }
 
       const pageStart = page * athletesPerPage;
@@ -1607,7 +1673,11 @@ router.post('/timer-sheet', requireAuth, async (req, res) => {
   try {
     const { eventId, options = {} } = req.body;
     const { event, meet } = await fetchEventMeet(eventId);
-    const athletes = await fetchAthletes(eventId, null);
+    const po = await resolvePrintOrder(eventId, listRunNumber(options));
+    if (po.missingOrder) {
+      return res.status(400).json({ error: `No run order is stored for ${po.phase.label}. If it has not started, set its order on the Phases tab, then print again.` });
+    }
+    const athletes = await fetchAthletes(eventId, null, po);
 
     const sorted = [...athletes].sort((a, b) =>
       (parseInt(a.run_order) || 999) - (parseInt(b.run_order) || 999)
@@ -1619,7 +1689,7 @@ router.post('/timer-sheet', requireAuth, async (req, res) => {
     const doc = new PDFDocument({ size: 'LETTER', margins: { top: 36, bottom: 36, left: 36, right: 36 } });
     streamPdf(res, doc, safeFilename(event, 'timer_sheet'));
     pdfHeader(doc, meet, event, 'Scoring Sheets');
-    drawWinfreeSubHeader(doc, meet, event, 'Scoring Sheets', 'By Moguls Run-order', options.runNumber || 1);
+    drawWinfreeSubHeader(doc, meet, event, 'Scoring Sheets', 'By Moguls Run-order', po.runNumber);
 
     drawTable(doc, [
       { header: 'Start', width: 0.5, value: r => r.start_num || r.run_order || '' },
