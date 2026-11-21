@@ -618,6 +618,20 @@ const AIR_REF_SECTIONS = [
 ]
 
 // ── Main JudgeTablet ─────────────────────────────────────────────────────────
+// What one judge has on the server for a run, keyed by score type -- the
+// source for the "Rejected score" lines in the red rejected box (moguls only).
+function submittedParts(rows) {
+  const parts = {}
+  for (const s of rows || []) {
+    if (s.score_type === 'turns') {
+      parts.turns = { total: s.raw_score, carving: s.tl_carving, abext: s.tl_abext, upperBody: s.tl_upper_body, deduction: s.tl_deduction }
+    } else if (s.score_type === 'air_jump1' || s.score_type === 'air_jump2') {
+      parts[s.score_type] = { code: s.jump_code, score: s.raw_score }
+    }
+  }
+  return parts
+}
+
 export default function JudgeTablet() {
   const { eventId: rawEventId } = useParams()
   const [searchParams] = useSearchParams()
@@ -643,6 +657,11 @@ export default function JudgeTablet() {
   const [codesError, setCodesError] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [scoreRejected, setScoreRejected] = useState(false)
+  // The score(s) the Head Judge rejected, shown in the red box until the judge
+  // resubmits. lastSubmittedRef holds what this judge last submitted for the
+  // active run (set on submit, refreshed by the poll so a reloaded tablet has it).
+  const [rejectedScore, setRejectedScore] = useState(null)
+  const lastSubmittedRef = useRef({})
   const [error, setError] = useState('')
   const [status, setStatus] = useState('Connecting...')
   const wsRef = useRef(null)
@@ -712,6 +731,8 @@ export default function JudgeTablet() {
         if (run?.id !== activeRun?.id) {
           setActiveRun(run)
           setScoreRejected(false)
+          setRejectedScore(null)
+          lastSubmittedRef.current = submittedParts((run?.submitted || []).filter(s => s.judge_id === judgeId))
           setCarving(null)
           setAbsExt(null)
           setUpperBody(null)
@@ -730,7 +751,17 @@ export default function JudgeTablet() {
             setSubmitted(false)
           }
         } else if (run && run.submitted && judgeId) {
-          const stillSubmitted = run.submitted.some(s => s.judge_id === judgeId)
+          const mine = run.submitted.filter(s => s.judge_id === judgeId)
+          const stillSubmitted = mine.length > 0
+          if (stillSubmitted) {
+            lastSubmittedRef.current = { ...lastSubmittedRef.current, ...submittedParts(mine) }
+          } else if (Object.keys(lastSubmittedRef.current).length) {
+            // Every row of this judge is gone (rejected, or Reject Codes):
+            // keep what was rejected for the red box.
+            const gone = lastSubmittedRef.current
+            lastSubmittedRef.current = {}
+            setRejectedScore(prev => ({ ...(prev || {}), ...gone }))
+          }
           if (!stillSubmitted && submittedRef.current) {
             setScoreRejected(true)
             setSubmitted(false)
@@ -775,6 +806,15 @@ export default function JudgeTablet() {
             setSubmitted(false)
             setError('')
             const rt = msg.data?.rejectedScoreType
+            {
+              const last = lastSubmittedRef.current
+              const keys = ['turns', 'air_jump1', 'air_jump2'].includes(rt) ? [rt] : Object.keys(last)
+              const gone = {}
+              const kept = { ...last }
+              for (const k of keys) { if (last[k]) { gone[k] = last[k]; delete kept[k] } }
+              lastSubmittedRef.current = kept
+              if (Object.keys(gone).length) setRejectedScore(prev => ({ ...(prev || {}), ...gone }))
+            }
             if (rt === 'turns') {
               setCarving(null)
               setAbsExt(null)
@@ -936,8 +976,16 @@ export default function JudgeTablet() {
           throw new Error(err.error)
         }
       }
+      const sent = {}
+      for (const sub of submissions) {
+        sent[sub.score_type] = sub.score_type === 'turns'
+          ? { total: sub.raw_score, carving, abext: componentScoring ? absExt : null, upperBody: componentScoring ? upperBody : null, deduction }
+          : { code: sub.jump_code, score: sub.raw_score }
+      }
+      lastSubmittedRef.current = { ...lastSubmittedRef.current, ...sent }
       setSubmitted(true)
       setScoreRejected(false)
+      setRejectedScore(null)
       setStatus('Score submitted')
     } catch (e) {
       setError(e.message)
@@ -1109,6 +1157,33 @@ export default function JudgeTablet() {
           <div className="tablet-card" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2 }}>
             <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Your score was rejected</div>
             <div className="text-sm mt-1" style={{ color: 'var(--tablet-dim)' }}>The Head Judge has rejected your previous score. Please enter and submit a new score below.</div>
+            {rejectedScore?.turns && (() => {
+              const t = rejectedScore.turns
+              const f = v => Number(v || 0).toFixed(1)
+              const line = (t.carving != null && t.abext != null && t.upperBody != null)
+                ? `${f(t.carving)} + ${f(t.abext)} + ${f(t.upperBody)} - ${f(t.deduction)} = ${f(t.total)}`
+                : t.carving != null ? `${f(t.carving)} - ${f(t.deduction)} = ${f(t.total)}` : null
+              return (
+                <div className="mt-3" style={{ color: '#fff' }}>
+                  <div className="tablet-display" style={{ fontSize: 28 }}>
+                    <span style={{ color: 'var(--tablet-red2)' }}>Rejected score: </span>T&L Total {f(t.total)}
+                  </div>
+                  {line && <div className="text-sm tablet-mono mt-1" style={{ color: 'var(--tablet-dim)' }}>{line}</div>}
+                </div>
+              )
+            })()}
+            {(rejectedScore?.air_jump1 || rejectedScore?.air_jump2) && (
+              <div className="mt-3 text-lg" style={{ color: '#fff' }}>
+                <span className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Rejected score: </span>
+                {['air_jump1', 'air_jump2'].filter(k => rejectedScore[k]).map((k, i) => (
+                  <span key={k}>
+                    {i > 0 && <> &middot; </>}
+                    Jump {k === 'air_jump1' ? 1 : 2}: {rejectedScore[k].code && <span className="tablet-mono" style={{ color: 'var(--tablet-blue2)' }}>{rejectedScore[k].code} </span>}
+                    <span className="tablet-mono">{Number(rejectedScore[k].score).toFixed(1)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

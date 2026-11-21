@@ -50,6 +50,10 @@ Nothing is lost and nothing needs re-entering yet. The Head Judge's tablet shows
 
 The run cannot be finalized while a mismatch stands, so there is no risk of the wrong DD being published.
 
+### If rejected
+
+If the HJ rejects a jump score (or the codes), the tablet returns to entry and the red **Your score was rejected** box shows the jump code and score that were rejected until you re-submit.
+
 ### Per-judge codes
 
 Each Air judge picks codes from scratch — no pre-select. If both Air judges agree, the codes match server-side and the run proceeds. If they disagree, the mismatch goes to the Head Judge as described above.

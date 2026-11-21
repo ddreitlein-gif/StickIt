@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.8.01
+**Current version:** v2.8.02
 
 ## Commands
 
@@ -237,7 +237,7 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ## Version Notes
 
-**Full per-release feature notes live in [CHANGELOG.md](CHANGELOG.md)** (newest first, v2.8.01 back
+**Full per-release feature notes live in [CHANGELOG.md](CHANGELOG.md)** (newest first, v2.8.02 back
 to v1.7.00). The v2.0.00 – v2.7.01 notes were moved there verbatim on 2026-10-28 to keep this file
 under the CLAUDE.md size limit; nothing was dropped or condensed. **When a release ships, add its
 full `## vX.Y.ZZ Feature Notes` section at the TOP of CHANGELOG.md** (above the previous release)
@@ -247,6 +247,7 @@ and one line to the index below — do not add feature-note sections to this fil
 
 | Version | Date | Headline |
 |---|---|---|
+| v2.8.02 | 2026-11-21 | Judge tablet shows the rejected score — the red "Your score was rejected" box on the mogul T&L / Air judge tablet lists the score the HJ rejected (T&L total + breakdown; Air jump code + score) until resubmit; client only (`JudgeTablet.jsx`), dual and aerials untouched |
 | v2.8.01 | 2026-11-16 | PDF Reports tab fixes — Run Order report prints in run order by default (own Order control; Registration sort only affects the Registration Listing); Run Order / Time Sheet / check sheets print the order of the run SELECTED (`resolvePrintOrder` in `pdf.js`: Run 1 and Run 2 both printable at any time); Time Sheet labels the selected run; "Final Results" prints no run number on list reports |
 | v2.8.00 | 2026-10-28 | Skip athlete — Skip button beside Start Run / DNS on every start surface (HJ + Timekeeper tablets, Scoring tab, dual); N spots down for THIS run only via the venue-local `run_order_skips` table (stored order never edited, protocol still 3); dual pairings stay in their round (later-block start 409); Restore spot on the Scoring tab |
 | v2.7.02 | 2026-10-28 | Two login roles — Judge / Official (= `official`) and System Admin; legacy `judge` rows migrated to official at boot; judge-only sidebar / Links-tab limits removed |

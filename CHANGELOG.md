@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.8.01)
+# Changelog — Version Notes (v1.7.00 – v2.8.02)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -16,6 +16,52 @@ PDF's finals page for 32 and 64 shells, and the additive export of `advancementS
 `consolationSlot` from `dual.js`. Full notes below.
 
 ---
+
+## v2.8.02 Feature Notes
+
+### Judge tablet shows the rejected score (v2.8.02)
+
+Per David's 11-21-26 request (photo of a T&L tablet with the score jotted on paper beside it).
+When the Head Judge rejects a score, the mogul judge tablet clears the entry pads and shows the
+red **Your score was rejected** box — but the rejected score itself was gone, so the judge had
+to remember it. The box now shows it, under the existing message, until the judge resubmits or
+the next athlete starts. Client only: no server, schema, scoring, HJ-tablet, venue or sync
+change (`SYNC_PROTOCOL_VERSION` stays 3).
+
+Rulings (David, 2026-11-21): moguls only — T&L judges **and** Air judges; dual moguls
+(`DualJudgeView`) and aerials (`AerialsJudgeTablet.jsx`) are not touched. T&L shows the total
+plus the breakdown, worded like the green Score Submitted screen.
+
+- **T&L:** `Rejected score: T&L Total 15.3` and under it `8.1 + 3.9 + 3.5 - 0.2 = 15.3`
+  (non-component events: `15.5 - 0.2 = 15.3`).
+- **Air:** `Rejected score: Jump 1: 3 7.5 · Jump 2: bT 6.8` — only the jump(s) rejected; a
+  second rejection adds its jump to the line.
+- The pads still clear as before; the rejected score is display only, never pre-filled.
+
+How it works (all in the main `JudgeTablet` component):
+
+- `lastSubmittedRef` holds what this judge last submitted for the active run, keyed by score
+  type (`turns`, `air_jump1`, `air_jump2`). Set in `submitScore()` on success from the local
+  values, and refreshed by the 3 s poll from this judge's own rows in `GET /runs/active`
+  `submitted` (which already carried `raw_score`, `tl_*` components and `jump_code`) — so a
+  tablet reloaded after submitting still has it. `submittedParts()` maps rows to that shape.
+- `rejectedScore` state is filled on rejection: the WebSocket `score_update` path copies the
+  part named by `rejectedScoreType`; the poll path (also the only signal for the HJ's Reject
+  Codes / Reject Both Codes, which sends no reject message) copies everything once none of the
+  judge's rows remain. Cleared on a new run and on a successful resubmit.
+- Known limit: on a non-component T&L event, a tablet reloaded after submitting shows the
+  rejected total without the breakdown line (the server stores no pre-deduction value there).
+
+Help topics `tablet-tl` (If rejected) and `tablet-air` (new If rejected section) updated; guide
+PDFs and venue PDFs regenerated.
+
+Harness: new `harness/tests/v2802.test.js` (Playwright, 9 checks) — T&L rejection on a
+reloaded tablet, resubmit through the real pads then a second rejection (new score shown, old
+one gone), Air Jump 1 then Jump 2, Reject Codes on the other Air tablet. `verify_v16` 123.
+
+Files modified: `client/src/pages/JudgeTablet.jsx`, `client/src/help/topics/tablet-tl.md`,
+`client/src/help/topics/tablet-air.md`, `harness/tests/v2802.test.js` (new), version files,
+`server/public/` build assets, guide + venue PDFs.
 
 ## v2.8.01 Feature Notes
 

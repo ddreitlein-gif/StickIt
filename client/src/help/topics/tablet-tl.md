@@ -40,7 +40,7 @@ Once you've picked Carving / Absorption / Upper Body / Deduction (or Raw / Deduc
 
 ### If rejected
 
-If the HJ rejects your submission, the tablet flips back to the score-entry state with your previous values cleared. Enter new values and re-submit.
+If the HJ rejects your submission, the tablet flips back to the score-entry state with your previous values cleared. The red **Your score was rejected** box shows the score that was rejected (the T&L total and its breakdown) until you re-submit. Enter new values and re-submit.
 
 ### If approved
 
