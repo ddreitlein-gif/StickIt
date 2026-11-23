@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.8.02)
+# Changelog — Version Notes (v1.7.00 – v2.8.03)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -14,6 +14,137 @@ box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — B
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
 PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
 `consolationSlot` from `dual.js`. Full notes below.
+
+---
+
+## v2.8.03 Feature Notes
+
+### Pre-season tablet changes (v2.8.03)
+
+Release A of David's 11-23-26 plan (`StickIt_Preseason_Tablet_DD_Handbook_Plan_11-23-26.md`,
+items 1–4 plus the landscape layout). Client only — `JudgeTablet.jsx` (`DualJudgeView`),
+`HeadJudgeTablet.jsx` and `index.css`. No server, schema, scoring, venue or sync change
+(`SYNC_PROTOCOL_VERSION` stays 3); the request a dual judge tablet sends is byte-for-byte the
+one it sent before. Mogul and aerials judge tablets are untouched.
+
+**1. Dual judges no longer see the running total.** The "Blue n pts n Red (n/5 judges · Speed
+Tied · Air Tied)" line under the Current Match card is removed from the judge tablet. Each
+judge sees only their own split (on the Score Submitted card, as before). The server response
+is unchanged: `pointResult` is still read for the Overall Judge's 5 / 4 / 3 scale and its
+"(Time Tied)" / "(Air Tied)" reason. The Head Judge tablet — including the Head Judge tab of a
+venue Head Judge who also scores (v2.5.03) — still shows the totals. The public Scoreboard,
+Overlay and Broadcast Board also still show live vote totals; a judge who can see one of those
+screens during a match can still see the total there.
+
+**2. Head Judge tablet (moguls): T&L and Air lists in judge order.** `tlRoles` / `airRoles`
+were built in the order `/runs/active` returns the score rows — unordered, in practice the order
+written, so a late or rejected-and-resubmitted judge landed last (David's photo: T&L 2, T&L 3,
+T&L 1). Both lists are now sorted by the trailing judge number, for `discipline === 'mogul'`
+only: legacy aerials events share the lists with mixed role names and keep their order. Display
+only — the running score, the reject buttons and the code mismatch box never read the lists by
+position. Checked and NOT changed: the dual Head Judge list already arrives `ORDER BY
+judge_number`; the Scoring tab's submitted-score chips on the Scoring Computer
+(`EventDetail.jsx` ~3612) are in arrival order, and within one Air judge the Jump 1 / Jump 2
+rows are also in arrival order (a rejected Jump 1 resubmitted after Jump 2 lists second).
+
+**3. Dual judges: select, then Confirm.** A tap on a split, Time Tied or Air Tied used to submit
+at once. Now it only SELECTS (button highlighted, `aria-pressed`); a framed confirm panel below
+the buttons shows the selection in large type ("Blue 4 / Red 1") with **Cancel** and
+**Confirm Blue 4 / Red 1** (or **Confirm Time Tied** / **Confirm Air Tied**). Nothing is sent
+until Confirm.
+
+- `pending` state = `{ matchId, scale, blue, red, timeTied, airTied }`. `livePending` is the
+  only thing rendered or confirmed: it is `pending` while the judge has not submitted, manual
+  entry is not active, and BOTH the match id and the scale (`myScale`: the Overall Judge's
+  5 / 4 / 3, 5 for everyone else) still equal the current ones. Keyed on the id and the scale
+  value, never the match object — the 3 s poll replaces the object every time and must not wipe
+  a selection in progress.
+- A clearing effect on `[matchId, myScale, submitted, manualEntryActive]` drops the selection
+  for good when the match changes or empties, the scale changes, the score turns out to be
+  submitted already (this tablet or the same role on another device), the Head Judge rejects it
+  (`submitted` returns to false) or manual entry starts. A failed send also clears it.
+- `confirmPending()` re-checks the selection's match id against `activeMatch.id` AND
+  `lastMatchIdRef` (kept current by the poll between redraws), and is guarded against a double
+  tap by `inFlightRef`, a ref set before the request — effective at once, not after a redraw.
+  The split buttons and Confirm are also disabled while a send is in flight ("Sending…").
+- The server stays the backstop (wrong scale for the Overall Judge, match already decided, Air
+  Tied not allowed). On a refusal the tablet clears the selection, re-reads the match and shows
+  **Score not sent** with a plain reason in the confirm panel (a "must equal n" split error is
+  reworded: "The points to award changed for this match. Select your split again.").
+- The confirm panel is RESERVED space (`.dual-confirm-panel`, min-height 128 px, always
+  rendered; empty state "Nothing is sent until you press Confirm."), so no button moves when it
+  fills, and it sits below every split / tied button, so Confirm is never under the finger that
+  made the selection. The error message shows in the same space.
+- Air Judge with the NJ rule on: the NJ confirm ("Confirm NJ" / "Confirm Clear") and the split
+  confirm ("Confirm Blue 4 / Red 1") carry distinct labels and only one is open at a time —
+  selecting a split closes an open NJ confirm and tapping an NJ toggle drops a pending split.
+  An NJ confirm left open is now also closed when the match changes (it could previously be
+  confirmed against the next match).
+- Still the public `POST /dual/:matchId/judge-points`; no tablet control is wired to a
+  `requireAuth` endpoint.
+- Wording: "Select a split, then press Confirm"; the rejected notice reads "The Head Judge
+  rejected your score. Select a new split and press Confirm."
+
+**4. Time Judge: time differential reference card.** Judge 4 only (`data-testid="dual-time-ref"`),
+static text from FIS Judging Handbook (November 2026) 6304.3.4 — 0.74 seconds or less 3 / 2;
+0.75 to 1.49 seconds 4 / 1; 1.5 seconds or more 5 / 0; Tied → Time Tied. It calculates and
+preselects nothing. The 2027 Competition Guide has no separate table, so the FIS table governs.
+
+**Layout: two columns in landscape, no scrolling.** From 1024 px wide (true for an iPad Air 3
+in landscape at 1112, false in portrait at 834) the dual judge page is a two-column grid: left =
+match card, NJ banner, rejected notice, the Time Judge's reference card, the Air Judge's NJ
+panel; right = the score card (split buttons, Time Tied / Air Tied, confirm panel) or the Score
+Submitted card. Narrower screens keep one column in the previous order, with the reference card
+below the score card. All sizes live in `index.css` under "Dual judge page (v2.8.03)" (the
+inline heights on the split / tied buttons became classes). In landscape the pairing label
+shares the "Current Match" row, the header and card paddings are trimmed, split buttons are 76
+px (80 in portrait) and Time Tied / Air Tied 56 px (60).
+
+- Height budget: **1112 x 680**, not the plan's 720. Safari's bars leave about 720, and on a
+  venue box the judge page runs inside `VenueRole`'s iframe under the 40 px role bar. Measured
+  (headless Chromium): lowest control at 604 (680 budget) for the Time and Air judges, 624 in
+  HC mode.
+- Fits at 1112 x 680 in normal and HC mode for all five roles with a selection open, including
+  both Advanced settings on for the Air Judge (Air Tied button + NJ panel with its confirm open).
+  Known limit: with the NJ rule on, an NJ call standing AND the Time Judge's score rejected, the
+  reference card's last rows fall below 680 (the controls, all in the right column, stay on
+  screen). The NJ rule is off by default and not adopted domestically.
+- NOT verified on a device: the visible height on a real iPad Air 3. A manual pass on one of the
+  RMF iPads is required before the first competition (the confirm step changes what every dual
+  judge does on every match).
+
+Help topics `tablet-dual` (Layout, Entering, Time Differential table, NJ panel placement) and
+`tablet-hj` (row order) updated; the Judges Quick Start (`server/scripts/guides/qs_judges.js`)
+now says "tap the split ... then tap Confirm"; guide PDFs and venue PDFs regenerated. The printed
+venue cards carried no one-tap wording.
+
+Cloud ultra review (source-only branch `review/v2.8.03-source`, 2026-11-23): four findings, all
+nits, three fixed before release. (1) A "Score not sent" message could stay under the green Score
+Submitted card when the server had stored the split but the reply was lost — the message is now
+cleared when `submitted` turns true (an NJ error raised afterwards still shows). (2) The selected
+split's digits kept inline colours, so the HC rule (amber, like every other selected score button)
+never applied — the colours are now the `.dual-split-b / -sep / -r` classes. (3) The Head Judge
+tablet's Aerials v2 grid now calls the shared `byJudgeNumber` comparator instead of its identical
+inline copy. The fourth (version not bumped) is an artefact of the source-only review branch.
+
+Harness: new `harness/tests/v2803.test.js` (Playwright, 99 checks) — no totals on the judge
+tablet; select / change / cancel / confirm; nothing sent by a tap, the selection survives the 3 s
+poll; no button moves when the panel fills; a double tap on Confirm sends exactly one request
+with the old body shape (plain, Time Tied, Air Tied); reject and resubmit; selection dropped on
+match change, score from another device, manual entry start, Overall Judge scale 5 → 4, and a
+refused send (plain message), and a lost reply (no stale message under Score Submitted); selected
+digits white / amber in HC; NJ confirm and split confirm exclusive; reference card for Judge 4
+only; every control on screen at 1112 x 720 and 1112 x 680, normal and HC, for all five roles;
+single column at 834 wide; Head Judge list in T&L 1, 2, 3 / Air 1, 2 order with scores written
+out of order and after a reject and resubmit. Full harness 1,555 passed; the one failure is
+v2701's pre-existing `GET /api/admin/dashboard` same-second-audit flake (server untouched by
+this release). `verify_v16` 123.
+
+Files modified: `client/src/pages/JudgeTablet.jsx`, `client/src/pages/HeadJudgeTablet.jsx`,
+`client/src/index.css`, `client/src/help/topics/tablet-dual.md`,
+`client/src/help/topics/tablet-hj.md`, `server/scripts/guides/qs_judges.js`,
+`harness/tests/v2803.test.js` (new), version files, `server/public/` build assets, guide + venue
+PDFs.
 
 ---
 

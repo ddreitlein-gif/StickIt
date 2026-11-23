@@ -1501,17 +1501,24 @@ export default function HeadJudgeTablet() {
     byRole[s.role].push(s)
   }
 
-  const tlRoles  = Object.entries(byRole).filter(([r]) => /^TL/.test(r)  || (eventCfg?.discipline === 'aerials' && /^Form/.test(r)))
-  const airRoles = Object.entries(byRole).filter(([r]) => /^Air/.test(r) || (eventCfg?.discipline === 'aerials' && /^(AirJudge|Landing)/.test(r)))
+  // v2.8.03 -- mogul events list the judges in judge-number order (T&L 1, 2,
+  // 3 ... / Air 1, 2). /runs/active returns the score rows unordered -- in
+  // practice the order written, so a late or resubmitted judge landed last.
+  // Display only: nothing reads these lists by position. Legacy aerials events
+  // share the lists with mixed role names and keep their order as it was.
+  const byJudgeNumber = (a, b) => {
+    const an = parseInt((a[0].match(/\d+$/) || ['99'])[0])
+    const bn = parseInt((b[0].match(/\d+$/) || ['99'])[0])
+    return an - bn
+  }
+  const inJudgeOrder = (list) => (eventCfg?.discipline === 'mogul' ? list.sort(byJudgeNumber) : list)
+  const tlRoles  = inJudgeOrder(Object.entries(byRole).filter(([r]) => /^TL/.test(r)  || (eventCfg?.discipline === 'aerials' && /^Form/.test(r))))
+  const airRoles = inJudgeOrder(Object.entries(byRole).filter(([r]) => /^Air/.test(r) || (eventCfg?.discipline === 'aerials' && /^(AirJudge|Landing)/.test(r))))
 
   // v1.18.00 — Aerials v2 detection for the grid panel.
   const isAerialsV2 = eventCfg?.discipline === 'aerials' && eventCfg?.aerials_panel_size != null
   const aeJudgeRoles = isAerialsV2
-    ? Object.entries(byRole).filter(([r]) => /^AeJudge/.test(r)).sort((a, b) => {
-        const an = parseInt((a[0].match(/\d+$/) || ['99'])[0])
-        const bn = parseInt((b[0].match(/\d+$/) || ['99'])[0])
-        return an - bn
-      })
+    ? Object.entries(byRole).filter(([r]) => /^AeJudge/.test(r)).sort(byJudgeNumber)
     : []
 
   const hasComputed = activeRun && (activeRun.hj_pending || activeRun.status === 'complete') && activeRun.total_score != null

@@ -162,29 +162,61 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
     return () => { cancelled = true; clearInterval(id) }
   }, [eventId])
 
-  const submitSplit = async (blue, red, timeTied = false, airTied = false) => {
-    if (!activeMatch) return
+  // v2.8.03 -- two-step submission. A tap on a split (or Time Tied / Air Tied)
+  // only SELECTS it; nothing is sent until Confirm. The selection remembers the
+  // match it was made for and the point scale it was made on, and is honoured
+  // only while both still describe the current match (see livePending below).
+  const [pending, setPending] = useState(null)  // { matchId, scale, blue, red, timeTied, airTied }
+  const inFlightRef = useRef(false)             // double-tap guard, effective at once (not after a redraw)
+
+  const selectSplit = (blue, red, timeTied = false, airTied = false) => {
+    if (!activeMatch || submitting || inFlightRef.current) return
+    setError('')
+    setNjConfirm(null)   // only one confirm panel open at a time
+    setPending({ matchId: activeMatch.id, scale: myScale, blue, red, timeTied, airTied })
+  }
+
+  const confirmPending = async () => {
+    const p = livePending
+    if (!p || inFlightRef.current) return
+    // The poll keeps lastMatchIdRef current between redraws.
+    if (!activeMatch || p.matchId !== activeMatch.id || p.matchId !== lastMatchIdRef.current) {
+      setPending(null)
+      return
+    }
+    inFlightRef.current = true
     setSubmitting(true)
     setError('')
     setScoreRejected(false)
     try {
-      const payload = { judge_number: judgeNum, blue_points: blue, red_points: red }
-      if (timeTied) payload.time_tied = true
-      if (airTied) payload.air_tied = true
-      const res = await fetch(`${API}/events/${eventId}/dual/${activeMatch.id}/judge-points`, {
+      const payload = { judge_number: judgeNum, blue_points: p.blue, red_points: p.red }
+      if (p.timeTied) payload.time_tied = true
+      if (p.airTied) payload.air_tied = true
+      const res = await fetch(`${API}/events/${eventId}/dual/${p.matchId}/judge-points`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const body = await res.json()
-      if (!res.ok) { setError(body.error || 'Error'); return }
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The server is the backstop (wrong scale, match already decided...).
+        // Drop the selection, re-read the match and say so plainly.
+        setPending(null)
+        setError(/must equal/i.test(body.error || '')
+          ? 'Score not sent.  The points to award changed for this match.  Select your split again.'
+          : `Score not sent.  ${body.error || 'Please select your split again.'}`)
+        fetchMatchRef.current()
+        return
+      }
       setSubmitted(true)
       setStatus('Score submitted')
       setActiveMatch(prev => prev ? { ...prev, judgePoints: body.rows, pointResult: body.result } : prev)
     } catch (e) {
-      setError(e.message)
+      setPending(null)
+      setError('Score not sent.  No answer from the server.  Select your split and confirm again.')
     } finally {
       setSubmitting(false)
+      inFlightRef.current = false
     }
   }
 
@@ -226,6 +258,31 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
   const airTiedMatch = !!activeMatch?.pointResult?.airTied
   const scaleReason = [speedTied ? 'Time Tied' : null, airTiedMatch ? 'Air Tied' : null].filter(Boolean).join(' + ')
   const j4Overridden = judgeNum === 4 && !!njCall
+  // v2.8.03 -- the scale this judge awards on, and the selection that is still
+  // good for it. Keyed on the match ID and the scale VALUE, never on the match
+  // object: the 3 s poll hands over a new object every time and must not wipe
+  // a selection in progress.
+  const matchId = activeMatch?.id || null
+  const myScale = judgeNum === 5 ? overallScale : 5
+  const livePending = pending && !submitted && !manualEntryActive
+    && pending.matchId === matchId && pending.scale === myScale ? pending : null
+  // Drop the selection when the match changes or empties, the Overall Judge's
+  // scale changes, the score turns out to be submitted already (this tablet or
+  // the same role on another device), the Head Judge rejects it (submitted
+  // goes back to false), or manual entry starts. livePending above already
+  // refuses a stale one in the same redraw; this clears it for good.
+  useEffect(() => { setPending(null) }, [matchId, myScale, submitted, manualEntryActive])
+  // An NJ confirm left open must not carry over to the next match either.
+  useEffect(() => { setNjConfirm(null) }, [matchId])
+  // A "Score not sent" message is void once the score turns out to be on the
+  // server after all (the reply was lost, or the same role scored elsewhere):
+  // it must not sit under the Score Submitted card. Errors raised AFTER that
+  // (an NJ call that fails) are set later and still show.
+  useEffect(() => { if (submitted) setError('') }, [submitted])
+  const pendingLabel = livePending
+    ? (livePending.timeTied ? 'Time Tied' : livePending.airTied ? 'Air Tied' : `Blue ${livePending.blue} / Red ${livePending.red}`)
+    : ''
+  const isPicked = (b, r) => !!livePending && !livePending.timeTied && !livePending.airTied && livePending.blue === b && livePending.red === r
   const njName = (side) => side === 'blue'
     ? (activeMatch?.blue_first ? `${activeMatch.blue_first} ${activeMatch.blue_last}` : 'Blue')
     : (activeMatch?.red_first ? `${activeMatch.red_first} ${activeMatch.red_last}` : 'Red')
@@ -250,7 +307,7 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
 
   return (
     <div className={`tablet-root min-h-screen ${hc ? 'hc' : ''}`} data-hc={hc ? '1' : '0'}>
-      <div className="tablet-card" style={{ borderRadius: 0, padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="tablet-card dual-judge-header" style={{ borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div className="font-bold" style={{ color: '#fff' }}>{judge.name}</div>
           <div className="text-xs" style={{ color: 'var(--tablet-dim)' }}>{DUAL_ROLE_LABEL[judge.role] || judge.role}</div>
@@ -270,74 +327,86 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
         </div>
       </div>
 
-      <div className="p-4 space-y-6 max-w-lg mx-auto">
+      {/* v2.8.03 -- landscape tablets (1024 px and wider; an iPad Air 3 is
+          1112 wide in landscape, 834 in portrait) get TWO columns so every
+          control is on screen without scrolling: left = the match card, the
+          rejected notice, the NJ banner, the Time Judge's reference card and
+          the Air Judge's NJ panel; right = the split buttons, Time Tied / Air
+          Tied and the confirm panel. Narrower screens keep one column. */}
+      <div className={`dual-judge-page mx-auto${activeMatch ? ' has-match' : ''}`}>
         {activeMatch ? (
-          <>
-            <div className="tablet-card" style={{ padding: 18 }}>
-              {/* v2.5.06 -- "Female Round of 32" / "Male 7th / 8th Place" */}
-              <DualRoundLabel label={activeMatch.round_label || roundState?.active_round_label} />
-              <div className="text-xs uppercase tracking-wide mb-3" style={{ color: 'var(--tablet-dim)' }}>Current Match</div>
-              <div className="grid grid-cols-5 gap-2 items-center">
-                <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(14,144,229,0.18)', border: '1.5px solid #1d4ed8' }}>
-                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-blue2)' }}>Blue{njBlue && <NjBadge />}</div>
-                  <div className="text-lg font-bold" style={{ color: '#fff' }}>
-                    {activeMatch.blue_first ? `${activeMatch.blue_last}, ${activeMatch.blue_first}` : 'TBD'}
-                  </div>
-                  {activeMatch.blue_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.blue_bib}</div>}
+          <div className="dual-judge-grid">
+            <div className="dual-col-info">
+              <div className="tablet-card dual-match-card">
+                {/* v2.5.06 -- "Female Round of 32" / "Male 7th / 8th Place" */}
+                <DualRoundLabel label={activeMatch.round_label || roundState?.active_round_label} />
+                <div className="flex items-baseline justify-between text-xs uppercase tracking-wide mb-3" style={{ color: 'var(--tablet-dim)' }}>
+                  <span>Current Match</span>
+                  {/* landscape only (CSS): the pairing label shares this row to save height */}
+                  {activeMatch.pairing_label && (
+                    <span className="dual-pairing-inline text-sm font-bold normal-case tracking-normal" style={{ color: 'var(--tablet-text)' }}>
+                      Pairing {activeMatch.pairing_label}
+                    </span>
+                  )}
                 </div>
-                <div className="text-center font-bold" style={{ color: 'var(--tablet-muted)' }}>vs</div>
-                <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.18)', border: '1.5px solid #b91c1c' }}>
-                  <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-red2)' }}>Red{njRed && <NjBadge />}</div>
-                  <div className="text-lg font-bold" style={{ color: '#fff' }}>
-                    {activeMatch.red_first ? `${activeMatch.red_last}, ${activeMatch.red_first}` : 'TBD'}
+                <div className="grid grid-cols-5 gap-2 items-center">
+                  <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(14,144,229,0.18)', border: '1.5px solid #1d4ed8' }}>
+                    <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-blue2)' }}>Blue{njBlue && <NjBadge />}</div>
+                    <div className="text-lg font-bold" style={{ color: '#fff' }}>
+                      {activeMatch.blue_first ? `${activeMatch.blue_last}, ${activeMatch.blue_first}` : 'TBD'}
+                    </div>
+                    {activeMatch.blue_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.blue_bib}</div>}
                   </div>
-                  {activeMatch.red_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.red_bib}</div>}
+                  <div className="text-center font-bold" style={{ color: 'var(--tablet-muted)' }}>vs</div>
+                  <div className="col-span-2 p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.18)', border: '1.5px solid #b91c1c' }}>
+                    <div className="text-xs font-semibold mb-0.5" style={{ color: 'var(--tablet-red2)' }}>Red{njRed && <NjBadge />}</div>
+                    <div className="text-lg font-bold" style={{ color: '#fff' }}>
+                      {activeMatch.red_first ? `${activeMatch.red_last}, ${activeMatch.red_first}` : 'TBD'}
+                    </div>
+                    {activeMatch.red_bib && <div className="text-xs mt-0.5" style={{ color: 'var(--tablet-dim)' }}>Bib {activeMatch.red_bib}</div>}
+                  </div>
                 </div>
+                {activeMatch.pairing_label && (
+                  <div className="dual-pairing-row text-center text-sm font-bold mt-2" style={{ color: 'var(--tablet-text)' }}>
+                    Pairing {activeMatch.pairing_label}
+                  </div>
+                )}
+                {/* v2.8.03 -- the running Blue / Red totals are NOT shown to the
+                    judges (each judge sees only his or her own split, below).
+                    pointResult is still read for the Overall Judge's scale. */}
               </div>
-              {activeMatch.pairing_label && (
-                <div className="text-center text-sm font-bold mt-2" style={{ color: 'var(--tablet-text)' }}>
-                  Pairing {activeMatch.pairing_label}
+
+              {/* v1.29.00 (FS-18) -- persistent NJ warning banner for the Time
+                  Judge (and visible context for every dual judge). Cannot be
+                  dismissed; clears only when the finding is cleared. */}
+              {njCall && (
+                <div className="tablet-warn-banner dual-nj-banner" style={{ borderRadius: 12 }}>
+                  <div className="font-bold" style={{ color: 'var(--tablet-amber2)' }}>
+                    {njCall === 'both'
+                      ? 'NJ (Past Chop): BOTH.  Speed tied at 3 / 3.'
+                      : `NJ (Past Chop): ${njCall.toUpperCase()}, ${njName(njCall)}.  Speed override active: ${njCall === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'}.`}
+                  </div>
+                  {judgeNum === 4 && (
+                    <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>
+                      Enter and submit your real split as normal — it is recorded as evidence and overridden by the NJ call.
+                    </div>
+                  )}
                 </div>
               )}
-              {activeMatch.pointResult && activeMatch.pointResult.judgeCount > 0 && (
-                <div className="flex items-center justify-center gap-4 mt-3 pt-3" style={{ borderTop: '1px solid var(--tablet-navy4)' }}>
-                  <span className="text-sm font-bold" style={{ color: 'var(--tablet-blue2)' }}>Blue {activeMatch.pointResult.blueTotal}</span>
-                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>pts</span>
-                  <span className="text-sm font-bold" style={{ color: 'var(--tablet-red2)' }}>{activeMatch.pointResult.redTotal} Red</span>
-                  <span className="text-xs" style={{ color: 'var(--tablet-muted)' }}>({activeMatch.pointResult.judgeCount}/5 judges{activeMatch.pointResult.speedTied ? ' · Speed Tied' : ''}{activeMatch.pointResult.airTied ? ' · Air Tied' : ''})</span>
+
+              {scoreRejected && !submitted && (
+                <div className="tablet-card" data-testid="dual-rejected" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2, animation: 'pulse 1.5s ease-in-out infinite' }}>
+                  <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Your score was rejected</div>
+                  <div className="text-sm mt-1" style={{ color: 'var(--tablet-dim)' }}>The Head Judge rejected your score. Select a new split and press Confirm.</div>
                 </div>
               )}
             </div>
 
-            {/* v1.29.00 (FS-18) -- persistent NJ warning banner for the Time
-                Judge (and visible context for every dual judge). Cannot be
-                dismissed; clears only when the finding is cleared. */}
-            {njCall && (
-              <div className="tablet-warn-banner" style={{ padding: 14, borderRadius: 12 }}>
-                <div className="font-bold" style={{ color: 'var(--tablet-amber2)' }}>
-                  {njCall === 'both'
-                    ? 'NJ (Past Chop): BOTH.  Speed tied at 3 / 3.'
-                    : `NJ (Past Chop): ${njCall.toUpperCase()}, ${njName(njCall)}.  Speed override active: ${njCall === 'blue' ? 'Blue 0 / Red 5' : 'Blue 5 / Red 0'}.`}
-                </div>
-                {judgeNum === 4 && (
-                  <div className="text-xs mt-1" style={{ color: 'var(--tablet-dim)' }}>
-                    Enter and submit your real split as normal — it is recorded as evidence and overridden by the NJ call.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {scoreRejected && !submitted && (
-              <div className="tablet-card" style={{ padding: 14, borderColor: 'var(--tablet-red2)', borderWidth: 2, animation: 'pulse 1.5s ease-in-out infinite' }}>
-                <div className="font-bold" style={{ color: 'var(--tablet-red2)' }}>Your score was rejected</div>
-                <div className="text-sm mt-1" style={{ color: 'var(--tablet-dim)' }}>The Head Judge has rejected your previous score. Please enter and submit a new score below.</div>
-              </div>
-            )}
-
+            <div className="dual-col-score">
             {!submitted ? (
-              <div className="tablet-card" style={{ padding: 18 }}>
+              <div className="tablet-card dual-score-card">
                 <div className="text-sm font-semibold uppercase tracking-wide mb-2" style={{ color: '#fff' }}>
-                  Award {judgeNum === 5 ? overallScale : 5} Points
+                  Award {myScale} Points
                   {judgeNum === 5 && overallScale < 5 && (
                     <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>({scaleReason})</span>
                   )}
@@ -345,32 +414,37 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                     <span className="ml-2 text-xs normal-case font-normal" style={{ color: 'var(--tablet-amber2)' }}>(Recorded — Overridden by NJ)</span>
                   )}
                 </div>
-                <div className="text-xs mb-4" style={{ color: 'var(--tablet-dim)' }}>
-                  Tap a split to submit{j4Overridden ? ' (recorded, overridden by NJ)' : ''}. Blue + Red must equal {judgeNum === 5 ? overallScale : 5}.
+                <div className="text-xs mb-3" style={{ color: 'var(--tablet-dim)' }}>
+                  Select a split, then press Confirm{j4Overridden ? ' (recorded, overridden by NJ)' : ''}. Blue + Red must equal {myScale}.
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {(judgeNum === 5 ? (overallScale === 3 ? SPLITS_3PT : overallScale === 4 ? SPLITS_4PT : SPLITS) : SPLITS).map(([b, r]) => (
-                    <button
-                      key={`${b}-${r}`}
-                      type="button"
-                      onClick={() => submitSplit(b, r)}
-                      disabled={submitting}
-                      className="tablet-score-btn"
-                      style={{ height: 80, fontSize: 22, gap: 12 }}
-                    >
-                      <span style={{ color: 'var(--tablet-blue2)' }}>{b}</span>
-                      <span style={{ color: 'var(--tablet-muted)' }}>/</span>
-                      <span style={{ color: 'var(--tablet-red2)' }}>{r}</span>
-                    </button>
-                  ))}
+                  {(judgeNum === 5 ? (overallScale === 3 ? SPLITS_3PT : overallScale === 4 ? SPLITS_4PT : SPLITS) : SPLITS).map(([b, r]) => {
+                    const picked = isPicked(b, r)
+                    return (
+                      <button
+                        key={`${b}-${r}`}
+                        type="button"
+                        data-testid={`dual-split-${b}-${r}`}
+                        aria-pressed={picked}
+                        onClick={() => selectSplit(b, r)}
+                        disabled={submitting}
+                        className={`tablet-score-btn dual-split-btn${picked ? ' is-selected' : ''}`}
+                      >
+                        <span className="dual-split-b">{b}</span>
+                        <span className="dual-split-sep">/</span>
+                        <span className="dual-split-r">{r}</span>
+                      </button>
+                    )
+                  })}
                 </div>
                 {judgeNum === 4 && (
                   <button
                     type="button"
-                    onClick={() => submitSplit(0, 0, true)}
+                    data-testid="dual-time-tied"
+                    aria-pressed={!!livePending?.timeTied}
+                    onClick={() => selectSplit(0, 0, true)}
                     disabled={submitting}
-                    className="tablet-btn-amber w-full mt-3"
-                    style={{ height: 60, fontSize: 18 }}
+                    className={`tablet-btn-amber dual-tied-btn w-full mt-3${livePending?.timeTied ? ' is-selected' : ''}`}
                   >
                     Time Tied
                   </button>
@@ -380,15 +454,66 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
                 {judgeNum === 3 && (activeMatch?.air_tie_allowed ?? 0) !== 0 && (
                   <button
                     type="button"
-                    onClick={() => submitSplit(0, 0, false, true)}
+                    data-testid="dual-air-tied"
+                    aria-pressed={!!livePending?.airTied}
+                    onClick={() => selectSplit(0, 0, false, true)}
                     disabled={submitting}
-                    className="tablet-btn-amber w-full mt-3"
-                    style={{ height: 60, fontSize: 18 }}
+                    className={`tablet-btn-amber dual-tied-btn w-full mt-3${livePending?.airTied ? ' is-selected' : ''}`}
                   >
                     Air Tied
                   </button>
                 )}
-                {error && <div className="mt-3 px-4 py-3 text-sm rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>}
+                {/* v2.8.03 -- confirm panel. The space is RESERVED (fixed
+                    minimum height, always rendered) so no button moves when it
+                    fills, and it sits below every split / tied button, so
+                    Confirm is never under the finger that just made the
+                    selection. An error (failed send, NJ post) shows here too. */}
+                <div
+                  data-testid="dual-confirm-panel"
+                  className={`dual-confirm-panel mt-3${livePending ? ' is-open' : ''}`}
+                >
+                  {livePending ? (
+                    <>
+                      <div data-testid="dual-pending-label" className="dual-pending-label">
+                        {livePending.timeTied || livePending.airTied ? (
+                          <span style={{ color: 'var(--tablet-amber2)' }}>{pendingLabel}</span>
+                        ) : (
+                          <>
+                            <span style={{ color: 'var(--tablet-blue2)' }}>Blue {livePending.blue}</span>
+                            <span style={{ color: 'var(--tablet-muted)' }}> / </span>
+                            <span style={{ color: 'var(--tablet-red2)' }}>Red {livePending.red}</span>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex gap-3 mt-2">
+                        <button
+                          type="button"
+                          data-testid="dual-cancel"
+                          onClick={() => setPending(null)}
+                          disabled={submitting}
+                          className="tablet-btn-neutral"
+                          style={{ height: 56, flex: 1 }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="dual-confirm"
+                          onClick={confirmPending}
+                          disabled={submitting}
+                          className="tablet-btn-submit"
+                          style={{ height: 56, flex: 2, fontSize: 18, borderRadius: 10 }}
+                        >
+                          {submitting ? 'Sending…' : `Confirm ${pendingLabel}`}
+                        </button>
+                      </div>
+                    </>
+                  ) : error ? (
+                    <div data-testid="dual-error" className="px-3 py-2 text-sm font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>
+                  ) : (
+                    <div className="text-center text-sm" style={{ color: 'var(--tablet-muted)' }}>Nothing is sent until you press Confirm.</div>
+                  )}
+                </div>
               </div>
             ) : (
               <>
@@ -415,88 +540,123 @@ function DualJudgeView({ eventId, judge, hc, toggleHc }) {
               </div>
               </>
             )}
-
-            {/* v1.29.00 (FS-18) -- NJ (Past Chop) panel: Air Judge only.
-                Two independent toggles reflecting SERVER state; each confirmed
-                change posts at once, independent of the air split, and stays
-                editable until HJ approval. */}
-            {/* v2.1.00 (10a) -- NJ controls only when the meet's Advanced
-                setting enables the FS-18 chop rule (default: disabled).
-                Data-driven displays (banner, badges) are untouched. */}
-            {judgeNum === 3 && (activeMatch?.nj_rule_enabled ?? 0) !== 0 && (
-              <div className="tablet-card" style={{ padding: 18 }}>
-                <div className="text-sm font-semibold uppercase tracking-wide mb-1" style={{ color: '#fff' }}>
-                  NJ (Past Chop)
-                </div>
-                <div className="text-xs mb-3" style={{ color: 'var(--tablet-dim)' }}>
-                  Mark a competitor whose bottom air landed past the landing zone. Independent of your air split.
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setNjConfirm({ athlete: 'blue', value: !njBlue })}
-                    disabled={njPosting || activeMatch.status === 'complete'}
-                    className="rounded-xl font-bold"
-                    style={{
-                      height: 64, fontSize: 17,
-                      background: njBlue ? '#1d4ed8' : 'rgba(14,144,229,0.12)',
-                      border: njBlue ? '2px solid var(--tablet-blue2)' : '1.5px solid #1d4ed8',
-                      color: njBlue ? '#fff' : 'var(--tablet-blue2)',
-                    }}
-                  >
-                    {njBlue ? 'NJ — ' : 'Blue NJ '}{njBlue ? njName('blue') : ''}
-                    {njBlue && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNjConfirm({ athlete: 'red', value: !njRed })}
-                    disabled={njPosting || activeMatch.status === 'complete'}
-                    className="rounded-xl font-bold"
-                    style={{
-                      height: 64, fontSize: 17,
-                      background: njRed ? '#b91c1c' : 'rgba(239,68,68,0.12)',
-                      border: njRed ? '2px solid var(--tablet-red2)' : '1.5px solid #b91c1c',
-                      color: njRed ? '#fff' : 'var(--tablet-red2)',
-                    }}
-                  >
-                    {njRed ? 'NJ — ' : 'Red NJ '}{njRed ? njName('red') : ''}
-                    {njRed && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
-                  </button>
-                </div>
-                {njConfirm && (
-                  <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(245,158,11,0.12)', border: '1.5px solid var(--tablet-amber2)' }}>
-                    <div className="text-sm font-bold mb-2" style={{ color: 'var(--tablet-amber2)' }}>
-                      {njConfirm.value
-                        ? (njConfirm.athlete === 'blue' ? njRed : njBlue)
-                          ? `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  Both NJ — speed is tied at 3 / 3.`
-                          : `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  This sets their speed points to zero.`
-                        : `Clear the NJ call for ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'})?  The Time Judge's entry will govern speed.`}
-                    </div>
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => postNj(njConfirm.athlete, njConfirm.value)}
-                        disabled={njPosting}
-                        className="tablet-btn-amber flex-1"
-                        style={{ height: 48, fontSize: 15 }}
-                      >
-                        {njConfirm.value ? 'Confirm NJ' : 'Confirm Clear'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNjConfirm(null)}
-                        disabled={njPosting}
-                        className="tablet-btn-neutral flex-1"
-                        style={{ height: 48, fontSize: 15 }}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+            {/* An error with no score card to show it in (e.g. an NJ call that
+                failed after the split was submitted). */}
+            {submitted && error && (
+              <div data-testid="dual-error" className="mt-3 px-4 py-3 text-sm font-semibold rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--tablet-red2)' }}>{error}</div>
             )}
-          </>
+            </div>
+
+            <div className="dual-col-extra">
+              {/* v2.8.03 -- Time Judge only: static reference, FIS Judging
+                  Handbook (November 2026) 6304.3.4. It calculates and
+                  preselects nothing. */}
+              {judgeNum === 4 && (
+                <div className="tablet-card dual-time-ref" data-testid="dual-time-ref">
+                  <div className="flex items-baseline justify-between mb-2">
+                    <div className="text-sm font-semibold uppercase tracking-wide" style={{ color: '#fff' }}>Time Differential</div>
+                    <div className="text-xs" style={{ color: 'var(--tablet-muted)' }}>FIS JH 6304.3.4</div>
+                  </div>
+                  <table className="w-full">
+                    <tbody>
+                      {[
+                        ['0.74 seconds or less', '3 / 2'],
+                        ['0.75 to 1.49 seconds', '4 / 1'],
+                        ['1.5 seconds or more', '5 / 0'],
+                        ['Tied', 'Time Tied'],
+                      ].map(([diff, votes]) => (
+                        <tr key={diff} style={{ borderTop: '1px solid var(--tablet-navy4)' }}>
+                          <td className="py-1.5" style={{ color: 'var(--tablet-text)' }}>{diff}</td>
+                          <td className="py-1.5 text-right font-bold tablet-mono" style={{ color: '#fff' }}>{votes}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* v1.29.00 (FS-18) -- NJ (Past Chop) panel: Air Judge only.
+                  Two independent toggles reflecting SERVER state; each confirmed
+                  change posts at once, independent of the air split, and stays
+                  editable until HJ approval. */}
+              {/* v2.1.00 (10a) -- NJ controls only when the meet's Advanced
+                  setting enables the FS-18 chop rule (default: disabled).
+                  Data-driven displays (banner, badges) are untouched. */}
+              {judgeNum === 3 && (activeMatch?.nj_rule_enabled ?? 0) !== 0 && (
+                <div className="tablet-card dual-nj-panel" data-testid="dual-nj-panel">
+                  <div className="text-sm font-semibold uppercase tracking-wide mb-1" style={{ color: '#fff' }}>
+                    NJ (Past Chop)
+                  </div>
+                  <div className="text-xs mb-3" style={{ color: 'var(--tablet-dim)' }}>
+                    Mark a competitor whose bottom air landed past the landing zone. Independent of your air split.
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => { setPending(null); setNjConfirm({ athlete: 'blue', value: !njBlue }) }}
+                      disabled={njPosting || activeMatch.status === 'complete'}
+                      className="rounded-xl font-bold dual-nj-toggle"
+                      style={{
+                        fontSize: 17,
+                        background: njBlue ? '#1d4ed8' : 'rgba(14,144,229,0.12)',
+                        border: njBlue ? '2px solid var(--tablet-blue2)' : '1.5px solid #1d4ed8',
+                        color: njBlue ? '#fff' : 'var(--tablet-blue2)',
+                      }}
+                    >
+                      {njBlue ? 'NJ — ' : 'Blue NJ '}{njBlue ? njName('blue') : ''}
+                      {njBlue && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPending(null); setNjConfirm({ athlete: 'red', value: !njRed }) }}
+                      disabled={njPosting || activeMatch.status === 'complete'}
+                      className="rounded-xl font-bold dual-nj-toggle"
+                      style={{
+                        fontSize: 17,
+                        background: njRed ? '#b91c1c' : 'rgba(239,68,68,0.12)',
+                        border: njRed ? '2px solid var(--tablet-red2)' : '1.5px solid #b91c1c',
+                        color: njRed ? '#fff' : 'var(--tablet-red2)',
+                      }}
+                    >
+                      {njRed ? 'NJ — ' : 'Red NJ '}{njRed ? njName('red') : ''}
+                      {njRed && <span style={{ display: 'block', fontSize: 11, fontWeight: 600 }}>tap to clear</span>}
+                    </button>
+                  </div>
+                  {njConfirm && (
+                    <div className="mt-3 p-3 rounded-lg" style={{ background: 'rgba(245,158,11,0.12)', border: '1.5px solid var(--tablet-amber2)' }}>
+                      <div className="text-sm font-bold mb-2" style={{ color: 'var(--tablet-amber2)' }}>
+                        {njConfirm.value
+                          ? (njConfirm.athlete === 'blue' ? njRed : njBlue)
+                            ? `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  Both NJ — speed is tied at 3 / 3.`
+                            : `Mark ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'}) as NJ, landed past chop?  This sets their speed points to zero.`
+                          : `Clear the NJ call for ${njName(njConfirm.athlete)} (${njConfirm.athlete === 'blue' ? 'Blue' : 'Red'})?  The Time Judge's entry will govern speed.`}
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => postNj(njConfirm.athlete, njConfirm.value)}
+                          disabled={njPosting}
+                          className="tablet-btn-amber flex-1"
+                          style={{ height: 48, fontSize: 15 }}
+                        >
+                          {njConfirm.value ? 'Confirm NJ' : 'Confirm Clear'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNjConfirm(null)}
+                          disabled={njPosting}
+                          className="tablet-btn-neutral flex-1"
+                          style={{ height: 48, fontSize: 15 }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
           <>
             {/* v2.5.06 -- end-of-round notice on the waiting screen */}

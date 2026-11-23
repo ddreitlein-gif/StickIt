@@ -63,7 +63,7 @@ module.exports = {
         .text('» RED side', f3.x, f3.y + 62, { width: f3.w, align: 'right', lineBreak: false });
       y += 120 + 12;
 
-      y = d.body(doc, y, 'Two skiers race side by side. You have 5 points to split between them — tap the split that matches what you saw (3–2 means Blue earned 3, Red earned 2). The winner is decided by all five judges’ points together.');
+      y = d.body(doc, y, 'Two skiers race side by side. You have 5 points to split between them — tap the split that matches what you saw (3–2 means Blue earned 3, Red earned 2), then tap Confirm. Nothing is sent until you confirm; tap another split or Cancel to change it. The winner is decided by all five judges’ points together.');
     },
 
     // ── Page 3: Aerials + when things go wrong ──────────────────────────────

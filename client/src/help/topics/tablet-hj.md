@@ -10,7 +10,7 @@ The Head Judge tablet is the oversight surface during live scoring. The HJ doesn
 
 - **AthleteBar** (top) — bib, name, run number, jump codes.
 - **Status squares** (3-column status bar) — `T&L Judges 3/3`, `Air Judges 2/2`, `Time ✓`. Green when complete, gray when pending.
-- **Per-judge review rows** — each row shows the judge's role, their submitted score, and a small **Reject** button.
+- **Per-judge review rows** — each row shows the judge's role, their submitted score, and a small **Reject** button. On mogul events the rows are listed in judge order — T&L 1, T&L 2, T&L 3 and Air 1, Air 2 — whatever order the scores arrive in (v2.8.03).
 - **Calculated score panel** (right) — Turns, Air, Speed/Time Points, Total. Computed live as judges submit.
 - **Run Status grid** (bottom) — DNS / DNF / DSQ buttons.
 - **Approve & Submit button** (large green, bottom) — appears only when every required judge has submitted.

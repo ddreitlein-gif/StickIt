@@ -15,18 +15,26 @@ The five points are NOT cumulative — each judge picks one split per match. Fiv
 
 ### Layout
 
-- **AthleteBar with two halves** — blue side (athlete 1) on the left, red side (athlete 2) on the right.
-- **Score buttons** — six large tap targets, one per split: `5–0`, `4–1`, `3–2`, `2–3`, `1–4`, `0–5`.
-- **Submit Score button** at the bottom.
+- **Match card** — the round, then the blue competitor on the left and the red competitor on the right with their bibs, and the pairing number.
+- **Split buttons** — six large buttons, one per split: `5 / 0`, `0 / 5`, `4 / 1`, `1 / 4`, `3 / 2`, `2 / 3` (blue points first).
+- **Confirm panel** — a framed space below the buttons. It shows your selection with **Cancel** and **Confirm** buttons. The space is always there, so no button moves when it fills.
 
-### Entering
+On a tablet held in **landscape** the screen has two columns — the match card on the left, the split buttons and the confirm panel on the right — and everything fits without scrolling. In portrait, and on narrower screens, the same parts are stacked in one column.
 
-1. Watch the match.
-2. Decide who won and by how much.
-3. Tap the corresponding split (e.g., `4–1` for a clear blue win).
-4. Tap **Submit**.
+A judge sees **only their own split**. The running Blue / Red total and the number of judges who have scored are not shown on judge tablets (v2.8.03); the Head Judge tablet shows them.
 
-The tablet locks; the score is sent to the server. When all 5 judges have submitted, the HJ tablet shows the full match and asks for approval.
+### Entering (two steps, v2.8.03)
+
+1. Watch the match and decide who won and by how much.
+2. **Tap the split** (for example `4 / 1` for a clear blue win). The button lights up and the confirm panel shows **Blue 4 / Red 1**. Nothing has been sent.
+3. Changed your mind? Tap a different split, or tap **Cancel**.
+4. Tap **Confirm Blue 4 / Red 1**. The score is sent and the tablet shows **Score Submitted** with your split.
+
+**Time Tied** and **Air Tied** work the same way: tap the button, then **Confirm Time Tied** / **Confirm Air Tied**.
+
+A selection that was not confirmed is dropped when the next match starts, when the Head Judge rejects your score, and (Overall Judge) when the points to award change between 5, 4 and 3. If a score cannot be sent, the panel says **Score not sent** with the reason — select your split and confirm again.
+
+When all 5 judges have submitted, the HJ tablet shows the full match and asks for approval. If the Head Judge rejects your score, a red **Your score was rejected** notice appears — select a new split and press Confirm.
 
 ### Match navigation
 
@@ -45,12 +53,23 @@ In dual mogul, the five judge roles are nominally:
 All five use the same 5-point split UI — the role labels are nominal, for FIS reporting structure. In practice each judge weighs their role's component but submits one combined split. Three roles have extra controls:
 
 - **DualAir (Judge 3)** — an **Air Tied** button (submits 0 / 0 with the air-tied flag when the air comparison is tied or neither competitor jumps; the air votes are withheld) and the **NJ (Past Chop)** panel described below. **Both are gated by the meet's Advanced settings** and are hidden by default — Air Tied appears only when "Air score tie allowed" is on, and the NJ panel only when the "Landing Past the Lower Chop (NJ) rule" is on.
-- **DualTime (Judge 4)** — the **Time Tied** button. A time-tied entry records 0 / 0 but is credited **3 / 3** in every display and total (v1.29.00, FIS JH 6304.3.2 five-judge value).
+- **DualTime (Judge 4)** — the **Time Tied** button and a **Time Differential** reference card (below). A time-tied entry records 0 / 0 but is credited **3 / 3** in every display and total (v1.29.00, FIS JH 6304.3.2 five-judge value).
 - **DualOverall (Judge 5)** — the split grid automatically switches between **5, 4, or 3 points** depending on the tie state: 5 with no ties, 4 when speed OR air is tied, 3 when both are. If a tie declaration or NJ change lands after the Overall Judge already submitted, their entry is cleared and the tablet prompts a rescore on the new scale.
+
+### Time Differential — Time Judge only
+
+The Time Judge's tablet carries this table as a reference card (v2.8.03), from the FIS Judging Handbook (November 2026) 6304.3.4, Time Differential for Speed. It is a reference only — the tablet does not time the run and selects nothing for you.
+
+| Time difference | Votes |
+|---|---|
+| 0.74 seconds or less | 3 / 2 |
+| 0.75 to 1.49 seconds | 4 / 1 |
+| 1.5 seconds or more | 5 / 0 |
+| Tied | Time Tied (credited 3 / 3) |
 
 ### NJ (Past Chop) — Air Judge only
 
-Per FS-18, the bottom air must land within the 20 m Landing Zone. **The rule is off by default** — the panel appears only when the meet's Advanced settings enable the NJ rule. When enabled, the Air Judge's tablet has an **NJ (Past Chop)** panel below the split grid with independent **Blue NJ** / **Red NJ** toggles:
+Per FS-18, the bottom air must land within the 20 m Landing Zone. **The rule is off by default** — the panel appears only when the meet's Advanced settings enable the NJ rule. When enabled, the Air Judge's tablet has an **NJ (Past Chop)** panel (under the match card in landscape, below the split buttons in portrait) with independent **Blue NJ** / **Red NJ** toggles. Its **Confirm NJ** button is separate from the split's Confirm button, and only one of the two confirmations is open at a time:
 
 1. Tap the violator's toggle. A confirmation appears — "Mark [Name] as NJ, landed past chop? This sets their speed points to zero." (If the other side is already flagged, the confirm notes the result is a speed tie at 3 / 3.)
 2. Confirm. The call posts to the server immediately — it does not wait for, and is independent of, your air split.
