@@ -92,7 +92,8 @@ cites JH 6304.4.2.1. No help topic cited 6304.4.2.2 – 6304.4.2.4 (renumbered b
 edition), and none carried the old aerials take-off ranges (6004.1.1), so nothing to correct
 there. NOT done (optional in the plan, awaiting David): the Air judge reference panel still labels
 the lower three ranges Average / Poor / Very Poor where JH 6204.3.3 says Adequate / Managing /
-Poor (`JudgeTablet.jsx` ~759); the numeric ranges are correct.
+Poor (`JudgeTablet.jsx` ~759); the numeric ranges are correct. *[Closed 2026-11-23: David ruled the
+reference panel stays as it is.]*
 
 **`ref-jump-dds` corrected.** Chart citation and date; grabs confirmed; the "editable through
 Admin → Jump DDs" sentences removed; the common-codes table had wrong rows — `TTS` 0.62 / 0.72
@@ -220,9 +221,8 @@ px (80 in portrait) and Time Tied / Air Tied 56 px (60).
   Known limit: with the NJ rule on, an NJ call standing AND the Time Judge's score rejected, the
   reference card's last rows fall below 680 (the controls, all in the right column, stay on
   screen). The NJ rule is off by default and not adopted domestically.
-- NOT verified on a device: the visible height on a real iPad Air 3. A manual pass on one of the
-  RMF iPads is required before the first competition (the confirm step changes what every dual
-  judge does on every match).
+- The layout was measured in a headless browser only, not on a device, before release. David
+  tested the released changes himself and approved them on 2026-11-23.
 
 Help topics `tablet-dual` (Layout, Entering, Time Differential table, NJ panel placement) and
 `tablet-hj` (row order) updated; the Judges Quick Start (`server/scripts/guides/qs_judges.js`)
