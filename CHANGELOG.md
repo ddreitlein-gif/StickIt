@@ -114,6 +114,13 @@ and the aerials chart must stay byte-identical; every other endpoint is still by
 against v2.7.00. Full harness 1,608 passed; the one failure is v2701's pre-existing
 `GET /api/admin/dashboard` same-second-audit check (unchanged by this release). `verify_v16` 123.
 
+**Pi image rebuilt at v2.8.04** (2026-11-23, from tag v2.8.04 @ e870aa3; the first image since
+v2.5.06, so it also carries the v2.8.03 tablet pages). Compressed 580,807,440 bytes, sha256
+70569f13…699acf; uncompressed 3,254,779,904 bytes, sha256 5f4e2562…ae021e. Published to GitHub
+Release v2.8.04 with `os_list_stickit.json` and `CHECKSUM.txt` (Release v2.8.03 carries the
+v2.5.06 image). Built with `STICKIT_IMG_WORK` set to a temporary folder: on this Mac shell writes
+into `build_pi_image/.work` fail with "Operation not permitted".
+
 Files modified: `server/db/schema.js`, `server/sync/protocol.js` (comment),
 `client/src/voice/parser.js`, help topics `ref-jump-dds`, `events-dual`, `ref-glossary`,
 `tablet-dual`, `harness/tests/v2804.test.js` (new), `harness/tests/v2701.test.js`, version files,
