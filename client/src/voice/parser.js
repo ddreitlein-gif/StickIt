@@ -37,6 +37,11 @@ const SMALL_NUMBER_WORDS = {
 const JUMP_PHRASE_MAP = {
   'back full full': 'bFF',
   'back double full': 'bdF',
+  // v2.8.04 -- FIS 07.11.26 chart: the remaining twisting flips can be spoken.
+  'back triple full': 'btF',
+  'front triple full': 'ftF',
+  'front double full': 'fdF',
+  'front full': 'fF',
   'back twister twister': 'bTT',
   'back full twister': 'bFT',
   'back twister full': 'bFT',

@@ -476,11 +476,17 @@ async function main() {
     // (3) /api/version. Everything else must be byte-identical.
     const rawDiffs = diffCorpus(corpusBefore, corpusAfter);
     fs.writeFileSync(path.join(OUT_DIR, 'diffs_raw.json'), JSON.stringify(rawDiffs, null, 1));
-    const TOLERATED = k => /\/api\/audit(\?|\/filters)|\/api\/admin\/dashboard|\/api\/pdf\/td-report|\/api\/version/.test(k);
+    // v2.8.04 — (4) the mogul DD chart: this tree's boot migration applies the
+    // FIS 07.11.26 chart (bF, fF, bdF, btF re-valued; fdF, ftF added). Tolerated
+    // ONLY as exactly that difference (asserted below); the aerials chart is not
+    // tolerated at all and must stay byte-identical.
+    const DD_KEY = 'GET /api/jump-dds';
+    const TOLERATED = k => k === DD_KEY || /\/api\/audit(\?|\/filters)|\/api\/admin\/dashboard|\/api\/pdf\/td-report|\/api\/version/.test(k);
     const hard = rawDiffs.filter(d => !TOLERATED(d.key));
     c.deepEq(hard.map(d => d.key), [], `A: every endpoint outside the recorded (c) classes is byte-identical (${rawDiffs.length} raw diff(s), ${hard.length} outside those classes)` + (hard.length ? '\n      ' + hard.slice(0, 8).map(d => `${d.key} @${d.line}\n        - ${d.before}\n        + ${d.after}`).join('\n      ') : ''));
     const tolerated = rawDiffs.filter(d => TOLERATED(d.key) && !/\/api\/version/.test(d.key));
     const stillDiff = tolerated.filter(d => {
+      if (d.key === DD_KEY) return false;   // asserted exactly, just below
       const a = canonForKey(d.key, corpusBefore[d.key]), b = canonForKey(d.key, corpusAfter[d.key]);
       if (/admin\/dashboard/.test(d.key)) {
         // LIMIT 20 newest. When the newest second holds more than 20 rows the
@@ -501,6 +507,23 @@ async function main() {
       }
       return a !== b;
     });
+    {
+      // v2.8.04 — the mogul chart differs by exactly the six FIS 07.11.26 codes
+      const rowsOf = (corpus) => JSON.parse(corpus[DD_KEY].split('\n').slice(1).join('\n'));
+      const a = rowsOf(corpusBefore), b = rowsOf(corpusAfter);
+      const aById = new Map(a.map(r => [r.id, r]));
+      const changed = b.filter(r => aById.has(r.id) && JSON.stringify(aById.get(r.id)) !== JSON.stringify(r));
+      const added = b.filter(r => !aById.has(r.id));
+      const removed = a.filter(r => !b.some(x => x.id === r.id));
+      const sig = (rows) => rows.map(r => `${r.jump_code} ${r.gender} ${r.dd_value}`).sort();
+      c.deepEq(sig(changed), ['bF F 1', 'bF M 0.9', 'bdF F 1.19', 'bdF M 1.09', 'btF F 1.38', 'btF M 1.28', 'fF F 1', 'fF M 0.9'],
+        'A: (v2.8.04) the mogul DD chart differs in exactly bF, fF, bdF, btF — the FIS 07.11.26 values');
+      c.ok(changed.every(r => { const o = aById.get(r.id); return JSON.stringify({ ...o, dd_value: 0 }) === JSON.stringify({ ...r, dd_value: 0 }); }), 'A: (v2.8.04) only dd_value changed on those rows');
+      c.deepEq(sig(added), ['fdF F 1.19', 'fdF M 1.09', 'ftF F 1.38', 'ftF M 1.28'], 'A: (v2.8.04) the only new rows are fdF and ftF');
+      c.eq(removed.length, 0, 'A: (v2.8.04) no DD row removed');
+      const AER = 'GET /api/jump-dds?discipline=aerials';
+      c.ok(corpusBefore[AER] === corpusAfter[AER] && corpusAfter[AER].length > 1000, 'A: (v2.8.04) the aerials DD chart is byte-identical');
+    }
     c.deepEq(stillDiff.map(d => d.key), [], `A: the tolerated endpoints differ only in the recorded way (${tolerated.length} affected: ${tolerated.map(d => d.key.replace(/ \{.*$/, '')).join(', ')})`);
     {
       const k = 'GET /api/audit?limit=1000';

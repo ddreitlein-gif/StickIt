@@ -69,7 +69,7 @@ The Time Judge's tablet carries this table as a reference card (v2.8.03), from t
 
 ### NJ (Past Chop) — Air Judge only
 
-Per FS-18, the bottom air must land within the 20 m Landing Zone. **The rule is off by default** — the panel appears only when the meet's Advanced settings enable the NJ rule. When enabled, the Air Judge's tablet has an **NJ (Past Chop)** panel (under the match card in landscape, below the split buttons in portrait) with independent **Blue NJ** / **Red NJ** toggles. Its **Confirm NJ** button is separate from the split's Confirm button, and only one of the two confirmations is open at a time:
+Per FIS JH 6304.4.2.1 (FS-18), the bottom air must land within the Landing Zone (no more than 20 m from the takeoff; control gates at 20.5 m mark its end). **The rule is off by default** — the panel appears only when the meet's Advanced settings enable the NJ rule. When enabled, the Air Judge's tablet has an **NJ (Past Chop)** panel (under the match card in landscape, below the split buttons in portrait) with independent **Blue NJ** / **Red NJ** toggles. Its **Confirm NJ** button is separate from the split's Confirm button, and only one of the two confirmations is open at a time:
 
 1. Tap the violator's toggle. A confirmation appears — "Mark [Name] as NJ, landed past chop? This sets their speed points to zero." (If the other side is already flagged, the confirm notes the result is a speed tie at 3 / 3.)
 2. Confirm. The call posts to the server immediately — it does not wait for, and is independent of, your air split.

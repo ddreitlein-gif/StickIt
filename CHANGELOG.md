@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.8.03)
+# Changelog — Version Notes (v1.7.00 – v2.8.04)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -14,6 +14,110 @@ box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — B
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
 PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
 `consolationSlot` from `dual.js`. Full notes below.
+
+---
+
+## v2.8.04 Feature Notes
+
+### DD table to the FIS chart As of 07.11.26 (v2.8.04)
+
+Release B of David's 11-23-26 plan (items 5 and 6). Decision (David, 2026-11-23): StickIt adopts
+the FIS chart "Mogul Basic Degree of Difficulty and Common Combinations, As of 07.11.26" for
+domestic events — the chart Maddie Hogg (U.S. Ski & Snowboard Freestyle Coordinator) distributed to
+coaches (`https://assets.fis-ski.com/f/252177/x/c4b6826201/mogul-dd-version-2026.pdf`). The 2027
+Competition Guide, Appendix D, still links the November 2023 chart.
+
+**What changed in the table** (men / women; dual mogul = x 1.25, rounded to four places):
+
+| Jump | Code | Before | Now | Dual now |
+|---|---|---|---|---|
+| Back full | `bF` | 0.88 / 0.98 | 0.90 / 1.00 | 1.125 / 1.25 |
+| Front full | `fF` | 0.88 / 0.98 | 0.90 / 1.00 | 1.125 / 1.25 |
+| Back double full | `bdF` | 1.05 / 1.15 | 1.09 / 1.19 | 1.3625 / 1.4875 |
+| Back triple full | `btF` | 1.22 / 1.32 | 1.28 / 1.38 | 1.6 / 1.725 |
+| Front double full | `fdF` | — | 1.09 / 1.19 | 1.3625 / 1.4875 |
+| Front triple full | `ftF` | — | 1.28 / 1.38 | 1.6 / 1.725 |
+
+Every other code already matched the chart (the old values were the November 2023 chart's, so
+this is a change in the FIS chart, not an earlier seeding error). The mogul and dual tables now
+hold 75 codes each per gender. Four StickIt codes are not on the FIS chart and are unchanged: `N`,
+stand-alone `G`, stand-alone `g`, `NJ`.
+
+**The grab values are confirmed.** The chart lists basic grab `g` 0.05 and advanced grab `G` 0.12
+(grab rotation multiplier 0.02) — the values StickIt has carried as PROVISIONAL since v1.26.00 —
+and the FIS Judging Handbook (November 2026), Appendix A item 7, now defines the two grab classes.
+The "provisional" wording is gone from the schema comments and `ref-jump-dds`; the two historical
+notes in this file carry a bracketed v2.8.04 note.
+
+**Correction to the record: there is no DD editor.** Earlier notes said the table is editable
+through Admin → Jump DDs. It is not: the sidebar Jump DDs window is read-only and
+`server/routes/jumpdds.js` has only a GET. A chart change is therefore a boot migration. The stale
+comment in `server/sync/protocol.js` is corrected (`adoptionImport.js` did not carry it).
+
+**The migration** — `seedJumpDDs()` in `server/db/schema.js`, inside the existing-database
+branch after the FS-13 grab block and BEFORE that branch's early `return` (code after the return
+never runs on an existing database). Same idempotent, sentinel-gated shape as the FS-13 block:
+
+- mogul men `bF` within 0.001 of 0.88 gates the four UPDATEs; a missing `fdF` row gates the two
+  INSERTs (the table has no unique key but its id, so INSERT OR IGNORE alone would not stop
+  duplicates). Each gate is independent.
+- Every statement names the discipline AND the gender. Aerials rows also use the codes `bF`
+  (2.30) and `bdF` (2.40) and are not touched.
+- The seed list for new databases carries the new values, the two new rows and the chart date.
+- Operating rule (David, 2026-11-23): the DD chart is never updated while a meet is in process and
+  will not be updated again this season. Release B is deployed once, before the first meet and
+  before any Pi adopts a meet. On that basis the migration carries no venue-specific logic — it
+  runs the same on the cloud and on a Pi, like every earlier DD migration. The table is not in the
+  sync manifest's row capture (`sync: false`, snapshot-only, replace-all at adoption), so a Pi
+  adopting after the cloud is updated receives the new values whatever its software version.
+  `SYNC_PROTOCOL_VERSION` stays 3.
+- Runs already scored keep the DD stored on the run (`jump1_dd` / `jump2_dd`). Known limit,
+  unchanged behaviour: three paths look the DD up again and overwrite the stored value when jump
+  codes are sent — Edit Score, the tablet score update, and Head Judge Accept Codes (all in
+  `runs.js`) — so an EDIT of a run scored before this release that contains `bF`, `fF`, `bdF` or
+  `btF` re-values that run at the new DD.
+
+**Voice entry.** `client/src/voice/parser.js` gains "front full" → `fF`, "front double full" →
+`fdF`, "front triple full" → `ftF`, "back triple full" → `btF`. The engine already canonicalizes
+`fdf` / `ftf` to `fdF` / `ftF`, and `fdF` is not a repeat of `fF` (as `bdF` is not of `bF`). The
+tablet code list is read from the table, so the new codes appear with no tablet change.
+
+**November 2026 FIS Judging Handbook (item 6).** No scoring procedure StickIt implements changed
+(6203, 6204.1.5, 6204.2, 6204.3.3, 6204.3.8 / .9, 6304.2 / .3, 6304.3.4). Not adopted
+domestically and not applied: the 6204.3.1 grab note (lower DD for both jumps of a category) and
+the new 6304.4.2.1 dual landing zone rule (StickIt has it behind a meet setting, off by default).
+Documentation aligned to the new text: the landing zone wording in `events-dual`, `ref-glossary`
+and `tablet-dual` now reads "no more than 20 m from the takeoff, control gates at 20.5 m" and
+cites JH 6304.4.2.1. No help topic cited 6304.4.2.2 – 6304.4.2.4 (renumbered by one in the new
+edition), and none carried the old aerials take-off ranges (6004.1.1), so nothing to correct
+there. NOT done (optional in the plan, awaiting David): the Air judge reference panel still labels
+the lower three ranges Average / Poor / Very Poor where JH 6204.3.3 says Adequate / Managing /
+Poor (`JudgeTablet.jsx` ~759); the numeric ranges are correct.
+
+**`ref-jump-dds` corrected.** Chart citation and date; grabs confirmed; the "editable through
+Admin → Jump DDs" sentences removed; the common-codes table had wrong rows — `TTS` 0.62 / 0.72
+(correct 0.59 / 0.69), `3` described as a triple twist (it is a 360 at 0.68 / 0.78), `bT` as a
+back twist (back tuck), `TT` as a helicopter 720 (double twister), and "varies" for `3p`, `bp`,
+`bT`, `bL`, `bF` — now real values, plus the six twisting flips.
+
+Harness: new `harness/tests/v2804.test.js` (42 checks) — a database built and scored by the real
+v2.7.00 server (finalized run on `bF` 0.88 + `bdF` 1.05) served by this tree: exactly 16 rows
+re-valued and 8 added, only `dd_value` changed, all 71 aerials rows byte-identical (aerials `bF`
+2.30, `bdF` 2.40), the old run's stored DDs / air / total and the results response unchanged, a
+new run takes `bF` 0.90 and `fdF` 1.09, no migration and a byte-identical table on the second
+boot; all 75 codes x mogul / dual x men / women against a table transcribed independently from
+the chart (uprights by the chart formula); the two gates one at a time; a fresh database (300
+rows, no migration); a venue-mode boot (same migration, nothing queued for upsync); the voice
+phrases and canonicalization. `v2701` golden compare: `GET /api/jump-dds` (mogul) joins the
+tolerated set with an exact-difference assertion (the six codes, only `dd_value`, nothing removed)
+and the aerials chart must stay byte-identical; every other endpoint is still byte-identical
+against v2.7.00. Full harness 1,608 passed; the one failure is v2701's pre-existing
+`GET /api/admin/dashboard` same-second-audit check (unchanged by this release). `verify_v16` 123.
+
+Files modified: `server/db/schema.js`, `server/sync/protocol.js` (comment),
+`client/src/voice/parser.js`, help topics `ref-jump-dds`, `events-dual`, `ref-glossary`,
+`tablet-dual`, `harness/tests/v2804.test.js` (new), `harness/tests/v2701.test.js`, version files,
+`server/public/` build assets, guide + venue PDFs.
 
 ---
 
@@ -1029,6 +1133,9 @@ tablets auto-follow it, so the notice gives way naturally and every label carrie
 **Rules-compliance documentation fixes (review items 2–5).** Item 1 (confirm the provisional
 Big G / Little G DD values through Admin → Jump DDs when USSS publishes them) and item 6
 (two wording points in the RMF draft guide) are David's, outside the code.
+*[v2.8.04 note: item 1 is closed — the values are confirmed by the FIS chart As of 07.11.26 and
+the November 2026 Judging Handbook, Appendix A item 7. There is no Admin → Jump DDs editor (the
+Jump DDs window is read-only); chart changes are boot migrations.]*
 - `ref-jump-dds.md`: FIS-chart base values corrected (Triple 0.65/0.75, Quad 0.76/0.86, Quint
   0.86/0.96 — the seeded DB was always right, only the help text was wrong); the grab section
   now cites the MSC 08-20-26 Big G / Little G decision, marks the +0.05 / +0.12 modifiers
@@ -3044,6 +3151,9 @@ so letter-dictation deterministically resolves lowercase; grab phrases added to 
 STATIC_KEYTERMS. Known cosmetic consequence: lowercase codes stored pre-1.26 (scored via NOCASE at the
 G value) now read as basic grabs; stored DDs/scores untouched. MAG will conduct a full DD chart review
 at the start of the quad — values editable via Admin → Jump DDs.
+*[v2.8.04 note: the g = +0.05 / G = +0.12 values are no longer provisional — confirmed by the FIS
+chart As of 07.11.26. The statement that values are editable via Admin → Jump DDs was wrong: no
+such editor exists.]*
 
 **FS-18 — dual moguls chop (landing zone) NJ flags. (ROLLED BACK in v1.26.01 — see below.)**
 New nullable `dual_bracket.nj_blue`/`nj_red`

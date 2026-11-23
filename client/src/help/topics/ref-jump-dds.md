@@ -13,7 +13,7 @@ Two places in the app:
 
 The chart is based on:
 
-- **Base value** by spin family (Single 0.40/0.50, Double 0.53/0.63, Triple 0.65/0.75, Quad 0.76/0.86, Quint 0.86/0.96 — men/women), per the FIS *Mogul Basic Degree of Difficulty and Common Combinations* chart (November 2023) that USSS Appendix D references.
+- **Base value** by spin family (Single 0.40/0.50, Double 0.53/0.63, Triple 0.65/0.75, Quad 0.76/0.86, Quint 0.86/0.96 — men/women), per the FIS *Mogul Basic Degree of Difficulty and Common Combinations* chart, **As of 07.11.26** (adopted for U.S. domestic events November 23, 2026; StickIt v2.8.04). The 2027 Competition Guide, Appendix D, still links the November 2023 chart; the 07.11.26 chart differs from it only in the twisting flips and the grabs (below).
 - **Modifiers per letter** added to the base:
   - `T` (twist) → -0.02
   - `S` (spread) → -0.02
@@ -29,7 +29,7 @@ The chart is based on:
 
 The Moguls Sub-Committee adopted the **Big G / Little G** grab-scoring rule for domestic events (August 20, 2026 minutes). StickIt distinguishes a **basic grab** (lowercase `g`) from an **advanced grab** (uppercase `G`). `bg` and `bG` are **different jumps with different DDs**, so jump-code entry is case-exact.
 
-**The modifier values are provisional.** StickIt carries `g` = +0.05 and `G` = +0.12 (previously +0.14) from an early draft; the referenced FIS chart (November 2023) still lists a single grab modifier of +0.14 and no lowercase `g` codes, and the FIS Judging Handbook (November 2025, section 6204.3.7) lists `G` as a single modifier without defining basic and advanced grabs. When USSS publishes the confirmed values, update the table through **Admin → Jump DDs** — no code change is needed if only the numbers change. Examples at the current provisional values (men / women):
+**The modifier values are confirmed.** StickIt carries `g` = +0.05 and `G` = +0.12 (the November 2023 chart had a single grab at +0.14). Both values are published in the FIS chart As of 07.11.26 (basic grab `g` 0.05, advanced grab `G` 0.12), and the FIS Judging Handbook (November 2026), Appendix A item 7, defines basic and advanced grabs and lists the grabs in each class. Examples (men / women):
 
 | Code | DD (M / F) | What it is |
 |---|---|---|
@@ -40,26 +40,31 @@ The Moguls Sub-Committee adopted the **Big G / Little G** grab-scoring rule for 
 | `g` | 0.45 / 0.55 | Stand-alone basic grab |
 | `G` | 0.52 / 0.62 | Stand-alone advanced grab |
 
-Because only identical codes are repeats under USSS 4210.2.1, `bg` and `bG` are **not** repeats of each other. The FIS Moguls Advisory Group will conduct a full DD chart review at the start of the quad; these values implement the approved FS-13 modifiers, and individual values remain editable through the Admin → Jump DDs table.
+Because only identical codes are repeats under USSS 4210.2.1, `bg` and `bG` are **not** repeats of each other. The FIS Moguls Advisory Group will conduct a full DD chart review at the start of the quad; these values implement the approved FS-13 modifiers. There is no DD editor in StickIt — the Jump DDs window is read-only — so a change to the chart is made in a software release.
 
 Common codes and their DDs (men / women):
 
 | Code | DD (M / F) | What it is |
 |---|---|---|
 | `S` | 0.38 / 0.48 | Single spread |
-| `T` | 0.38 / 0.48 | Single twist |
-| `TS` | 0.49 / 0.59 | Double twist with spread |
-| `TT` | 0.49 / 0.59 | Double twist (helicopter, 720) |
-| `TD` | 0.52 / 0.62 | Double twist with daffy |
-| `TTS` | 0.62 / 0.72 | Triple twist with spread |
-| `3` | various | Triple twist (1080) |
-| `3p` | various | Triple twist position (varies) |
-| `bp` | varies | Back layout position (back family) |
-| `bT` | varies | Back twist |
-| `bL` | varies | Back layout |
-| `bF` | varies | Back full (back tuck flip) |
+| `T` | 0.38 / 0.48 | Single twister |
+| `TS` | 0.49 / 0.59 | Twister-spread |
+| `TT` | 0.49 / 0.59 | Double twister |
+| `TD` | 0.52 / 0.62 | Twister-daffy |
+| `TTS` | 0.59 / 0.69 | Triple: twister-twister-spread |
+| `3` | 0.68 / 0.78 | 360 |
+| `3p` | 0.71 / 0.81 | 360 with position |
+| `7op` | 0.88 / 0.98 | Off-axis 720 with position |
+| `bT` / `bP` | 0.68 / 0.78 | Back tuck / back pike |
+| `bL` | 0.71 / 0.81 | Back layout |
+| `bp` | 0.71 / 0.81 | Back flip with position |
+| `bF` / `fF` | 0.90 / 1.00 | Back full / front full |
+| `bdF` / `fdF` | 1.09 / 1.19 | Back / front double full |
+| `btF` / `ftF` | 1.28 / 1.38 | Back / front triple full |
 
-The full chart is seeded into the `jump_dd_table` database on server boot. v1.16.08 corrected several values; if your server pre-dates that, a startup migration auto-corrects.
+**Twisting flips, v2.8.04.** The 07.11.26 chart raised the full (`bF`, `fF`) from 0.88 / 0.98 to 0.90 / 1.00, the back double full (`bdF`) from 1.05 / 1.15 to 1.09 / 1.19 and the back triple full (`btF`) from 1.22 / 1.32 to 1.28 / 1.38, and added the front double full (`fdF`) and front triple full (`ftF`). Every other code is unchanged. Runs scored before the update keep the DD they were scored with.
+
+The full chart is seeded into the `jump_dd_table` database on server boot, and a startup migration brings an existing database up to the current chart (v1.16.08 upright corrections, v1.26.00 grabs, v2.8.04 twisting flips). A venue server receives the cloud's chart when it adopts a meet.
 
 ### Aerials DD chart (USSS Appendix C)
 
@@ -97,7 +102,7 @@ For aerials (v2):
 
 ### Where DDs come from
 
-The `jump_dd_table` rows are seeded on server boot (`seedDualMogulDDs`, `seedAerialsDDs`, `seedJumpDDs` for moguls). A sentinel check on startup detects stale charts and re-seeds if needed (e.g., the v1.16.08 mogul fix or the v1.18.02 aerials chart correction).
+The `jump_dd_table` rows are seeded on server boot (`seedDualMogulDDs`, `seedAerialsDDs`, `seedJumpDDs` for moguls). A sentinel check on startup detects stale charts and re-seeds if needed (e.g., the v1.16.08 mogul fix, the v1.18.02 aerials chart correction or the v2.8.04 FIS 07.11.26 update).
 
 ### Calling the API directly
 

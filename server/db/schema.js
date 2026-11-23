@@ -834,13 +834,14 @@ async function seedJumpDDs() {
       // v1.26.00 (FS-13, Big G / Little G rule) -- basic vs advanced grabs.
       // Advanced grab 'G' modifier drops +0.14 -> +0.12 (every G code -0.02);
       // new lowercase 'g' codes are added at +0.05 (= new G value - 0.07).
-      // v2.5.06 note: these modifier values are PROVISIONAL (early draft). The
-      // FIS JH 6204.3.7 citation formerly given here does not define them and
-      // the Nov-2023 FIS chart still lists G = +0.14. Confirmed values are
-      // applied through Admin -> Jump DDs (this migration is idempotent and
-      // gated on 3G = 0.82, so a hand edit is never overwritten).
-      // MAG will conduct a full DD chart review at the start of the quad; a
-      // further re-seed may follow when the official 2026-27 chart publishes.
+      // v2.8.04 note: these values are CONFIRMED. The FIS chart "Mogul Basic
+      // Degree of Difficulty and Common Combinations, As of 07.11.26" lists
+      // basic grab g = +0.05 and advanced grab G = +0.12 (grab rotation
+      // multiplier 0.02), and the FIS Judging Handbook (November 2026),
+      // Appendix A item 7, defines the two grab classes. (They were carried
+      // as provisional from v1.26.00 until then.) There is no DD editor --
+      // the Jump DDs window is read-only and no route writes the table -- so
+      // any later change is another boot migration like this one.
       // Sentinels: 3G at 0.82 (pre-1.26 value) gates the UPDATEs; a missing
       // 'bg' row gates the INSERTs — so hand-edited G values are not stomped
       // twice, while the g codes still seed. Idempotent.
@@ -906,13 +907,73 @@ async function seedJumpDDs() {
         }
       }
 
+      // v2.8.04 -- FIS chart "Mogul Basic Degree of Difficulty and Common
+      // Combinations, As of 07.11.26" (adopted for domestic events, David
+      // 2026-11-23). The twisting flips changed -- Back / Front full 0.88 ->
+      // 0.90, Back double full 1.05 -> 1.09, Back triple full 1.22 -> 1.28
+      // (women +0.10) -- and Front double full (fdF) and Front triple full
+      // (ftF) are new. Every other code on the chart already matched.
+      // Sentinels, as for the FS-13 block above: mogul men bF still at 0.88
+      // gates the four UPDATEs; a missing fdF row gates the two INSERTs (the
+      // table has no unique key but its id, so INSERT OR IGNORE alone would
+      // not stop duplicates). Idempotent. Every statement names the discipline
+      // AND the gender: aerials rows also use the codes bF (2.30) and bdF
+      // (2.40) and must not be touched.
+      // Operating rule: the DD chart is never updated while a meet is in
+      // process, so this carries no venue-specific logic and runs the same on
+      // the cloud and on a Pi. Runs already scored keep the DD stored on the
+      // run (jump1_dd / jump2_dd).
+      const checkBF  = await queryOne("SELECT dd_value FROM jump_dd_table WHERE jump_code='bF' AND gender='M' AND discipline='mogul' AND ruleset='uss'");
+      const checkFdF = await queryOne("SELECT COUNT(*) as cnt FROM jump_dd_table WHERE jump_code='fdF' AND discipline='mogul'");
+      const fullStale  = checkBF && Math.abs(parseFloat(checkBF.dd_value) - 0.88) < 0.001;
+      const fdfMissing = !checkFdF || parseInt(checkFdF.cnt) === 0;
+      if (fullStale || fdfMissing) {
+        const fullRevalued = [
+          { code: 'bF',  mogM: 0.90, mogF: 1.00 },
+          { code: 'fF',  mogM: 0.90, mogF: 1.00 },
+          { code: 'bdF', mogM: 1.09, mogF: 1.19 },
+          { code: 'btF', mogM: 1.28, mogF: 1.38 },
+        ];
+        const fullNew = [
+          { code: 'fdF', mogM: 1.09, mogF: 1.19, notes: 'Front Double Full' },
+          { code: 'ftF', mogM: 1.28, mogF: 1.38, notes: 'Front Triple Full' },
+        ];
+        const fullStmts = [];
+        if (fullStale) {
+          for (const f of fullRevalued) {
+            const dualM = Math.round(f.mogM * 1.25 * 10000) / 10000;
+            const dualF = Math.round(f.mogF * 1.25 * 10000) / 10000;
+            fullStmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='M'`, args: [f.mogM, f.code] });
+            fullStmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='mogul' AND gender='F'`, args: [f.mogF, f.code] });
+            fullStmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='M'`, args: [dualM, f.code] });
+            fullStmts.push({ sql: `UPDATE jump_dd_table SET dd_value=? WHERE jump_code=? AND discipline='dual_mogul' AND gender='F'`, args: [dualF, f.code] });
+          }
+        }
+        if (fdfMissing) {
+          for (const f of fullNew) {
+            const dualM = Math.round(f.mogM * 1.25 * 10000) / 10000;
+            const dualF = Math.round(f.mogF * 1.25 * 10000) / 10000;
+            fullStmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','M',?)`, args: [uuidv4(), f.code, f.mogM, f.notes] });
+            fullStmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','mogul','F',?)`, args: [uuidv4(), f.code, f.mogF, f.notes] });
+            fullStmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','M',?)`, args: [uuidv4(), f.code, dualM, f.notes + ' (dual)'] });
+            fullStmts.push({ sql: `INSERT OR IGNORE INTO jump_dd_table (id,jump_code,dd_value,ruleset,discipline,gender,notes) VALUES (?,?,?,'uss','dual_mogul','F',?)`, args: [uuidv4(), f.code, dualF, f.notes + ' (dual)'] });
+          }
+        }
+        if (fullStmts.length) {
+          await getClient().batch(fullStmts, 'write');
+          console.log(`DD migration: FIS 07.11.26 chart —${fullStale ? ' bF / fF / bdF / btF re-valued' : ''}${fullStale && fdfMissing ? ';' : ''}${fdfMissing ? ' fdF / ftF added' : ''}`);
+        }
+      }
+
       return;
     }
     // Wipe old non-gendered data and reseed
     await execute("DELETE FROM jump_dd_table WHERE discipline IN ('mogul','dual_mogul')");
   }
 
-  // FIS Mogul DD chart (November 2023) -- gender-specific values
+  // FIS Mogul DD chart ("Mogul Basic Degree of Difficulty and Common
+  // Combinations, As of 07.11.26"; v2.8.04, was the November 2023 chart) --
+  // gender-specific values
   const jumps = [
     // Straight Jumps (uprights)
     // DD = base (Single/Double/Triple/Quad/Quint) + sum of per-letter modifiers
@@ -943,9 +1004,9 @@ async function seedJumpDDs() {
     // Jump Multipliers
     { code: 'p',    ddM: 0.03, ddF: 0.03, notes: 'Position (multiplier)' },
     // v1.26.00 (FS-13, Big G / Little G rule): basic grab 'g' = +0.05, advanced
-    // grab 'G' = +0.12 (was +0.14) — PROVISIONAL values, see the migration note
-    // above. Codes are case-exact — bg and bG are different jumps with
-    // different DDs.
+    // grab 'G' = +0.12 (was +0.14) — confirmed by the FIS 07.11.26 chart, see
+    // the migration note above. Codes are case-exact — bg and bG are different
+    // jumps with different DDs.
     { code: 'G',    ddM: 0.52, ddF: 0.62, notes: 'Advanced Grab (Single + G)' },
     { code: 'g',    ddM: 0.45, ddF: 0.55, notes: 'Basic Grab (Single + g)' },
     // Rotational Jumps
@@ -981,15 +1042,17 @@ async function seedJumpDDs() {
     { code: 'bp',   ddM: 0.71, ddF: 0.81, notes: 'Back Position' },
     { code: 'bG',   ddM: 0.80, ddF: 0.90, notes: 'Back Advanced Grab' },
     { code: 'bg',   ddM: 0.73, ddF: 0.83, notes: 'Back Basic Grab' },
-    { code: 'bF',   ddM: 0.88, ddF: 0.98, notes: 'Back Full' },
-    { code: 'bdF',  ddM: 1.05, ddF: 1.15, notes: 'Back Double Full' },
-    { code: 'btF',  ddM: 1.22, ddF: 1.32, notes: 'Back Triple Full' },
+    { code: 'bF',   ddM: 0.90, ddF: 1.00, notes: 'Back Full' },
+    { code: 'bdF',  ddM: 1.09, ddF: 1.19, notes: 'Back Double Full' },
+    { code: 'btF',  ddM: 1.28, ddF: 1.38, notes: 'Back Triple Full' },
     { code: 'fT',   ddM: 0.68, ddF: 0.78, notes: 'Front Tuck' },
     { code: 'fP',   ddM: 0.68, ddF: 0.78, notes: 'Front Pike' },
     { code: 'fp',   ddM: 0.71, ddF: 0.81, notes: 'Front Position' },
     { code: 'fG',   ddM: 0.80, ddF: 0.90, notes: 'Front Advanced Grab' },
     { code: 'fg',   ddM: 0.73, ddF: 0.83, notes: 'Front Basic Grab' },
-    { code: 'fF',   ddM: 0.88, ddF: 0.98, notes: 'Front Full' },
+    { code: 'fF',   ddM: 0.90, ddF: 1.00, notes: 'Front Full' },
+    { code: 'fdF',  ddM: 1.09, ddF: 1.19, notes: 'Front Double Full' },
+    { code: 'ftF',  ddM: 1.28, ddF: 1.38, notes: 'Front Triple Full' },
     // Loop Jumps
     { code: 'l',    ddM: 0.68, ddF: 0.78, notes: 'Loop' },
     { code: 'lp',   ddM: 0.71, ddF: 0.81, notes: 'Loop Position' },

@@ -189,7 +189,9 @@ const TABLES = {
     columns: ['ussa_id', 'type', 'last_name', 'first_name', 'division', 'gender', 'yob', 'club_name', 'ae_points', 'dm_points', 'mo_points', 'fis_id', 'updated_at'],
     sync: false, checksum: false, snapshot: true, scope: 'global',
   },
-  // M-4 — the DD chart is live-editable (Admin > Jump DDs) and scoring-
+  // M-4 — the DD chart changes over time (boot migrations in
+  // server/db/schema.js; there is no editor — the Jump DDs window is
+  // read-only and no route writes the table) and is scoring-
   // critical: a venue must score with the cloud's CURRENT chart, not the
   // stock seed (stored jump1_dd/jump2_dd bake the value into every run
   // permanently). Snapshot-only, imported replace-all on adoption; never
