@@ -89,9 +89,14 @@ fixes gave 1,688 passed with only the dashboard check failing. `verify_v16` 123.
 
 Guide PDFs regenerated (a help topic changed); venue PDFs regenerated at v2.8.05.
 
-**Pi image.** The venue home page changed, so the image is rebuilt at v2.8.05 after the push
-(`build.sh` clones the tree from GitHub at the release tag) and attached to the GitHub Release
-with `os_list_stickit.json` and `CHECKSUM.txt`.
+**Pi image rebuilt at v2.8.05** (2026-11-24, from tag v2.8.05 @ 37ffcc4; the venue home page
+changed). Compressed 572,617,368 bytes, sha256 f9e793f8…6f083e; uncompressed 3,254,779,904 bytes,
+sha256 ab720098…2943cf. Published to GitHub Release v2.8.05 with `os_list_stickit.json` and
+`CHECKSUM.txt`; the Release was created with the v2.8.04 image attached and the image replaced
+after the build, so the Imager "latest" link never lacked the asset. `build.sh` clones the tree
+from GitHub at the tag, so the image can only be built after the push. Built with
+`STICKIT_IMG_WORK` set to a temporary folder; Docker Desktop needed a restart first (it reported
+"running" while its engine was unreachable).
 
 Files modified: `server/scripts/venue_cards/build_venue_docs.js`,
 `client/src/pages/venue/VenueHome.jsx`, `client/src/help/topics/venue-server.md`, `README.md`,
