@@ -169,7 +169,7 @@ is byte-for-byte unchanged when the flag is absent.
 
 - Operations guide: `docs/VENUE_OPS.md` · Sync design: `docs/SYNC_PROTOCOL.md`
 - Pi image build: `server/scripts/build_pi_image/README.md` · Mac fallback: `docs/VENUE_MAC_FALLBACK.md`
-- Printed volunteer run sheets: `server/public/docs/venue/`
+- Printed volunteer quick reference sheets: `server/public/docs/venue/`
 
 ---
 

@@ -43,7 +43,7 @@ What the image contains (see `provision.sh`):
 - SSH enabled with user `stickit`, default password `stickitvenue` (H-11 —
   every recovery path assumes SSH). Override at build time with
   `STICKIT_PI_PASSWORD=<pass> ./build.sh <ref>` and record the credential on
-  the printed venue run sheet.
+  the printed venue quick reference sheet.
 
 ## Publish
 

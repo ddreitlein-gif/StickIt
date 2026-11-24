@@ -6,7 +6,7 @@
 # Produces stickit-venue-<version>.img.xz, flashable with Raspberry Pi Imager.
 # Publish the .img.xz as a GitHub Releases asset and update
 # os_list_stickit.json so "StickIt Venue Server" appears inside Imager
-# (Section 7; provisioning card: docs/venue run sheets).
+# (Section 7; provisioning card: docs/venue quick reference sheets).
 #
 # Usage:  ./build.sh [stickit-git-ref]     (default: the v2/main HEAD)
 #
@@ -82,7 +82,7 @@ touch "$STAGE/EXPORT_IMAGE"
 #    path (update fallback, C-1/M-11 repair, VENUE_MAC_FALLBACK) assumes
 #    `ssh stickit@stickit.local`, and Bookworm may lock a passwordless user
 #    entirely. Override the default credential with STICKIT_PI_PASSWORD; the
-#    credential in use is printed on the venue run sheet (venue_cards).
+#    credential in use is printed on the venue quick reference sheet (venue_cards).
 STICKIT_PI_PASSWORD="${STICKIT_PI_PASSWORD:-stickitvenue}"
 cat > pi-gen/config <<EOS
 IMG_NAME=stickit-venue

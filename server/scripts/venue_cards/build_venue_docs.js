@@ -37,16 +37,26 @@ function newDoc(file) {
 
 function header(doc, title, subtitle) {
   doc.rect(0, 0, doc.page.width, 86).fill(NAVY);
-  doc.fill('#ffffff').font('Helvetica-Bold').fontSize(24).text(title, 48, 22);
+  // Shrink a long title to one line so it never wraps onto the subtitle.
+  doc.font('Helvetica-Bold');
+  let titleSize = 24;
+  while (titleSize > 16 && doc.fontSize(titleSize).widthOfString(title) > doc.page.width - 96) titleSize -= 1;
+  doc.fill('#ffffff').font('Helvetica-Bold').fontSize(titleSize).text(title, 48, 22 + (24 - titleSize) / 2);
   doc.font('Helvetica').fontSize(11).fill('#93c5fd').text(subtitle, 48, 54);
   doc.fill('#000000');
   doc.y = 108;
 }
 
 function footer(doc) {
+  // The footer sits below the bottom margin. pdfkit starts a new page for any
+  // text placed there, so the margin is lifted for this one line (v2.8.05:
+  // every sheet was two pages, the second holding only the footer).
+  const bottom = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
   doc.font('Helvetica').fontSize(8).fill(GRAY)
-    .text(`StickIt ${VERSION} — venue run sheet. Reprint after every software update.`,
+    .text(`StickIt ${VERSION} — venue quick reference sheet. Reprint after every software update.`,
       48, doc.page.height - 34, { width: doc.page.width - 96, align: 'center' });
+  doc.page.margins.bottom = bottom;
   doc.fill('#000000');
 }
 
@@ -85,7 +95,7 @@ async function venueCard() {
   const qr = await QRCode.toDataURL('http://stickit.local:3001', { width: 220, margin: 1 });
   doc.image(Buffer.from(qr.split(',')[1], 'base64'), doc.page.width / 2 - 90, doc.y, { width: 180 });
   doc.y += 196;
-  doc.font('Helvetica').fontSize(11).fill(GRAY).text('…or scan the code. Then tap your role and enter the PIN from the run sheet.', { align: 'center' });
+  doc.font('Helvetica').fontSize(11).fill(GRAY).text('…or scan the code. Then tap your role and enter the PIN from the quick reference sheet.', { align: 'center' });
   doc.fill('#000000');
   doc.moveDown(1.2);
 
@@ -94,7 +104,7 @@ async function venueCard() {
   doc.font('Courier-Bold').fontSize(16).fill(AMBER).text('http://  ___ . ___ . ___ . ___  :3001/overlay');
   doc.fill('#000000');
   doc.font('Helvetica').fontSize(10.5).fill(GRAY).text(
-    'Write the number in from the Pi’s Connection Info page each event morning (menu → Connection Info). ' +
+    'Write the number in from the Pi’s Connection Info page each event morning (menu, then Connection Info). ' +
     'At UniFi venues the number never changes; at Starlink-router venues check it every event day.', { width: 500 });
   doc.fill('#000000');
   doc.moveDown(1);
@@ -105,7 +115,7 @@ async function venueCard() {
 
 function kitSetup() {
   const doc = newDoc('runsheet_kit_setup.pdf');
-  header(doc, 'Run Sheet 1 — Kit Setup', 'Morning of the event, before anyone scores. Takes about 5 minutes.');
+  header(doc, 'Quick Reference Sheet 1 — Kit Setup', 'Morning of the event, before anyone scores. Takes about 5 minutes.');
   step(doc, 1, 'Plug the StickIt box (Raspberry Pi) into power and the network.',
     'UniFi venue: any LAN port on the venue router. Starlink-router venue: one of the two Ethernet ports on the back of the Starlink router.');
   step(doc, 2, 'Plug the small USB backup stick into the StickIt box.',
@@ -114,15 +124,15 @@ function kitSetup() {
   step(doc, 4, 'On any tablet, open Safari and go to  http://stickit.local:3001',
     'You should see the StickIt Venue menu. If not: wait another minute, then pull the power plug, plug back in, try again.');
   step(doc, 5, 'The spare StickIt box stays in the kit bag.',
-    'Only swap it in if the first box will not come up after two power cycles — then repeat from step 1 with the spare and use Run Sheet 2 to adopt the meet onto it.');
-  callout(doc, 'Nothing to configure. The box remembers nothing between meets — Run Sheet 2 (Adopt the Meet) loads today’s meet onto it.');
+    'Only swap it in if the first box will not come up after two power cycles — then repeat from step 1 with the spare and use Quick Reference Sheet 2 to adopt the meet onto it.');
+  callout(doc, 'Nothing to configure. The box remembers nothing between meets — Quick Reference Sheet 2 (Adopt the Meet) loads today’s meet onto it.');
   footer(doc);
   doc.end();
 }
 
 function adoption() {
   const doc = newDoc('runsheet_adoption.pdf');
-  header(doc, 'Run Sheet 2 — Adopt the Meet', 'After kit setup. You need the release code from the meet official.');
+  header(doc, 'Quick Reference Sheet 2 — Adopt the Meet', 'After kit setup. You need the release code from the meet official.');
   step(doc, 1, 'Get the release code.',
     'The official releases the meet on stickitski.com and reads you an 8-character code (letters and numbers) over the phone, or it is written on this sheet:  CODE: ______________');
   step(doc, 2, 'On a tablet, open  http://stickit.local:3001  and type the code into "Adopt Meet".',
@@ -130,7 +140,7 @@ function adoption() {
   step(doc, 3, 'Set the two PINs when asked, and write them here. PINs last one day — the box asks for new ones every competition morning.',
     'Control PIN (scoring computer + head judge): ________     Crew PIN (judges + timekeeper): ________');
   step(doc, 4, 'Done. The meet name shows at the top, with "Sync: Up to date".',
-    'Hand out tablets — Run Sheet 3 (Tablets) gets each person to their screen.');
+    'Hand out tablets — Quick Reference Sheet 3 (Tablets) gets each person to their screen.');
   step(doc, 5, 'The Chief of Scoring starts the FIRST run of each event from the Scoring Computer.',
     'Check the run order, judge panel and course specs first, then press Start Run on the Scoring tab. That first start puts the event in front of every tablet; after it, the Head Judge can start runs from the tablet.');
   callout(doc, 'The code works exactly once. If adoption fails partway, call the official to release a new code — nothing is harmed.');
@@ -141,7 +151,7 @@ function adoption() {
 
 function tablets() {
   const doc = newDoc('runsheet_tablets.pdf');
-  header(doc, 'Run Sheet 3 — Tablets', 'One per person. A tablet remembers its job — even after a reboot.');
+  header(doc, 'Quick Reference Sheet 3 — Tablets', 'One per person. A tablet remembers its job — even after a reboot.');
   step(doc, 1, 'Open Safari on the tablet and go to  http://stickit.local:3001',
     'Or scan the QR code on the judges’ stand card. If the very first load sits for minutes, use the numeric address shown under Connection Info on any tablet that is already in (e.g. http://192.168.x.x:3001) — same thing, opens at once. stickit.local works normally after that.');
   step(doc, 2, 'Tap the person’s role.',
@@ -161,13 +171,17 @@ function tablets() {
 
 function livestream() {
   const doc = newDoc('runsheet_livestream.pdf');
-  header(doc, 'Run Sheet 4 — Livestream (YoloBox)', 'The score overlay for the stream. Set once, check each morning.');
+  header(doc, 'Quick Reference Sheet 4 — Livestream (YoloBox)', 'Three web sources: the score overlay and two results boards. Check them each morning.');
   step(doc, 1, 'On the tablet menu, open Connection Info.',
     'It shows the overlay address as a number, like  http://192.168.1.50:3001/overlay');
-  step(doc, 2, 'Check the YoloBox browser/web source uses EXACTLY that address.',
+  step(doc, 2, 'Check the YoloBox overlay source uses EXACTLY that address.',
     'UniFi venue: it is stored from last time and the number never changes — just confirm. Starlink-router venue: the number can change — fix it if different.');
   step(doc, 3, 'The overlay follows the action by itself.',
-    'It always shows the athlete on course, in whichever event is running. The scoring computer can pin it to one event if the broadcast needs that (Scoring tab → "Pin overlay to this event").');
+    'It always shows the athlete on course, in whichever event is running. The scoring computer can pin it to one event if the broadcast needs that (Scoring tab, then "Pin overlay to this event").');
+  step(doc, 4, 'Add one Broadcast Board source for each event running today.',
+    'Usually two: men and women. Ask the Chief of Scoring for each address (event, then Links tab, then Display, then Broadcast Board). Enter it with the same number as the overlay in place of stickit.local, like  http://192.168.1.50:3001/broadcast/AB12CD  Each event has its own address, so replace both on the morning of day two.');
+  step(doc, 5, 'Overlay while an athlete is on course. Board between athletes.',
+    'The board is a full-screen page, not a layer over video, and it changes pages by itself. When the competition changes between men and women, cut to the other board.');
   callout(doc, 'The overlay is transparent — if the stream shows a black screen instead of the video with scores on top, the YoloBox source type is wrong (needs the web/browser overlay source), not StickIt.');
   footer(doc);
   doc.end();
@@ -175,19 +189,19 @@ function livestream() {
 
 function endOfDay() {
   const doc = newDoc('runsheet_end_of_day.pdf');
-  header(doc, 'Run Sheet 5 — End of Day', 'After the last run is approved. Two different endings — pick the right one.');
+  header(doc, 'Quick Reference Sheet 5 — End of Day', 'After the last run is approved. Two different endings — pick the right one.');
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('First: tear down tablets (both endings)');
   doc.fill('#000000');
   doc.moveDown(0.3);
   step(doc, 1, 'Confirm the head judge has approved the final results.');
   step(doc, 2, 'Collect the judge tablets. Leave the StickIt box powered and connected.',
-    'To reach the menu: on the Scoring Computer click "Venue Menu" at the top of the left sidebar (or More ▾ → "Venue Menu (end of day)" on the meet page). On a tablet, tap "Change role" in the top bar.');
+    'To reach the menu: on the Scoring Computer click "Venue Menu" at the top of the left sidebar (or More, then "Venue Menu (end of day)" on the meet page). On a tablet, tap "Change role" in the top bar.');
   doc.moveDown(0.4);
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Ending A — more competition days remain (e.g. duals tomorrow)');
   doc.fill('#000000');
   doc.moveDown(0.3);
   step(doc, 3, 'On the menu, tap "Hand Back to Cloud" (Control PIN).',
-    'It verifies every score against stickitski.com — under a minute with internet. Tonight’s bracket work happens on the website; tomorrow you adopt again with a NEW code (Run Sheet 2).');
+    'It verifies every score against stickitski.com — under a minute with internet. Tonight’s bracket work happens on the website; tomorrow you adopt again with a NEW code (Quick Reference Sheet 2).');
   doc.moveDown(0.4);
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Ending B — the meet is finished');
   doc.fill('#000000');
@@ -202,7 +216,7 @@ function endOfDay() {
     'Scoring stops on the box exactly as with a normal Hand Back / Check In — this is final. The box writes a return file and shows a "Return file" card on the menu.');
   step(doc, 6, 'On the SCORING LAPTOP, tap "Download return file" and copy it onto the USB drive.',
     'The file goes to the laptop’s Downloads folder first — copy it onto the stick. Do not use the STICKITSNAP backup stick; that one stays in the box.');
-  step(doc, 7, 'From any computer with internet, open the meet on stickitski.com → More → "Import venue return file".',
+  step(doc, 7, 'From any computer with internet, open the meet on stickitski.com, then More, then "Import venue return file".',
     'It asks Hand Back or Check In (pre-set to what you chose), then imports and verifies every score. For a two-day meet do this BEFORE the official releases the meet again in the morning.');
   callout(doc, 'Scoring data is never at risk: it stays on the box, in the return file, and on the backup stick. If the box gets internet back before you have carried the file anywhere, the card offers "Send to cloud now".', RED);
   footer(doc);
@@ -214,8 +228,15 @@ function preEvent() {
   header(doc, 'Pre-Event Checklist', 'For the organizer, the week before. Both network profiles.');
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Both profiles');
   doc.fill('#000000'); doc.moveDown(0.3);
-  const item = (t) => { doc.font('Helvetica').fontSize(11.5).text(`☐  ${t}`, { width: 500 }); doc.moveDown(0.35); };
-  item('Kit packed: 2 StickIt boxes (one spare), power supplies, Ethernet cable, USB backup stick (ExFAT, named STICKITSNAP — see below), printed run sheets 1–5 + judges’ stand card.');
+  // A drawn tick box: Helvetica has no checkbox glyph (it printed as "&" until v2.8.05).
+  const item = (t) => {
+    const y = doc.y;
+    doc.lineWidth(0.9).rect(48.5, y + 0.5, 9, 9).stroke('#000000');
+    doc.font('Helvetica').fontSize(11.5).fill('#000000').text(t, 66, y, { width: 482 });
+    doc.x = 48;
+    doc.moveDown(0.35);
+  };
+  item('Kit packed: 2 StickIt boxes (one spare), power supplies, Ethernet cable, USB backup stick (ExFAT, named STICKITSNAP — see below), printed quick reference sheets 1–5 + judges’ stand card.');
   item('StickIt box software updated at home: plug in, open stickit.local:3001, click Update StickIt (only shows when no meet is loaded).');
   item('Meet fully built on stickitski.com: events, registrations, judges, run orders, course specs.');
   item('Plan for the release code: who releases the meet, and how the code reaches the venue (phone / written down).');
@@ -236,7 +257,7 @@ function preEvent() {
   doc.font('Helvetica-Bold').fontSize(13).fill(BLUE).text('Starlink Gen 3 built-in router venue (RQS / Devo)');
   doc.fill('#000000'); doc.moveDown(0.3);
   item('Pi plugs into one of the router’s two built-in Ethernet LAN ports.');
-  item('The numeric IP can occasionally change: verify the YoloBox overlay URL against Connection Info each event morning (it is on Run Sheet 4).');
+  item('The numeric IP can occasionally change: verify the YoloBox overlay and Broadcast Board addresses against Connection Info each event morning (it is on Quick Reference Sheet 4).');
   item('iPads use http://stickit.local:3001 (name, not number) — unaffected by IP changes.');
   footer(doc);
   doc.end();
@@ -247,7 +268,7 @@ function macFallback() {
   header(doc, 'Emergency — Run StickIt from a Mac', 'Only if BOTH StickIt boxes are dead (R9). Full doc: docs/VENUE_MAC_FALLBACK.md');
   step(doc, 1, 'On the Mac, install Node.js if needed (nodejs.org, LTS).');
   step(doc, 2, 'Get the StickIt code onto the Mac.',
-    'From GitHub (github.com/ddreitlein-gif/StickIt → Code → Download ZIP) or the kit USB stick. Unzip it.');
+    'From GitHub (github.com/ddreitlein-gif/StickIt, then Code, then Download ZIP) or the kit USB stick. Unzip it.');
   step(doc, 3, 'Open Terminal, then run (one line at a time):');
   doc.font('Courier-Bold').fontSize(12).fill(NAVY);
   doc.text('cd ~/Downloads/StickIt-*/server', 82);
@@ -255,8 +276,8 @@ function macFallback() {
   doc.text('STICKIT_MODE=venue node index.js', 82);
   doc.fill('#000000'); doc.moveDown(0.6);
   step(doc, 4, 'Find the Mac’s network address.',
-    'System Settings → Wi-Fi/Ethernet → Details → IP address, e.g. 192.168.1.77. Tablets go to  http://THAT-ADDRESS:3001  (write it on the stand card — stickit.local does not point at the Mac).');
-  step(doc, 5, 'Adopt the meet exactly as on Run Sheet 2.',
+    'System Settings, then Wi-Fi/Ethernet, then Details, then IP address, e.g. 192.168.1.77. Tablets go to  http://THAT-ADDRESS:3001  (write it on the stand card — stickit.local does not point at the Mac).');
+  step(doc, 5, 'Adopt the meet exactly as on Quick Reference Sheet 2.',
     'Keep the Mac plugged in, lid open, and set Energy/Lock Screen so it never sleeps.');
   callout(doc, 'The Terminal window must stay open all day — closing it stops scoring.', RED);
   footer(doc);

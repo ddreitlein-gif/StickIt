@@ -31,7 +31,7 @@ function PinSetupCard({ onDone, expired }) {
       <p className="text-sm text-slate-400 mb-3">
         {expired && <>PINs are good for one calendar day; yesterday's have expired. </>}
         The <b>Control PIN</b> opens the Scoring Computer and Head Judge. The <b>Crew PIN</b> opens Judge seats and the Timekeeper.
-        Write both on the run sheet.
+        Write both on the quick reference sheet.
       </p>
       <div className="flex gap-3 mb-3">
         <div className="flex-1">
@@ -564,7 +564,7 @@ export default function VenueHome() {
 
           {/* v2.0.00 (Step 5, D8/FR-10) — end-of-day actions (Control PIN) */}
           <div className="mt-8 p-4 rounded-2xl border border-slate-800 bg-slate-900/60">
-            <div className="text-slate-500 text-xs uppercase tracking-wide mb-3">End of day (see the run sheet)</div>
+            <div className="text-slate-500 text-xs uppercase tracking-wide mb-3">End of day (see the quick reference sheet)</div>
             {checkinBusy ? (
               <div className="text-amber-300 text-sm">⏳ {checkinBusy}</div>
             ) : (

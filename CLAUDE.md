@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **StickIt** is a full-stack freestyle mogul scoring application for managing ski/snowboard competitions (moguls, dual moguls, aerials) for US Ski & Snowboard (USSS) events.
 
-**Current version:** v2.8.04
+**Current version:** v2.8.05
 
 ## Commands
 
@@ -237,7 +237,7 @@ Which surfaces are public vs. protected when password protection is enabled:
 
 ## Version Notes
 
-**Full per-release feature notes live in [CHANGELOG.md](CHANGELOG.md)** (newest first, v2.8.04 back
+**Full per-release feature notes live in [CHANGELOG.md](CHANGELOG.md)** (newest first, v2.8.05 back
 to v1.7.00). The v2.0.00 – v2.7.01 notes were moved there verbatim on 2026-10-28 to keep this file
 under the CLAUDE.md size limit; nothing was dropped or condensed. **When a release ships, add its
 full `## vX.Y.ZZ Feature Notes` section at the TOP of CHANGELOG.md** (above the previous release)
@@ -247,6 +247,7 @@ and one line to the index below — do not add feature-note sections to this fil
 
 | Version | Date | Headline |
 |---|---|---|
+| v2.8.05 | 2026-11-24 | "Run sheet" renamed "quick reference sheet" (officials confused the printed venue cards with run orders) — venue home PIN card + end-of-day heading, `venue-server` help topic, all eight venue PDFs (titles "Quick Reference Sheet 1" to "5"; the `runsheet_*.pdf` file names are unchanged on purpose); Sheet 4 gains the Broadcast Board steps; printed arrows are ", then"; two older defects fixed: every venue PDF is one page (footer no longer alone on a second page), checklist items have a drawn tick box in place of "&"; wording only, protocol stays 3 |
 | v2.8.04 | 2026-11-23 | DD table to the FIS chart As of 07.11.26 (Release B of the 11-23-26 plan) — boot migration in `seedJumpDDs()`: bF / fF 0.90 / 1.00, bdF 1.09 / 1.19, btF 1.28 / 1.38, new fdF and ftF (mogul + dual x 1.25; aerials untouched; gated on bF = 0.88 and a missing fdF); grab values g +0.05 / G +0.12 confirmed, no longer provisional; voice phrases for the twisting flips; there is NO DD editor (Jump DDs is read-only); stored run DDs unchanged; protocol stays 3 |
 | v2.8.03 | 2026-11-23 | Pre-season tablet changes (Release A of the 11-23-26 plan) — dual judge tablet: select a split, then **Confirm** (two steps; stale selections dropped on match / scale change), running Blue / Red totals hidden from judges, Time Judge time differential card (JH 6304.3.4), two-column landscape layout with no scrolling on an iPad Air 3; HJ tablet (moguls) lists T&L 1–3 / Air 1–2 in judge order; client only (`JudgeTablet.jsx`, `HeadJudgeTablet.jsx`, `index.css`) |
 | v2.8.02 | 2026-11-21 | Judge tablet shows the rejected score — the red "Your score was rejected" box on the mogul T&L / Air judge tablet lists the score the HJ rejected (T&L total + breakdown; Air jump code + score) until resubmit; client only (`JudgeTablet.jsx`), dual and aerials untouched |

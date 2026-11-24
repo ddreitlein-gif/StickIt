@@ -1,4 +1,4 @@
-# Changelog — Version Notes (v1.7.00 – v2.8.04)
+# Changelog — Version Notes (v1.7.00 – v2.8.05)
 
 Full feature notes for every release. The newest release is first. `CLAUDE.md` carries the
 project guide plus a one-line index of these releases; when a new version ships, its full
@@ -14,6 +14,90 @@ box design, withdrawn the same day as overcrowded). **v2.6.01 (2026-09-15) — B
 `buildBracketPositions` anchor fix that also repairs the second semifinal on the `/dual-bracket`
 PDF's finals page for 32 and 64 shells, and the additive export of `advancementSlot` /
 `consolationSlot` from `dual.js`. Full notes below.
+
+---
+
+## v2.8.05 Feature Notes
+
+### "Run sheet" renamed "quick reference sheet" (v2.8.05)
+
+Ruling (David, 2026-11-24): the printed one-page venue instruction cards were called "run sheets",
+which officials confuse with run orders. They are now **Quick Reference Sheets**. Wording only: no
+schema, scoring, endpoint, tablet-behaviour, venue or sync change. `SYNC_PROTOCOL_VERSION` stays 3.
+
+**Printed venue material** (`server/scripts/venue_cards/build_venue_docs.js`; the sheet changes
+were made in the 2026-11-24 Cowork session and ship here):
+
+- Titles "Quick Reference Sheet 1" to "5"; every cross-reference, the footer, the judges' stand
+  card line and the pre-event checklist use the new term. `header()` shrinks a long title to one
+  line (24 pt down to a floor of 16 pt; "Quick Reference Sheet 4 — Livestream (YoloBox)" is the
+  longest).
+- **Sheet 4 (Livestream)** gains steps 4 and 5 for the Broadcast Board: one web source for each
+  event running that day (usually two, men and women), the address from the event's Links tab
+  (Display, Broadcast Board) entered with the numeric address in place of `stickit.local`, both
+  replaced on the morning of day two; overlay while an athlete is on course, board between
+  athletes. Subtitle and the step 2 heading reworded; the checklist line now reads "overlay and
+  Broadcast Board addresses".
+- Every arrow and the "More" caret in a printed string is now ", then". Helvetica has no glyph for
+  them and they printed as `!'`.
+- **The PDF file names are unchanged on purpose** (`runsheet_*.pdf`): `harness/tests/step6.test.js`
+  and the served paths use them.
+
+**Two older defects in the same script, fixed with David's approval (2026-11-24):**
+
+- Every venue PDF was two pages. `footer()` writes at `page.height - 34`, below the bottom margin,
+  so pdfkit started a second page that held only the footer. The bottom margin is now lifted for
+  that one line; all eight PDFs are one page with the footer at the foot of it.
+- The pre-event checklist printed "&" at the start of every item (the checkbox character is not
+  in Helvetica). `item()` now draws a 9 pt empty square and sets the item text beside it.
+
+**Application wording:**
+
+- `client/src/pages/venue/VenueHome.jsx`: the PIN card reads "Write both on the quick reference
+  sheet."; the end-of-day heading reads "End of day (see the quick reference sheet)". The heading
+  is small uppercase text inside the page's 672 px column; it stays on one line at 1112 x 680
+  (iPad Air 3 landscape) and on the scoring laptop (measured, and in the harness).
+- `client/src/help/topics/venue-server.md`: "The printed quick reference sheets (Kit Setup, ...)"
+  and "Write both PINs on Quick Reference Sheet 2 (Adopt the Meet)."
+- Current-reference lines: `README.md`, `server/scripts/build_pi_image/README.md`, two comments in
+  `build_pi_image/build.sh`.
+- Left alone: code comments (`server/routes/venue.js`, `VenueConnectionInfo.jsx`, the script's
+  header comment), earlier CHANGELOG sections, `docs/*.md` history, harness test labels, the PDF
+  file names. No guide script and no other help topic used the old term.
+- Not in scope: the recorded training videos say "run sheet" in several places; they are being
+  revised separately.
+
+**Review.** All eight venue PDFs rendered at 110 dpi and read page by page, before and after the
+two fixes.
+
+Harness: new `harness/tests/v2805.test.js` (107 checks) — the eight venue PDFs, read back from
+the PDF text: each says "quick reference sheet", none says "run sheet", each is one page with the
+footer (this version) as its last line, no unencodable character, the five sheet titles each on
+one line, every cross-reference; Sheet 4 names the Broadcast Board (source per event, numeric
+address, when to show which); the checklist draws 14 tick boxes and no line starts with "&"; the
+built bundle carries the two venue home strings and the two help lines and never says "run sheet";
+no help topic does; every PDF is served byte-identical by a cloud server and a venue server; and
+on a venue server with an adopted meet (Playwright) the PIN card and the end-of-day heading read
+the new term, the page never says "run sheet", and the heading is one line at 1112 x 680 and
+1440 x 900. Run against the v2.8.04 script the suite fails on every sheet (two pages, old term).
+Full harness (24 suites, 1,716 checks): the final all-suites run gave 1,713 passed and 3 failed —
+v2701's pre-existing `GET /api/admin/dashboard` same-second-audit check (unchanged by this
+release), plus two load flakes that pass when their suites run alone (v2803 99 of 99; v2701 47
+of 48, the dashboard check only): a one-space `dual-seed-list` text-layout difference in the
+v2701 golden compare and v2803's unordered-rows check. The all-suites run before the two PDF
+fixes gave 1,688 passed with only the dashboard check failing. `verify_v16` 123.
+
+Guide PDFs regenerated (a help topic changed); venue PDFs regenerated at v2.8.05.
+
+**Pi image.** The venue home page changed, so the image is rebuilt at v2.8.05 after the push
+(`build.sh` clones the tree from GitHub at the release tag) and attached to the GitHub Release
+with `os_list_stickit.json` and `CHECKSUM.txt`.
+
+Files modified: `server/scripts/venue_cards/build_venue_docs.js`,
+`client/src/pages/venue/VenueHome.jsx`, `client/src/help/topics/venue-server.md`, `README.md`,
+`server/scripts/build_pi_image/README.md`, `server/scripts/build_pi_image/build.sh` (comments),
+`harness/tests/v2805.test.js` (new), version files, `server/public/` build assets, guide + venue
+PDFs.
 
 ---
 
